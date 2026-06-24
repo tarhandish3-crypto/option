@@ -25,7 +25,7 @@ from analytics.greeks_and_probabilities import (
 # ============================================================================
 from analytics.payoff_calculator import (
     PayoffCalculator,
-    PayoffResult
+    enrich_opportunity_with_pnl,
 )
 
 # ============================================================================
@@ -50,14 +50,15 @@ from analytics.margin_calculator import (
 )
 
 # ============================================================================
-# ۵. محاسبه کارمزدها و هزینه‌های معاملاتی (Cost Calculator) ✅ اضافه شد
+# ۵. محاسبه کارمزدها و هزینه‌های معاملاتی (Cost Calculator)
 # ============================================================================
 from analytics.cost_calculator import (
     IranMarketCostCalculator,
-    AdvancedTradeCosts
+    StrategyCosts,
+    calculate_costs,
 )
 
-# تعاریف مشترک از هسته پوزیشن‌ها (در صورت نیاز به استفاده مستقیم در محاسبات)
+# تعاریف مشترک از هسته پوزیشن‌ها
 from core.enums import OptionType, Side
 
 # ============================================================================
@@ -71,28 +72,29 @@ __all__ = [
     'calculate_full_greeks',
     'get_price_step_probabilities',
     'calculate_strategy_greeks',
-    
+
     # بخش محاسبات سود و زیان
     'PayoffCalculator',
-    'PayoffResult',
-    
+    'enrich_opportunity_with_pnl',
+
     # بخش مدیریت و محاسبات ریسک پیشرفته
     'RiskEngine',
     'RiskMetrics',
     'CurveType',
     'print_risk_summary',
     'calculate_risk_metrics_from_payoff',
-    
+
     # بخش ماشین حساب مارجین بورس ایران
     'MarginCalculator',
     'MarginResult',
     'MarginContract',
     'LegDefinition',
-    
-    # بخش محاسبات کارمزد بورس ایران ✅ اضافه شد
+
+    # بخش محاسبات کارمزد بورس ایران
     'IranMarketCostCalculator',
-    'AdvancedTradeCosts',
-    
+    'StrategyCosts',  #
+    'calculate_costs',  #
+
     # انوم‌های مرجع
     'OptionType',
     'Side',

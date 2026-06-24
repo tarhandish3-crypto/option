@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 from numba import njit
@@ -201,6 +201,8 @@ class PayoffCalculator:
 
             fee_info = legs_breakdown[option_idx]
             K = float(leg.contract.strike_price or 0)
+            quantity = abs(leg.weight)
+            quantity = float(fee_info.get("quantity"))
 
             exercise_fee = float(fee_info["exercise_fee"])
             exercise_tax = float(fee_info["exercise_tax"])
@@ -209,33 +211,25 @@ class PayoffCalculator:
             if leg.option_type == OptionType.CALL and leg.side == Side.BUY:
                 exercise_costs_array += np.where(
                     price_levels > K,
-                    exercise_fee,
-                    0.0
-                )
+                    exercise_fee, 0.0)
 
             # Short Call - فروشنده تخصیص می‌خورد + مالیات
             elif leg.option_type == OptionType.CALL and leg.side == Side.SELL:
                 exercise_costs_array += np.where(
                     price_levels > K,
-                    exercise_fee + exercise_tax,
-                    0.0
-                )
+                    exercise_fee + exercise_tax, 0.0)
 
             # Long Put - خریدار اعمال می‌کند + مالیات
             elif leg.option_type == OptionType.PUT and leg.side == Side.BUY:
                 exercise_costs_array += np.where(
                     price_levels < K,
-                    exercise_fee + exercise_tax,
-                    0.0
-                )
+                    exercise_fee + exercise_tax, 0.0)
 
             # Short Put - فروشنده تخصیص می‌خورد
             elif leg.option_type == OptionType.PUT and leg.side == Side.SELL:
                 exercise_costs_array += np.where(
                     price_levels < K,
-                    exercise_fee,
-                    0.0
-                )
+                    exercise_fee, 0.0)
 
             option_idx += 1
 

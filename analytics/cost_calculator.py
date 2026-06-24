@@ -221,14 +221,15 @@ class IranMarketCostCalculator:
             if contract is not None:
                 has_option_legs = True
 
-                quantity = abs(getattr(leg, 'weight', 1.0))  # ✅ پشتیبانی از float
+                quantity = abs(getattr(leg, 'weight', 1.0)) 
                 total_contracts += quantity
 
-                contract_size = getattr(contract, 'contract_size', DEFAULT_CONTRACT_SIZE)
-                strike = getattr(contract, 'strike_price', 0.0)
-                option_type = getattr(leg, 'option_type', None)
+                # contract_size = int(getattr(contract, 'contract_size', None) or DEFAULT_CONTRACT_SIZE)
+                contract_size = leg.contract.contract_size
+                strike = getattr(contract, 'strike_price')
+                option_type = getattr(leg, 'option_type')
 
-                entry_price = getattr(leg, 'entry_price', None)
+                entry_price = getattr(leg, 'entry_price')
                 if entry_price is None:
                     entry_price = getattr(contract, 'last_price', 0.0)
 
