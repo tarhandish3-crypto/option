@@ -1,12 +1,20 @@
 # strategies/generators/base.py
 # -*- coding: utf-8 -*-
 
+"""
+ماژول پایه تولیدکننده‌های استراتژی (Base Strategy Generator) - معماری V4
+
+این کلاس به عنوان والد تمام ژنراتورهای تک‌لگی و چندلگی عمل می‌کند و متدهای کلیدی و مشترک 
+نظیر محاسبه سنترالیزه امتیاز نقدشوندگی پوزیشن و استخراج قیمت امن دارایی پایه را فراهم می‌سازد.
+شایان ذکر است کپسوله‌سازی نهایی مدل‌ها بر عهده OpportunityBuilder کارخانه مرکزی است.
+"""
+
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Any
-from datetime import datetime
 import logging
+from abc import ABC, abstractmethod
+from datetime import datetime
+from typing import List, Dict, Optional, Any
 
 from core.models import OptionContract, UnderlyingAsset, Opportunity, LegDefinition
 from strategies.base import StrategyDefinition
@@ -17,8 +25,7 @@ logger = logging.getLogger("OptionScanner.Strategies.Generators.Base")
 
 class BaseGenerator(ABC):
     """
-    کلاس پایه تولیدکننده ترکیب‌های استراتژی (معماری V4)
-
+    کلاس پایه انتزاعی برای تمام ژنراتورهای استراتژی در لایه V4.
     """
 
     def __init__(self, strategy_def: StrategyDefinition):
@@ -28,141 +35,105 @@ class BaseGenerator(ABC):
 
     @abstractmethod
     def generate(
-            self,
-            underlying: UnderlyingAsset,
-            contracts: List[OptionContract],
-            contract_scores: Dict[str, float]) -> List[Opportunity]:
-        """تولید فرصت‌ها (باید در کلاس‌های فرزند پیاده‌سازی و اورراید شود)"""
+        self,
+        underlying: UnderlyingAsset,
+        contracts: List[OptionContract],
+        contract_scores: Dict[str, float]
+    ) -> List[Opportunity]:
+        """
+        متد انتزاعی تولید فرصت‌ها که باید در تمام کلاس‌های فرزند (مانند StockOptionGenerator) 
+        اورراید و پیاده‌سازی شود.
+        """
         pass
 
+    # ============================================================
+    # متدهای مشترک و کمکی لایه پایه (Shared Production Helpers)
+    # ============================================================
+
     def _calculate_liquidity_score(
-            self,
-            legs: List[LegDefinition],
-            contract_scores: Dict[str, float]) -> float:
+        self,
+        legs: List[LegDefinition],
+        contract_scores: Dict[str, float]
+    ) -> float:
         """
-        محاسبه امتیاز نقدشوندگی با پشتیبانی از لگ‌های بدون قرارداد (مانند لگ سهم در Covered Call)
+        محاسبه هوشمند و ترکیبی امتیاز نقدشوندگی کل پوزیشن.
+        
+        این متد از لنگه‌های بدون قرارداد (مانند خرید خود سهم پایه در کاورکال) پشتیبانی کرده 
+        و با فرمول وزنی (۷۰٪ ضعیف‌ترین لگ به عنوان تنگنای خروج + ۳۰٪ میانگین پوزیشن) ریسک نقدشوندگی را مدل می‌کند.
         """
         if not legs:
             return 0.0
 
+        # استخراج امتیاز فقط برای لنگه‌هایی که قرارداد اختیار معامله دارند
         scores = [
             contract_scores.get(leg.contract.ticker, 0.0)
             for leg in legs
-            if leg.contract is not None and hasattr(leg.contract, 'ticker')
+            if leg.contract is not None and getattr(leg.contract, 'ticker', None) is not None
         ]
 
         if not scores:
-            return 0.0
+            # اگر پوزیشن فاقد اختیار معامله باشد (مثلاً فقط سهم)، امتیاز پیش‌فرض کامل یا بالا لحاظ می‌شود
+            return 100.0
 
         weakest = min(scores)
         avg = sum(scores) / len(scores)
 
-        # وزن‌دهی ترکیبی: ۷۰٪ ضعیف‌ترین لگ (تنگنای خروج) + ۳۰٪ میانگین کل پوزیشن
-        return (weakest * 0.70) + (avg * 0.30)
+        # دکترین مدیریت ریسک: ۷۰٪ ضعیف‌ترین لگ (ریسک عدم خروج) + ۳۰٪ میانگین کل پوزیشن
+        return round((weakest * 0.70) + (avg * 0.30), 2)
 
     def _get_S0_stock(self, underlying: UnderlyingAsset) -> float:
         """
-        دریافت قیمت روز دارایی پایه از شیء underlying با مکانیزم Fallback زنجیره‌ای اولویت‌دار
+        دریافت قیمت مرجع دارایی پایه (S0) با مکانیزم Fallback زنجیره‌ای هماهنگ با بورس ایران.
+        
+        اولویت اول با قیمت پایانی (close_price) است تا اسکنر در پیش‌گشایش‌ها یا نوسانات فرعی دچار خطا نشود.
         """
-        if hasattr(underlying, 'last_price') and underlying.last_price > 0:
-            return underlying.last_price
-        if hasattr(underlying, 'close_price') and underlying.close_price > 0:
+        if getattr(underlying, 'close_price', 0) and underlying.close_price > 0:
             return underlying.close_price
-        if hasattr(underlying, 'yesterday_price') and underlying.yesterday_price > 0:
+        if getattr(underlying, 'last_price', 0) and underlying.last_price > 0:
+            return underlying.last_price
+        if getattr(underlying, 'yesterday_price', 0) and underlying.yesterday_price > 0:
             return underlying.yesterday_price
 
         logger.warning(
-            f"S0_stock not found or invalid for {getattr(underlying, 'ticker', 'Unknown')}, using default 0.0")
+            f"قیمت معتبری برای دارایی پایه {getattr(underlying, 'ticker', 'Unknown')} یافت نشد. مقدار پیش‌فرض 0.0"
+        )
         return 0.0
 
-    def _build_enriched_metadata(
-            self,
-            base_metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_base_metadata(self, custom_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        ساخت متادیتای غنی‌شده متمرکز - بدون ذخیره داده‌های تکراری لایه اول
+        تولید ساختار اولیه و استاندارد متادیتای غنی‌شده بدون هاردکد کردن آرایه‌های سنگین محاسباتی.
         """
-
-        enriched_metadata = {
-            'timestamp': datetime.now().isoformat(),
-
-            # فیلدهای آرایه‌ای و غیرساختاریافته سنگین نمودار پِی‌آف
-            'net_profits_closed': [],
-            'net_profits_exercised': [],
-            'gross_profits': [],
-            'price_levels': [],
-            'profitable_indices': [],
-            'dynamic_range': [],
-            'recommended_action': 'recommended_action',
+        metadata = {
+            'generator_timestamp': datetime.now().isoformat(),
+            'generator_class': self.__class__.__name__,
+            'strategy_type': self.strategy_def.generator_type.value if self.strategy_def.generator_type else "UNKNOWN"
         }
 
-        # ادغام مابقی دیتای خاص فرعی (بدون فیلدهای پاپ شده لایه اول)
-        if base_metadata:
-            enriched_metadata.update(base_metadata)
+        if custom_metadata:
+            metadata.update(custom_metadata)
 
-        return enriched_metadata
+        return metadata
 
-    def _create_opportunity(
-            self,
-            legs: List[LegDefinition],
-            underlying: UnderlyingAsset,
-            days_to_maturity: int,
-            contract_scores: Dict[str, float],
-            base_metadata: Optional[Dict[str, Any]] = None,) -> Optional[Opportunity]:
-        """
-        کارخانه ساخت متمرکز شیء Opportunity (اصلاح‌شده: فاقد هم‌پوشانی و داده موازی)
-        """
-        if not legs:
-            return None
+    # ============================================================
+    # مدیریت متادیتای آماری و پایش لایه اسکنر
+    # ============================================================
 
-        if base_metadata is None:
-            base_metadata = {}
-
-        # ۱. استخراج کامل فیلدهای عددی و ساختاریافته اصلی از دیتای فرزند جهت جلوگیری از تکرار در متادیتا
-        S0_stock = self._get_S0_stock(underlying)
-
-        # ۲. محاسبه امتیاز نقدشوندگی لگ‌ها
-        liquidity_score = self._calculate_liquidity_score(
-            legs, contract_scores)
-
-        # ۳. تولید متادیتای غنی‌شده منحصربه‌فرد (فیلدهای بالا قبلاً pop شده‌اند)
-        enriched_metadata = self._build_enriched_metadata(
-            base_metadata=base_metadata,)
-
-        # ۴. قالب‌بندی و کپسوله‌سازی مدل رسمی با فیلدهای منحصربه‌فرد در لایه اول
-        opportunity = Opportunity(
-            strategy_name=self.strategy_def.name,
-            underlying_ticker=underlying.ticker,
-            legs=legs,
-            S0_stock=S0_stock,
-            days_to_maturity=days_to_maturity,
-            net_premium=0.0,
-            max_profit=0.0,
-            max_loss=0.0,
-            break_even_points=[],
-            required_margin=0.0,
-            risk_reward_ratio=0.0,
-            expected_return_pct=0.0,
-            max_profit_pct=0.0,
-            max_loss_pct=0.0,
-            liquidity_score=round(liquidity_score, 2),
-            final_score=0.0,
-            rank=0,
-            metadata=enriched_metadata)
-
+    def increment_generated(self) -> None:
+        """افزایش شمارنده فرصت‌های کشف شده"""
         self._generated_count += 1
 
-        logger.debug(
-            f"Successfully instantiated clean Opportunity object: {self.strategy_def.name} on {opportunity.underlying_ticker} ")
-
-        return opportunity
+    def increment_filtered(self) -> None:
+        """افزایش شمارنده موقعیت‌های فیلتر شده (به دلیل نقض قوانین استرایک و...)"""
+        self._filtered_count += 1
 
     def get_stats(self) -> Dict[str, int]:
-        """دریافت گزارش آماری از تعداد موقعیت‌های اسکن شده جاری"""
+        """دریافت گزارش آماری اسکن جاری جهت مانیتورینگ سلامت انجین"""
         return {
             'generated': self._generated_count,
-            'filtered': self._filtered_count}
+            'filtered': self._filtered_count
+        }
 
     def reset_stats(self) -> None:
-        """بازنشانی شمارنده‌های آماری ژنراتور"""
+        """بازنشانی شمارنده‌های آماری ژنراتور برای چرخه اسکن بعدی"""
         self._generated_count = 0
         self._filtered_count = 0

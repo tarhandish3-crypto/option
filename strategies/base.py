@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any
 
 from core.models import LegDefinition
-from core.enums import OptionType, Side, GeneratorType
+from core.enums import Side, GeneratorType
 
 
 @dataclass(slots=True)
@@ -47,12 +47,9 @@ class StrategyDefinition:
         """
         legs = []
         for i, (opt_type, weight) in enumerate(weight_pattern):
-            option_type = OptionType.CALL if opt_type.lower() == "call" else OptionType.PUT
             side = Side.BUY if weight > 0 else Side.SELL
-
             legs.append(LegDefinition(
                 name=f"leg_{i + 1}",
-                option_type=option_type,
                 side=side,
                 strike_rel=f"K{i + 1}",
                 ratio=abs(int(weight)) if abs(weight) > 0 else 1))

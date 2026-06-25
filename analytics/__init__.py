@@ -3,14 +3,8 @@
 
 """
 پکیج تحلیل پیشرفته برای استراتژی‌های اختیار معامله بورس ایران
-
-این فایل به عنوان یک لایه دسترسی (Facade) عمل کرده و ابزارهای اصلی محاسبات 
-یونانی‌ها، سود/زیان (Payoff)، مدیریت ریسک، وجه تضمین (Margin) و کارمزدها را به صورت یکپارچه عرضه می‌کند.
 """
 
-# ============================================================================
-# ۱. یونانی‌ها و توزیع احتمال (Greeks & Probabilities)
-# ============================================================================
 from analytics.greeks_and_probabilities import (
     calculate_d1_d2,
     calculate_leg_greeks,
@@ -20,17 +14,11 @@ from analytics.greeks_and_probabilities import (
     calculate_strategy_greeks,
 )
 
-# ============================================================================
-# ۲. محاسبه سود/زیان (Payoff Calculator)
-# ============================================================================
 from analytics.payoff_calculator import (
-    PayoffCalculator,
+    IranMarketPayoffCalculator,
     enrich_opportunity_with_pnl,
 )
 
-# ============================================================================
-# ۳. موتور محاسبات ریسک (Risk Engine)
-# ============================================================================
 from analytics.risk_engine import (
     RiskEngine,
     RiskMetrics,
@@ -39,9 +27,6 @@ from analytics.risk_engine import (
     calculate_risk_metrics_from_payoff
 )
 
-# ============================================================================
-# ۴. محاسبه وجه تضمین رسمی سمات (Margin Calculator)
-# ============================================================================
 from analytics.margin_calculator import (
     MarginCalculator,
     MarginResult,
@@ -49,23 +34,15 @@ from analytics.margin_calculator import (
     LegDefinition
 )
 
-# ============================================================================
-# ۵. محاسبه کارمزدها و هزینه‌های معاملاتی (Cost Calculator)
-# ============================================================================
 from analytics.cost_calculator import (
     IranMarketCostCalculator,
     StrategyCosts,
-    calculate_costs,
 )
 
-# تعاریف مشترک از هسته پوزیشن‌ها
 from core.enums import OptionType, Side
 
-# ============================================================================
-# ۶. لیست کلاس‌ها و توابع مجاز پکیج (Public API)
-# ============================================================================
 __all__ = [
-    # بخش یونانی‌ها
+    # یونانی‌ها
     'calculate_d1_d2',
     'calculate_leg_greeks',
     'calculate_vega',
@@ -73,29 +50,28 @@ __all__ = [
     'get_price_step_probabilities',
     'calculate_strategy_greeks',
 
-    # بخش محاسبات سود و زیان
-    'PayoffCalculator',
+    # P&L
+    'IranMarketPayoffCalculator',
     'enrich_opportunity_with_pnl',
 
-    # بخش مدیریت و محاسبات ریسک پیشرفته
+    # ریسک
     'RiskEngine',
     'RiskMetrics',
     'CurveType',
     'print_risk_summary',
     'calculate_risk_metrics_from_payoff',
 
-    # بخش ماشین حساب مارجین بورس ایران
+    # مارجین
     'MarginCalculator',
     'MarginResult',
     'MarginContract',
     'LegDefinition',
 
-    # بخش محاسبات کارمزد بورس ایران
+    # کارمزد
     'IranMarketCostCalculator',
-    'StrategyCosts',  #
-    'calculate_costs',  #
+    'StrategyCosts',
 
-    # انوم‌های مرجع
+    # انوم‌ها
     'OptionType',
     'Side',
 ]

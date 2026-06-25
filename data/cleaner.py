@@ -62,6 +62,13 @@ class DataCleaner:
         # 6. نرمالایز کردن نوع اختیار
         df = DataCleaner._normalize_types(df)
 
+        # DEBUG_SYMBOLS = ['اهرم', 'اخابر']
+        DEBUG_SYMBOLS = ['اهرم']
+        before_debug = len(df)
+        df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOLS)]
+        after_debug = len(df)
+        print(f"Keept {after_debug} records symbol  (removed {before_debug - after_debug})")
+
         removed_count = original_count - len(df)
         logger.info(
             f"Cleaning complete: {len(df)} records kept, {removed_count} removed")

@@ -3,6 +3,7 @@
 
 from enum import Enum
 
+
 class GeneratorType(Enum):
     """نوع تولیدکننده ترکیب‌ها"""
     STOCK_OPTION = "stock_option"
@@ -13,9 +14,10 @@ class GeneratorType(Enum):
 
 
 class OptionType(Enum):
-    """نوع اختیار معامله"""
+    """نوع اختیار معامله یا دارایی لگ"""
     CALL = "Call"
     PUT = "Put"
+    STOCK = "Stock"  # ✅ اضافه شده در گام ۱ مانیفست برای پشتیبانی از کاورکال، کالر و پوزیشن‌های ترکیبی سهم پایه
 
 
 class OptionStatus(Enum):

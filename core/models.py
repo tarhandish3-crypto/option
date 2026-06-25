@@ -23,17 +23,6 @@ logger = logging.getLogger("OptionScanner.Core.Models")
 class UnderlyingAsset:
     """
     مدل داده‌ای دارایی پایه (نماد مادر)
-    
-    Attributes:
-        ticker: نماد دارایی پایه (مثلاً 'اهرم')
-        name: نام کامل دارایی
-        last_price: آخرین قیمت معامله شده
-        close_price: قیمت پایانی جلسه قبل
-        market: نوع بازار/بورس (بورس/فرابورس) -> متصل به ExchangeType
-        asset_type: نوع دارایی (سهام/ETF)
-        is_frozen: وضعیت تعلیق نماد
-        daily_change_pct: درصد تغییر روزانه
-        yesterday_price: قیمت دیروز
     """
     ticker: str
     name: str
@@ -65,29 +54,26 @@ class UnderlyingAsset:
 @dataclass(slots=True)
 class OptionContract:
     """
-    مدل داده‌ای یک قرارداد اختیار معامله مشخص
-    
-    این کلاس تمام اطلاعات مربوط به یک قرارداد اختیار معامله را
-    از جمله مشخصات، قیمت‌ها، حجم‌ها و پارامترهای تحلیلی نگهداری می‌کند.
+    مدل داده‌ای یک قرارداد اختیار معامله یا دارایی لگ دارایی پایه در بورس تهران
     """
     
     # ===== مشخصات پایه =====
     ticker: str                               # نماد قرارداد
     name: str                                 # نام قرارداد
     underlying_ticker: str                    # نماد دارایی پایه
-    option_type: OptionType                  # نوع قرارداد (Call/Put)
-    strike_price: float                      # قیمت اعمال
-    contract_size: int = 1000                # اندازه هر قرارداد (تعداد سهام)
+    option_type: OptionType                   # نوع قرارداد (Call/Put/Stock)
+    strike_price: float                       # قیمت اعمال
+    contract_size: int = 1000                 # اندازه هر قرارداد (تعداد سهام)
     expiry_date: Optional[Union[str, datetime]] = None  # تاریخ سررسید
-    days_to_maturity: int = 0                # روزهای باقی‌مانده تا سررسید
+    days_to_maturity: int = 0                 # روزهای باقی‌مانده تا سررسید
     
     # ===== اطلاعات تابلو و قیمت =====
-    bid: float = 0.0                         # قیمت خرید (Bid)
-    ask: float = 0.0                         # قیمت فروش (Ask)
-    last_price: float = 0.0                  # آخرین قیمت معامله شده
-    close_price: float = 0.0                 # قیمت پایانی جلسه قبل
-    underlying_price: float = 0.0            # قیمت لحظه‌ای دارایی پایه
-    yesterday_price: float = 0.0             # قیمت دیروز قرارداد
+    bid: float = 0.0                          # قیمت خرید (Bid)
+    ask: float = 0.0                          # قیمت فروش (Ask)
+    last_price: float = 0.0                   # آخرین قیمت معامله شده
+    close_price: float = 0.0                  # قیمت پایانی جلسه قبل
+    underlying_price: float = 0.0             # قیمت لحظه‌ای دارایی پایه
+    yesterday_price: float = 0.0              # قیمت دیروز قرارداد
     
     # ===== حجم و ارزش =====
     volume: int = 0                          # حجم معاملات روز
@@ -120,13 +106,11 @@ class OptionContract:
     def __str__(self) -> str:
         return f"OptionContract(Ticker={self.ticker}, Strike={self.strike_price:,}, DTE={self.days_to_maturity})"
     
-    # =====================================================
-    # Property‌های کمکی برای محاسبات سریع
-    # =====================================================
-    
     @property
     def intrinsic_value(self) -> float:
         """ارزش ذاتی (Intrinsic Value)"""
+        if self.option_type == OptionType.STOCK:
+            return 0.0
         if self.option_type == OptionType.CALL:
             return max(0.0, self.underlying_price - self.strike_price)
         else:
@@ -135,18 +119,18 @@ class OptionContract:
     @property
     def time_value(self) -> float:
         """ارزش زمانی = آخرین قیمت - ارزش ذاتی"""
+        if self.option_type == OptionType.STOCK:
+            return 0.0
         return max(0.0, self.last_price - self.intrinsic_value)
     
     @property
     def mid_price(self) -> float:
-        """قیمت میانی = (Bid + Ask) / 2، در صورت عدم وجود، آخرین قیمت"""
         if self.bid > 0 and self.ask > 0:
             return (self.bid + self.ask) / 2
         return self.last_price
     
     @property
     def spread_pct(self) -> float:
-        """درصد اسپرد = (Ask - Bid) / MidPrice"""
         if self.bid <= 0 or self.ask <= 0:
             return 1.0
         mid = self.mid_price
@@ -156,8 +140,9 @@ class OptionContract:
     
     @property
     def moneyness(self) -> float:
-        """نسبت پول‌بودگی (S/K برای Call، K/S برای Put)"""
-        if self.strike_price <= 0:
+        if self.option_type == OptionType.STOCK:
+            return 1.0
+        if self.strike_price <= 0 or self.underlying_price <= 0:
             return 1.0
         if self.option_type == OptionType.CALL:
             return self.underlying_price / self.strike_price
@@ -166,8 +151,12 @@ class OptionContract:
     
     @property
     def option_status(self) -> str:
-        """وضعیت اختیار: ITM, ATM, OTM"""
-        if self.underlying_price == self.strike_price:
+        if self.option_type == OptionType.STOCK:
+            return "ATM"
+        if self.strike_price <= 0 or self.underlying_price <= 0:
+            return "OTM"
+        distance_pct = abs(self.underlying_price - self.strike_price) / self.strike_price
+        if distance_pct <= 0.01:
             return "ATM"
         if self.option_type == OptionType.CALL:
             return "ITM" if self.underlying_price > self.strike_price else "OTM"
@@ -204,10 +193,10 @@ class OptionContract:
 @dataclass(slots=True)
 class StrategyClassification:
     """برچسب‌های رفتاری، سناریوی بازار و ماهیت استراتژی برای سیستم تصمیم‌یار"""
-    market_type: str = MarketType.NEUTRAL.value         # پیش‌فرض فازی ساختار جدید انوم
+    market_type: str = MarketType.NEUTRAL.value
     investor_profile: str = InvestorProfile.BALANCED.value
     risk_level: str = RiskLevel.MEDIUM.value
-    description: str = ""                              # توضیح متنی ساده فارسی برای رندر نهایی اکسل
+    description: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -237,85 +226,121 @@ class ProfileScores:
         }
 
 
+# =====================================================
+# ✅ اصلاح گام ۲ مانیفست: ایجاد کلاس مستقل الگوی لگ‌ها
+# =====================================================
 @dataclass(slots=True)
-class LegDefinition:
-    """تعریف یک لگ معاملاتی مستقل در پوزیشن‌های چندلگی"""
-    name: str = ""
-    option_type: Optional[OptionType] = None
+class StrategyLegPattern:
+    """
+    نماینده الگوی تئوریک یک لگ در تعریف استراتژی (Strategy Template)
+    """
+    option_type: OptionType  # CALL, PUT, STOCK
     side: Side = Side.BUY
-    strike_rel: str = ""
     ratio: int = 1
-    contract: Optional[OptionContract] = None
-    is_stock_leg: bool = False
+    strike_group: Optional[str] = None     # "K1", "K2", ...
+    maturity_group: Optional[str] = None   # "M1", "M2", ...
 
     @property
     def weight(self) -> float:
-        return self.ratio if self.side == Side.BUY else -self.ratio
+        return float(self.ratio if self.side == Side.BUY else -self.ratio)
+
+
+# =====================================================
+# ✅ اصلاح گام ۳ مانیفست: ساده‌سازی لگ موقعیت واقعی
+# =====================================================
+@dataclass(slots=True)
+class LegDefinition:
+    """تعریف یک لگ معاملاتی عینی و پر شده با قرارداد واقعی بازار (Position Leg)"""
+    side: Side = Side.BUY
+    ratio: int = 1
+    contract: Optional[OptionContract] = None
+
+    def __post_init__(self):
+        # اعتبارسنجی نسبت‌های وزنی
+        if self.ratio <= 0:
+            raise ValueError(f"نسبت وزنی (Ratio) در لگ باید یک عدد مثبت بزرگتر از صفر باشد.")
+            
+        if self.contract is not None:
+            if not hasattr(self.contract, 'option_type'):
+                raise ValueError("آبجکت متصل شده به لگ یک قرارداد معتبر نیست.")
+
+    @property
+    def option_type(self) -> Optional[OptionType]:
+        """واکشی پویا و زنده نوع اختیار یا دارایی از قرارداد متصل"""
+        if self.contract is None:
+            return None
+        return self.contract.option_type
+
+    @property
+    def is_stock_leg(self) -> bool:
+        """تشخیص خودکار سهم پایه بدون نیاز به فلگ صلب فیلدها"""
+        return self.option_type == OptionType.STOCK
+
+    @property
+    def weight(self) -> float:
+        return float(self.ratio if self.side == Side.BUY else -self.ratio)
 
     def __str__(self) -> str:
-        symbol = self.contract.ticker if self.contract else "Stock"
+        symbol = self.contract.ticker if self.contract else "Unknown"
         return f"Leg({self.side.value} {self.ratio}x {symbol})"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            'name': self.name,
             'side': self.side.value if isinstance(self.side, Enum) else self.side,
             'ratio': self.ratio,
             'is_stock_leg': self.is_stock_leg,
-            'contract': self.contract.to_dict() if self.contract else None}
+            'option_type': self.option_type.value if self.option_type else None,
+            'contract': self.contract.to_dict() if self.contract else None
+        }
 
 
 @dataclass(slots=True)
 class Opportunity:
     """
     مدل جامع یک موقعیت معاملاتی کشف شده.
-    این کلاس اطلاعات طبقه‌بندی و امتیازدهی موازی را در خود نگه می‌دارد تا داده‌ها در لایه‌های میانی حذف نشوند.
     """
-    
-    # ===== اطلاعات پایه =====
-    strategy_name: str                       # نام استراتژی (مثلاً 'bull_call_spread')
-    underlying_ticker: str                   # نماد دارایی پایه
-    legs: List[LegDefinition]                # لگ‌های تشکیل‌دهنده استراتژی
-    S0_stock: float = 0.0                    # آخرین قیمت سهم پایه
-    days_to_maturity: int = 0                # روزهای باقی‌مانده تا سررسید
+    strategy_name: str
+    underlying_ticker: str
+    legs: List[LegDefinition]
+    S0_stock: float = 0.0
+    days_to_maturity: int = 0
     
     # ===== معیارهای مالی =====
-    net_premium: float = 0.0                 # حق بیمه خالص (دریافتی/پرداختی)
+    net_premium: float = 0.0
     pop: float = 0.0
-    max_profit: float = 0.0                  # حداکثر سود
-    max_loss: float = 0.0                    # حداکثر ضرر
-    break_even_points: List[float] = field(default_factory=list)  # نقاط سر به سر
+    max_profit: float = 0.0
+    max_loss: float = 0.0
+    break_even_points: List[float] = field(default_factory=list)
     
     # ===== معیارهای سرمایه =====
-    required_margin: float = 0.0             # وجه تضمین مورد نیاز
-    total_premium: float = 0.0               # کل حق بیمه
+    required_margin: float = 0.0
+    total_premium: float = 0.0
     
     # ===== معیارهای نسبت‌ها =====
-    risk_reward_ratio: float = 0.0           # نسبت ریسک به پاداش
-    expected_return_pct: float = 0.0         # بازدهی مورد انتظار (درصد)
-    max_profit_pct: float = 0.0              # حداکثر سود (درصد)
-    max_loss_pct: float = 0.0                # حداکثر ضرر (درصد)
+    risk_reward_ratio: float = 0.0
+    expected_return_pct: float = 0.0
+    max_profit_pct: float = 0.0
+    max_loss_pct: float = 0.0
     
     # ===== معیارهای اجرا و نقدشوندگی =====
-    liquidity_score: float = 0.0             # امتیاز نقدشوندگی
-    execution_score: float = 0.0             # امتیاز قابلیت اجرا
+    liquidity_score: float = 0.0
+    execution_score: float = 0.0
     
     # ===== سیستم امتیازدهی و کلاس‌بندی چندبعدی (DSS) =====
     classification: StrategyClassification = field(default_factory=StrategyClassification)
     profile_scores: ProfileScores = field(default_factory=ProfileScores)
     
     # ===== امتیاز نهایی و رتبه‌بندی عمومی =====
-    final_score: float = 0.0                 # امتیاز معیار (مثلاً تعادلی یا میانگین وزنی)
-    rank: int = 0                            # رتبه در بین فرصت‌ها
+    final_score: float = 0.0
+    rank: int = 0
     
     # ===== اطلاعات تکمیلی =====
     timestamp: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)     # مخزن نگهداری ماتریس P&L (پِی‌آف گام‌های درصد)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        """اعتبارسنجی داده‌های تولیدی یا محاسباتی ناقص"""
         if self.days_to_maturity < 0:
-            logger.warning(f"سررسید منفی برای فرصت {self.underlying_ticker} به صفر اصلاح شد.")
+            logger.warning(f"روزهای سررسید منفی برای فرصت {self.underlying_ticker} به صفر اصلاح شد.")
             self.days_to_maturity = 0
 
     def __str__(self) -> str:
@@ -323,7 +348,6 @@ class Opportunity:
                 f"DTE={self.days_to_maturity}, Score={self.final_score:.2f}, Rank={self.rank})")
 
     def to_dict(self) -> Dict[str, Any]:
-        """تبدیل به دیکشنری غنی‌شده برای دیتابیس، خروجی JSON یا تست‌نویسی"""
         return {
             'strategy_name': self.strategy_name,
             'underlying_ticker': self.underlying_ticker,
@@ -356,7 +380,6 @@ class ScanResult:
     execution_time_ms: float = 0.0
     
     def to_dataframe(self) -> pd.DataFrame:
-        """تبدیل نتایج سیستم تصمیم‌یار به DataFrame سازمان‌دهی‌شده برای مصارف عمومی و خروجی اکسل"""
         if not self.opportunities:
             return pd.DataFrame()
         
@@ -380,7 +403,7 @@ class ScanResult:
                 'LiquidityScore': round(opp.liquidity_score, 2),
                 'FinalScore': round(opp.final_score, 2),
                 'Rank': opp.rank,
-                'Description': opp.classification.description,  # تزریق فیلد توضیحات فارسی کلاسیفایر
+                'Description': opp.classification.description,
                 'Timestamp': opp.timestamp}
             for i, leg in enumerate(opp.legs, 1):
                 if leg.contract:
@@ -414,6 +437,7 @@ class MarketSnapshot:
     _indices_built: bool = field(default=False, repr=False)
     
     def __post_init__(self):
+        self.sync_underlying_prices()
         self.build_indices()
     
     @classmethod
@@ -471,7 +495,7 @@ class MarketSnapshot:
             asset_type = AssetType.STOCK
             if 'IsETF' in group.columns and pd.notna(group['IsETF'].iloc[0]):
                 if bool(group['IsETF'].iloc[0]):
-                    asset_type = AssetType.ETF_STOCK  # متناسب با ساختار جدید انوم دارایی
+                    asset_type = AssetType.ETF_STOCK
             
             underlyings[ticker_str] = UnderlyingAsset(
                 ticker=ticker_str, name=name, last_price=underlying_price,
@@ -486,6 +510,8 @@ class MarketSnapshot:
             type_str = str(row['Type']).upper().strip()
             if type_str in ['PUT', 'P']:
                 option_type = OptionType.PUT
+            elif type_str in ['STOCK', 'S']:
+                option_type = OptionType.STOCK
         
         return OptionContract(
             ticker=str(row.get('Ticker', '')),
@@ -529,16 +555,29 @@ class MarketSnapshot:
         try: return float(val)
         except (ValueError, TypeError): return None
     
+    def sync_underlying_prices(self) -> None:
+        for opt in self.option_contracts:
+            if not opt.underlying_ticker:
+                continue
+            underlying = self.get_underlying(opt.underlying_ticker)
+            if underlying:
+                opt.underlying_price = underlying.last_price
+
     def build_indices(self) -> None:
         self._options_by_underlying.clear()
         self._options_by_symbol.clear()
+        
         for opt in self.option_contracts:
-            if not opt.underlying_ticker: continue
+            if not opt.underlying_ticker: 
+                continue
+                
             if opt.underlying_ticker not in self._options_by_underlying:
                 self._options_by_underlying[opt.underlying_ticker] = []
             self._options_by_underlying[opt.underlying_ticker].append(opt)
+            
             if opt.ticker:
                 self._options_by_symbol[opt.ticker] = opt
+                
         self._indices_built = True
     
     def get_options(self, underlying_ticker: str) -> List[OptionContract]:
@@ -553,6 +592,7 @@ class MarketSnapshot:
         return self.underlying_assets.get(ticker)
     
     def refresh(self) -> None:
+        self.sync_underlying_prices()
         self.build_indices()
     
     def summary(self) -> Dict[str, Any]:

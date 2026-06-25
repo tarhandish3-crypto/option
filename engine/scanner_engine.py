@@ -21,13 +21,21 @@ logger = logging.getLogger("OptionScanner.Engine.ScannerEngine")
 
 class ScannerEngine:
     """
-    موتور ارکستراتور اسکن زنجیره بورس - نسخه Thread-Safe
+    موتور ارکستراتور اسکن زنجیره بورس
+
+    ویژگی‌ها:
+        - دریافت تصویر بازار (MarketSnapshot)
+        - اعمال فیلترهای پیش‌پردازش روی نمادها
+        - اجرای اسکن به صورت ترتیبی یا موازی
+        - جمع‌آوری و گزارش نتایج
+        - غنی‌سازی فرصت‌ها با محاسبات P&L
     """
 
     def __init__(
-            self,
-            snapshot: Union[MarketSnapshot, pd.DataFrame],
-            filters: Optional[List[Callable]] = None):
+        self,
+        snapshot: Union[MarketSnapshot, pd.DataFrame],
+        filters: Optional[List[Callable]] = None
+    ):
         """
         Args:
             snapshot: تصویر لحظه‌ای بازار یا DataFrame خام
@@ -39,9 +47,13 @@ class ScannerEngine:
         else:
             self.snapshot = snapshot
 
+        # ساخت ایندکس‌ها برای جستجوی سریع
         self.snapshot.build_indices()
+
+        # فیلترها
         self.filters = filters or []
 
+        # بارگذاری تنظیمات از config
         sys_config = config.get_system_config()
         self.parallel = sys_config.get("parallel_enabled", True)
         self.max_workers = sys_config.get("max_workers", 4)
@@ -49,14 +61,15 @@ class ScannerEngine:
         # ✅ قفل برای شمارنده‌های امن در محیط موازی
         self._stats_lock = Lock()
 
-        # آمارهای اسکن (فقط با قفل قابل تغییر هستند)
+        # آمارهای اسکن
         self.scanned_count = 0
         self.error_count = 0
 
         logger.info(
             f"ScannerEngine initialized with {len(self.snapshot.option_contracts)} contracts, "
             f"{len(self.snapshot.underlying_assets)} underlyings, "
-            f"parallel={self.parallel}, workers={self.max_workers}")
+            f"parallel={self.parallel}, workers={self.max_workers}"
+        )
 
     # =====================================================
     # متدهای اصلی
@@ -65,14 +78,19 @@ class ScannerEngine:
     def execute_full_scan(self) -> ScanResult:
         """
         اجرای اسکن کامل روی تمام نمادهای موجود پس از فیلترینگ
+
+        Returns:
+            ScanResult شامل تمام فرصت‌های کشف شده (غنی‌شده با P&L)
         """
         start_time = time.time()
         self._reset_stats()
 
+        # 1. دریافت لیست نمادها
         target_tickers = list(self.snapshot.underlying_assets.keys())
         logger.info(
             f"Starting full market scan for {len(target_tickers)} underlying assets...")
 
+        # 2. اعمال فیلترها
         target_tickers = self._apply_filters(target_tickers)
 
         if not target_tickers:
@@ -80,6 +98,7 @@ class ScannerEngine:
                 "No underlying tickers passed the preprocessing filters.")
             return self._create_empty_result(start_time)
 
+        # 3. اجرای اسکن
         if self.parallel and len(target_tickers) > 1:
             logger.info(
                 f"Using parallel execution with {self.max_workers} workers.")
@@ -88,6 +107,7 @@ class ScannerEngine:
             logger.info("Using sequential execution mode.")
             all_opportunities = self._scan_sequential(target_tickers)
 
+        # 4. ساخت نتیجه نهایی
         return self._create_result(all_opportunities, start_time)
 
     # =====================================================
@@ -97,6 +117,12 @@ class ScannerEngine:
     def _apply_filters(self, tickers: List[str]) -> List[str]:
         """
         اعمال فیلترها روی لیست نمادها
+
+        Args:
+            tickers: لیست نمادها
+
+        Returns:
+            List[str]: لیست فیلتر شده
         """
         for i, filter_func in enumerate(self.filters, 1):
             try:
@@ -128,7 +154,7 @@ class ScannerEngine:
 
     def _scan_sequential(self, tickers: List[str]) -> List[Opportunity]:
         """
-        اسکن ترتیبی نمادها با ایزولاسیون کامل
+        اسکن ترتیبی نمادها با غنی‌سازی P&L
         """
         all_opportunities = []
 
@@ -149,14 +175,15 @@ class ScannerEngine:
 
     def _scan_parallel(self, tickers: List[str]) -> List[Opportunity]:
         """
-        اسکن موازی نمادها با ایزولاسیون کامل و شمارنده‌های امن
+        اسکن موازی نمادها با ایزوله‌سازی کامل و شمارنده‌های امن
         """
         all_opportunities = []
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             future_to_ticker = {
                 executor.submit(self._scan_single_ticker, ticker): ticker
-                for ticker in tickers}
+                for ticker in tickers
+            }
 
             for future in future_to_ticker:
                 ticker = future_to_ticker[future]
@@ -198,15 +225,22 @@ class ScannerEngine:
             with self._stats_lock:
                 self.scanned_count += 1
 
-            # غنی‌سازی فرصت‌ها با P&L
+            # ✅ غنی‌سازی فرصت‌ها با P&L (با مدیریت خطا)
             enriched_opportunities = []
             for opp in raw_opportunities:
                 try:
+                    # تنظیم S0_stock از snapshot
+                    underlying = self.snapshot.get_underlying(ticker)
+                    if underlying and underlying.last_price > 0:
+                        opp.S0_stock = underlying.last_price
+
+                    # غنی‌سازی با P&L
                     enriched_opp = enrich_opportunity_with_pnl(opp)
                     enriched_opportunities.append(enriched_opp)
                 except Exception as enrich_err:
                     logger.warning(
-                        f"Failed to enrich opportunity {opp.strategy_name} on {ticker}: {enrich_err}")
+                        f"Failed to enrich opportunity {opp.strategy_name} on {ticker}: {enrich_err}"
+                    )
                     # در صورت خطا، فرصت خام را نگه می‌داریم
                     enriched_opportunities.append(opp)
 
@@ -231,6 +265,9 @@ class ScannerEngine:
             self.error_count = 0
 
     def _create_empty_result(self, start_time: float) -> ScanResult:
+        """
+        ایجاد نتیجه خالی برای زمانی که هیچ نمادی باقی نمی‌ماند
+        """
         duration = (time.time() - start_time) * 1000
         return ScanResult(
             timestamp=datetime.now(),
@@ -238,9 +275,13 @@ class ScannerEngine:
             total_combinations_generated=0,
             total_combinations_filtered=0,
             opportunities=[],
-            execution_time_ms=duration)
+            execution_time_ms=duration
+        )
 
     def _create_result(self, opportunities: List[Opportunity], start_time: float) -> ScanResult:
+        """
+        ایجاد نتیجه نهایی اسکن
+        """
         duration = (time.time() - start_time) * 1000
 
         with self._stats_lock:
@@ -251,7 +292,8 @@ class ScannerEngine:
             f"[SUCCESS] Full market scan completed in {duration:.2f} ms. "
             f"Found {len(opportunities)} opportunities, "
             f"scanned {scanned} tickers, "
-            f"errors: {errors}")
+            f"errors: {errors}"
+        )
 
         return ScanResult(
             timestamp=datetime.now(),
@@ -259,10 +301,13 @@ class ScannerEngine:
             total_combinations_generated=len(opportunities),
             total_combinations_filtered=0,
             opportunities=opportunities,
-            execution_time_ms=duration)
+            execution_time_ms=duration
+        )
 
     def get_summary(self) -> dict:
-        """دریافت خلاصه آمار اسکنر (با قفل)"""
+        """
+        دریافت خلاصه آمار اسکنر (با قفل)
+        """
         with self._stats_lock:
             scanned = self.scanned_count
             errors = self.error_count
@@ -274,4 +319,5 @@ class ScannerEngine:
             'errors': errors,
             'parallel_enabled': self.parallel,
             'max_workers': self.max_workers,
-            'filters_count': len(self.filters), }
+            'filters_count': len(self.filters),
+        }

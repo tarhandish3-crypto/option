@@ -45,9 +45,6 @@ EXERCISE_TAX_RATE = 0.005         # ۰.۵٪ مالیات واگذاری سهم (
 OPTION_BUY_COMMISSION = 0.00103   # ۰.۱۰۳٪ کارمزد خرید اختیار
 OPTION_SELL_COMMISSION = 0.00103  # ۰.۱۰۳٪ کارمزد فروش اختیار
 
-# ===== اندازه استاندارد قرارداد =====
-DEFAULT_CONTRACT_SIZE = 1000      # اندازه استاندارد هر قرارداد
-
 # =====================================================
 # دیکشنری کارمزدها (Commission Dictionary)
 # =====================================================
@@ -436,7 +433,6 @@ def get_fee_config() -> Dict[str, Any]:
         "exercise_tax_rate": EXERCISE_TAX_RATE,
         "option_buy_commission": OPTION_BUY_COMMISSION,
         "option_sell_commission": OPTION_SELL_COMMISSION,
-        "default_contract_size": DEFAULT_CONTRACT_SIZE,
     }
 
 

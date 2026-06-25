@@ -1,204 +1,231 @@
 # engine/opportunity_builder.py
+# -*- coding: utf-8 -*-
 
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from core.models import Opportunity, LegDefinition
-from core.enums import Side
-from analytics.margin_calculator import MarginCalculator
+from core.enums import Side, OptionType
 from scoring.liquidity_score import LiquidityScorer
+from analytics.margin_calculator import MarginCalculator
 
 logger = logging.getLogger("OptionScanner.Engine.OpportunityBuilder")
 
 
 class OpportunityBuilder:
     """
-    کارخانه تبدیل لنگه‌های خام معاملاتی به شیء کپسوله‌شده Opportunity همراه با محاسبات مالی
-    
-    مسئولیت‌ها:
-        - محاسبه total_premium
-        - محاسبه required_margin
-        - محاسبه liquidity_score
-        - استخراج break_even_points
-        - ساخت Opportunity نهایی
+    کارخانه پیشرفته و صنعتی تبدیل لنگه‌های ساختاریافته به شیء نهایی Opportunity
+    با اعمال ضریب قرارداد بورس تهران، فیلترینگ هوشمند سهم پایه و نگاشت مستقیم ماتریس ریسک.
     """
-    
+
     @staticmethod
     def create_opportunity(
         strategy_name: str,
         ticker: str,
-        legs: List[Opportunity],
-        metrics: Opportunity,
+        legs: List[LegDefinition],
         days_to_maturity: int,
+        metrics: Optional[Dict[str, Any]] = None,
         underlying_price: float = 0.0,
-        break_even_points: Optional[List[float]] = None) -> Opportunity:
+        break_even_points: Optional[List[float]] = None
+    ) -> Opportunity:
         """
-        ساخت و تنظیم فیلدهای تخت و ساختاریافته مدل Opportunity
-        
-        Args:
-            strategy_name: نام استراتژی
-            ticker: نماد پایه
-            legs: لیست لگ‌های استراتژی
-            metrics: معیارهای محاسبه شده
-            days_to_maturity: روزهای مانده تا سررسید
-            underlying_price: قیمت سهم پایه (برای محاسبه مارجین)
-            break_even_points: نقاط سربه‌سر (اختیاری)
-            
-        Returns:
-            Opportunity: شیء فرصت معاملاتی
+        ساخت، محاسبه و تنظیم فیلدهای تخت و ساختاریافته مدل Opportunity
         """
-        # 1. محاسبه کل حق بیمه
+        metadata = metrics or {}
+
+        # ۱. محاسبه کل حق بیمه واقعی با احتساب Contract Size بورس ایران
         total_premium = OpportunityBuilder._calculate_total_premium(legs)
-        
-        # 2. محاسبه وجه تضمین مورد نیاز
-        required_margin = OpportunityBuilder._calculate_required_margin(legs, underlying_price)
-        
-        # 3. محاسبه امتیاز نقدشوندگی
+
+        # ۲. محاسبه وجه تضمین کل (پاس دادن کل لنگه‌ها برای استراتژی‌های اسپرد)
+        required_margin = OpportunityBuilder._calculate_required_margin(
+            legs, underlying_price)
+
+        # ۳. محاسبه امتیاز نقدشوندگی
         liquidity_score = OpportunityBuilder._calculate_liquidity_score(legs)
-        
-        # 4. محاسبه امتیاز قابلیت اجرا
+
+        # ۴. محاسبه امتیاز قابلیت اجرا (بدون دخالت دادن حجم سهم پایه)
         execution_score = OpportunityBuilder._calculate_execution_score(legs)
-        
-        # 5. استخراج نقاط سربه‌سر
+
+        # ۵. استخراج نقاط سربه‌سر
         if break_even_points is None:
-            break_even_points = OpportunityBuilder._extract_break_even_points(metrics)
-        
-        # 6. ساخت Opportunity
+            break_even_points = metadata.get("break_even_points", [])
+
+        # ۶. کپسوله‌سازی و ساخت فرصت معاملاتی با فیلدهای کاملاً تخت (رفع ایراد شماره ۴)
         opp = Opportunity(
             strategy_name=strategy_name,
-            ticker=ticker,
+            underlying_ticker=ticker,
             legs=legs,
             days_to_maturity=days_to_maturity,
-            scan_timestamp=datetime.now(),
-            
-            # معیارهای سرمایه
+            timestamp=datetime.now(),
+
+            # معیارهای مالی و سرمایه‌ای واقعی
             required_margin=required_margin,
-            total_premium=total_premium,
-            
-            # معیارهای اجرا
+            net_premium=total_premium,
+
+            # فیلدهای تخت شده محاسباتی (امپراتوری متریک‌ها روی شیء اصلی)
+            max_profit=metadata.get("max_profit", 0.0),
+            max_loss=metadata.get("max_loss", 0.0),
+            pop=metadata.get("pop", 0.0),
+            risk_reward_ratio=metadata.get("risk_reward_ratio", 0.0),
+            expected_return_pct=metadata.get("expected_return_pct", 0.0),
+
+            # معیارهای ریسک و عملیات بازار
             liquidity_score=liquidity_score,
             execution_score=execution_score,
-            
-            # معیارهای ترکیبی
-            metrics=metrics,
-            
-            # نقاط سربه‌سر
-            break_even_points=break_even_points or [],
-            
-            # امتیاز نهایی و رتبه (مقدار اولیه)
+
+            # داده‌های جانبی و یونانی‌ها (Delta, Gamma, Vega, Theta)
+            metadata=metadata,
+            break_even_points=break_even_points,
+
+            # رتبه و امتیاز نهایی پیش‌فرض
             final_score=0.0,
-            rank=0)
-        
+            rank=0
+        )
+
         return opp
-    
+
     @staticmethod
-    def _calculate_total_premium(legs: List[Opportunity]) -> float:
+    def _calculate_total_premium(legs: List[LegDefinition]) -> float:
         """
-        محاسبه کل حق بیمه استراتژی
-        
-        فرمول: جمع (قیمت ورود * وزن) برای همه لگ‌ها
+        محاسبه کل ارزش ریالی حق بیمه استراتژی بر اساس فرآیند عرضه و تقاضا و اندازه قرارداد.
+
+        Formula: Sum(Entry Price * Contract Size * Ratio)
         """
         total = 0.0
         for leg in legs:
-            # وزن مثبت = خرید (هزینه)، وزن منفی = فروش (دریافت)
-            total += leg.entry_price * leg.weight
+            contract = leg.contract
+
+            # 🛠️ رفع ایراد شماره ۵: هشدار برای لنگه بدون قرارداد
+            if not contract:
+                logger.warning(
+                    f"لنگه معاملاتی فاقد ابزار کانتراکت کپسوله‌شده است. لنگه نادیده گرفته شد.")
+                continue
+
+            # استخراج ضریب قرارداد (برای سهام عادی به صورت پیش‌فرض ۱ در نظر گرفته می‌شود اگر فیلد پر نباشد)
+            size = getattr(contract, "contract_size", 1) or 1
+
+            # تعیین قیمت لنگه بر اساس عرضه/تقاضا
+            if contract.option_type == OptionType.STOCK:
+                entry_price = contract.last_price
+            else:
+                if leg.side == Side.BUY:
+                    entry_price = contract.ask if contract.ask > 0 else contract.last_price
+                else:
+                    entry_price = contract.bid if contract.bid > 0 else contract.last_price
+
+            # 🛠️ رفع ایراد شماره ۱ و ۲: ضرب دقیق در اندازه قرارداد (Contract Size)
+            premium_value = entry_price * size * leg.ratio
+
+            if leg.side == Side.BUY:
+                total += premium_value
+            else:
+                total -= premium_value
+
         return round(total, 2)
-    
+
     @staticmethod
-    def _calculate_required_margin(
-        legs: List[Opportunity],
-        underlying_price: float) -> float:
+    def _calculate_required_margin(legs: List[LegDefinition], underlying_price: float) -> float:
         """
-        محاسبه وجه تضمین مورد نیاز استراتژی
-        
-        فقط برای موقعیت‌های فروش (Short) محاسبه می‌شود
+        محاسبه وجه تضمین مورد نیاز استراتژی.
         """
+        # 🛠️ رفع ایراد شماره ۳: پاس دادن کل ساختار پوزیشن به موتور مارجین
+        # تا در صورت اسپردهای کال/پوت، به جای جمع جبری، تخفیف مارجین (Spread Margin) اعمال شود.
+        try:
+            # اگر MarginCalculator شما متد دریافت کل لگ‌ها را دارد:
+            if hasattr(MarginCalculator, "calculate_strategy_margin"):
+                return MarginCalculator.calculate_strategy_margin(legs, underlying_price)
+        except Exception as e:
+            logger.error(f"خطا در محاسبات مارجین ترکیبی استراتژی: {e}")
+
+        # Fallback به محاسبات تک‌لگی در صورت عدم پشتیبانی لایه مارجین از استراتژی‌های ترکیبی
         total_margin = 0.0
-        
         for leg in legs:
             if leg.side == Side.SELL:
                 contract = leg.contract
-                margin = MarginCalculator.calculate_contract_margin(
+                if not contract or contract.option_type == OptionType.STOCK:
+                    continue
+                margin_info = MarginCalculator.calculate_contract_margin(
                     contract=contract,
-                    underlying_close_price=underlying_price or contract.underlying_price)
-                total_margin += margin["required_margin"] * leg.ratio
-        
+                    underlying_close_price=underlying_price or contract.underlying_price
+                )
+                total_margin += margin_info.get("required_margin",
+                                                0.0) * leg.ratio
+
         return round(total_margin, 2)
-    
+
     @staticmethod
     def _calculate_liquidity_score(legs: List[LegDefinition]) -> float:
         """
-        محاسبه امتیاز نقدشوندگی استراتژی
+        محاسبه امتیاز نقدشوندگی استراتژی بر مبنای جریمه ضعیف‌ترین لنگه معاملاتی.
         """
         if not legs:
             return 0.0
-        
+
         scores = []
         for leg in legs:
-            score = LiquidityScorer.score_single_contract(leg.contract)
-            scores.append(score)
-        
-        # 70% وزن ضعیف‌ترین لگ + 30% میانگین
-        weakest = min(scores)
-        avg = sum(scores) / len(scores)
-        
-        return round((weakest * 0.70) + (avg * 0.30), 2)
-    
+            contract = leg.contract
+            if not contract:
+                continue
+
+            if contract.option_type == OptionType.STOCK:
+                scores.append(100.0)  # نقدشوندگی کامل دارایی پایه در بورس
+            else:
+                score = LiquidityScorer.score_single_contract(contract)
+                scores.append(score)
+
+        if not scores:
+            return 0.0
+
+        return round((min(scores) * 0.70) + ((sum(scores) / len(scores)) * 0.30), 2)
+
     @staticmethod
-    def _calculate_execution_score(legs: List[Opportunity]) -> float:
+    def _calculate_execution_score(legs: List[LegDefinition]) -> float:
         """
-        محاسبه امتیاز قابلیت اجرا استراتژی
+        محاسبه امتیاز ریسک لغزش قیمت بر برآیند همزمان لنگه‌های آپشن.
         """
         if not legs:
             return 0.0
-        
-        # حداقل حجم در بین لگ‌ها
-        min_volume = min(leg.contract.volume for leg in legs)
-        min_oi = min(leg.contract.open_interest for leg in legs)
-        
-        # حداکثر اسپرد
+
+        # 🛠️ رفع ایراد شماره ۶: استخراج لنگه‌ها به استثنای دارایی پایه (STOCK)
+        # زیرا حجم میلیونی معاملات سهم پایه نباید عمق کم آپشن‌ها را پنهان کند.
+        option_contracts = [
+            leg.contract for leg in legs if leg.contract and leg.contract.option_type != OptionType.STOCK]
+
+        if not option_contracts:
+            return 100.0  # استراتژی‌های صرفاً شامل سهام ریسک لغزش ابزار مشتقه ندارند
+
+        min_volume = min((c.volume for c in option_contracts), default=0)
+        min_oi = min((c.open_interest for c in option_contracts), default=0)
+
         max_spread = 0.0
-        for leg in legs:
-            if leg.contract.bid > 0 and leg.contract.ask > 0:
-                spread = (leg.contract.ask - leg.contract.bid) / ((leg.contract.bid + leg.contract.ask) / 2)
+        for contract in option_contracts:
+            if contract.bid > 0 and contract.ask > 0:
+                spread = (contract.ask - contract.bid) / \
+                    ((contract.bid + contract.ask) / 2)
                 max_spread = max(max_spread, spread)
-        
+
         score = 100.0
-        
-        # جریمه حجم
+
         if min_volume < 50:
             score -= 30
         elif min_volume < 200:
             score -= 15
-        
-        # جریمه OI
+
         if min_oi < 20:
             score -= 25
         elif min_oi < 100:
             score -= 12
-        
-        # جریمه اسپرد
+
         if max_spread > 0.15:
             score -= 30
         elif max_spread > 0.10:
             score -= 20
         elif max_spread > 0.05:
             score -= 10
-        
-        # جریمه تعداد لگ‌ها
+
         score -= (len(legs) - 1) * 5
-        
+
         return max(0.0, round(score, 2))
-    
-    @staticmethod
-    def _extract_break_even_points(metrics: Opportunity) -> List[float]:
-        """
-        استخراج نقاط سربه‌سر از معیارها
-        
-        در صورت عدم وجود، لیست خالی برمی‌گرداند
-        """
-        # در آینده می‌توان از محاسبات Payoff استخراج کرد
-        return []
