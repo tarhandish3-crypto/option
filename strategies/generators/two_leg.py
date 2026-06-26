@@ -64,22 +64,19 @@ class TwoLegGenerator(BaseGenerator):
     # ---------------------------------------------------------
 
     def generate(
-        self,
-        underlying: UnderlyingAsset,
-        contracts: List[OptionContract],
-        contract_scores: Dict[str, float],
-    ) -> List[Opportunity]:
+            self,
+            underlying: UnderlyingAsset,
+            contracts: List[OptionContract],
+            contract_scores: Dict[str, float],) -> List[Opportunity]:
 
         opportunities: List[Opportunity] = []
 
         if len(contracts) < 2:
             return opportunities
 
-        patterns = self.strategy_def.weight_pattern
+        patterns = self.strategy_def.patterns
         rules = self.strategy_def.rules or {}
-
         seen_keys: Set[Tuple] = set()
-
         maturity_mode = rules.get("maturity_order", "same")
 
         # =====================================================
@@ -87,22 +84,15 @@ class TwoLegGenerator(BaseGenerator):
         # =====================================================
 
         if maturity_mode == "same":
-
             maturity_groups: Dict[int, List[OptionContract]] = {}
-
             for contract in contracts:
                 maturity_groups.setdefault(
-                    contract.days_to_maturity,
-                    []
-                ).append(contract)
-
+                    contract.days_to_maturity, []).append(contract)
             candidate_iterables = []
-
             for _, group in maturity_groups.items():
                 if len(group) >= 2:
                     candidate_iterables.extend(
-                        combinations(group, 2)
-                    )
+                        combinations(group, 2))
 
         # =====================================================
         # حالت Calendar / Diagonal
@@ -110,35 +100,27 @@ class TwoLegGenerator(BaseGenerator):
 
         else:
             candidate_iterables = combinations(
-                contracts,
-                2
-            )
+                contracts, 2)
 
         # =====================================================
         # پردازش کاندیداها
         # =====================================================
 
         for candidate in candidate_iterables:
-
             candidate_contracts = list(candidate)
-
             matched_sets = PatternMatcher.match_all(
                 contracts=candidate_contracts,
                 patterns=patterns,
-                strategy_rules=rules,
-            )
+                strategy_rules=rules,)
 
             for matched_legs in matched_sets:
 
                 if not self._validate_strike_gap(
-                    matched_legs,
-                    rules,
-                ):
+                        matched_legs, rules,):
                     continue
 
                 unique_key = self._build_unique_key(
-                    matched_legs
-                )
+                    matched_legs)
 
                 if unique_key in seen_keys:
                     continue
@@ -181,10 +163,9 @@ class TwoLegGenerator(BaseGenerator):
     # ---------------------------------------------------------
 
     def _validate_strike_gap(
-        self,
-        legs: List[LegDefinition],
-        rules: Dict[str, Any],
-    ) -> bool:
+            self,
+            legs: List[LegDefinition],
+            rules: Dict[str, Any],) -> bool:
 
         if len(legs) != 2:
             return False
@@ -249,8 +230,7 @@ class TwoLegGenerator(BaseGenerator):
 
     @staticmethod
     def _build_unique_key(
-        legs: List[LegDefinition]
-    ) -> Tuple:
+            legs: List[LegDefinition]) -> Tuple:
 
         return tuple(
             sorted(
@@ -266,9 +246,8 @@ class TwoLegGenerator(BaseGenerator):
 
     @staticmethod
     def _build_metadata(
-        legs: List[LegDefinition],
-        contract_scores: Dict[str, float],
-    ) -> Dict[str, Any]:
+            legs: List[LegDefinition],
+            contract_scores: Dict[str, float],) -> Dict[str, Any]:
 
         metadata: Dict[str, Any] = {}
 

@@ -1,568 +1,171 @@
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - Started at 2026-06-24 21:07:41
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 21:07:41 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 21:07:41
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:07:41 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 21:07:41 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 21:07:41 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 21:07:41 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 21:07:41 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 21:07:41 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 21:07:41 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 435 records kept, 719 removed
-2026-06-24 21:07:41 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 21:07:42 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 435 records
-2026-06-24 21:07:42 - OptionScanner.Main - INFO - MarketSnapshot: 435 contracts, 20 underlyings.
-2026-06-24 21:07:42 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 21:07:42 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 435 contracts, 20 underlyings, parallel=False, workers=3
-2026-06-24 21:07:55 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 20 underlying assets...
-2026-06-24 21:07:55 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1: 20 -> 20 tickers remaining.
-2026-06-24 21:07:55 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2: 20 -> 19 tickers remaining.
-2026-06-24 21:08:05 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
-2026-06-24 21:08:14 - OptionScanner.Engine.TickerScanner - INFO - Scanning اخابر: 12 contracts
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bear_put_spread: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bull_call_spread: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.TwoLeg - INFO - collar: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.TwoLeg - INFO - conversion: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.StockOption - INFO - covered_call: Generated 4 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.FourLeg - INFO - iron_condor: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.FourLeg - INFO - long_box: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_guts: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_straddle: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_strangle: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strap: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strip: Generated 0 opportunities
-2026-06-24 21:08:14 - OptionScanner.Engine.TickerScanner - INFO - Generated 4 opportunities for اخابر
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - Started at 2026-06-24 21:09:01
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 21:09:01 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 21:09:01
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 21:09:01 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 21:09:01 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 21:09:01 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 21:09:02 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 21:09:02 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 21:09:02 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 21:09:02 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 435 records kept, 719 removed
-2026-06-24 21:09:02 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 21:09:02 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 435 records
-2026-06-24 21:09:02 - OptionScanner.Main - INFO - MarketSnapshot: 435 contracts, 20 underlyings.
-2026-06-24 21:09:02 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 21:09:02 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 435 contracts, 20 underlyings, parallel=False, workers=3
-2026-06-24 21:09:08 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 20 underlying assets...
-2026-06-24 21:09:08 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1: 20 -> 20 tickers remaining.
-2026-06-24 21:09:08 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2: 20 -> 19 tickers remaining.
-2026-06-24 21:09:17 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
-2026-06-24 21:11:50 - OptionScanner.Engine.TickerScanner - INFO - Scanning اخابر: 12 contracts
-2026-06-24 21:20:32 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bear_put_spread: Generated 0 opportunities
-2026-06-24 21:46:29 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bull_call_spread: Generated 0 opportunities
-2026-06-24 21:46:43 - OptionScanner.Strategies.Generators.TwoLeg - INFO - collar: Generated 0 opportunities
-2026-06-24 21:47:30 - OptionScanner.Strategies.Generators.TwoLeg - INFO - conversion: Generated 0 opportunities
-2026-06-24 21:47:39 - OptionScanner.Strategies.Generators.StockOption - INFO - covered_call: Generated 4 opportunities
-2026-06-24 21:47:51 - OptionScanner.Strategies.Generators.FourLeg - INFO - iron_condor: Generated 0 opportunities
-2026-06-24 21:47:51 - OptionScanner.Strategies.Generators.FourLeg - INFO - long_box: Generated 0 opportunities
-2026-06-24 21:47:52 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_guts: Generated 0 opportunities
-2026-06-24 21:47:59 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_straddle: Generated 0 opportunities
-2026-06-24 21:47:59 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_strangle: Generated 0 opportunities
-2026-06-24 21:48:03 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strap: Generated 0 opportunities
-2026-06-24 21:48:08 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strip: Generated 0 opportunities
-2026-06-24 21:48:09 - OptionScanner.Engine.TickerScanner - INFO - Generated 4 opportunities for اخابر
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - Started at 2026-06-24 22:00:46
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:00:46 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:00:46
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:00:46 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:00:46 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:00:46 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:00:47 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:00:47 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:00:47 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:00:47 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 435 records kept, 719 removed
-2026-06-24 22:00:47 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 22:00:47 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 435 records
-2026-06-24 22:00:48 - OptionScanner.Main - INFO - MarketSnapshot: 435 contracts, 20 underlyings.
-2026-06-24 22:00:48 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 22:00:48 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 435 contracts, 20 underlyings, parallel=False, workers=3
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - Started at 2026-06-24 22:09:33
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:09:33 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:09:33
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:09:33 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:09:34 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:09:34 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:09:34 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:09:34 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:09:34 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - Started at 2026-06-24 22:11:02
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:11:02 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:11:02
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:02 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:11:02 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:11:02 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:11:02 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:11:02 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:11:02 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - Started at 2026-06-24 22:11:43
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:11:43 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:11:43
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:11:43 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:11:43 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:11:43 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:11:43 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:11:43 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:11:43 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - Started at 2026-06-24 22:14:54
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:14:54 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:14:54
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:14:54 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:14:54 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:14:54 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:14:54 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:14:54 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:14:54 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - Started at 2026-06-24 22:16:44
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:16:44 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:16:44
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:16:44 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:16:44 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:16:44 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:16:46 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:16:46 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:16:46 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:16:50 - OptionScanner.Main - ERROR - Cycle #1 failed critical execution: 'Ticker-UA'
-Traceback (most recent call last):
-  File "C:\Users\Panahi\AppData\Roaming\Python\Python312\site-packages\pandas\core\indexes\base.py", line 3812, in get_loc
-    return self._engine.get_loc(casted_key)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "pandas/_libs/index.pyx", line 167, in pandas._libs.index.IndexEngine.get_loc
-  File "pandas/_libs/index.pyx", line 196, in pandas._libs.index.IndexEngine.get_loc
-  File "pandas/_libs/hashtable_class_helper.pxi", line 7088, in pandas._libs.hashtable.PyObjectHashTable.get_item
-  File "pandas/_libs/hashtable_class_helper.pxi", line 7096, in pandas._libs.hashtable.PyObjectHashTable.get_item
-KeyError: 'Ticker-UA'
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "F:\python_project\boors\Ekhtiyar\generate_strategyV4\main.py", line 169, in run_cycle
-    snapshot = self.data_manager.get_market_snapshot(
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "F:\python_project\boors\Ekhtiyar\generate_strategyV4\data\manager.py", line 111, in get_market_snapshot
-    snapshot = self._process_and_convert(df_raw, calc_advanced)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "F:\python_project\boors\Ekhtiyar\generate_strategyV4\data\manager.py", line 128, in _process_and_convert
-    df = DataCleaner.clean(df)
-         ^^^^^^^^^^^^^^^^^^^^^
-  File "F:\python_project\boors\Ekhtiyar\generate_strategyV4\data\cleaner.py", line 68, in clean
-    df = df[df['Ticker-UA'].isin(DEBUG_SYMBOLS)]
-            ~~^^^^^^^^^^^^^
-  File "C:\Users\Panahi\AppData\Roaming\Python\Python312\site-packages\pandas\core\frame.py", line 4107, in __getitem__
-    indexer = self.columns.get_loc(key)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "C:\Users\Panahi\AppData\Roaming\Python\Python312\site-packages\pandas\core\indexes\base.py", line 3819, in get_loc
-    raise KeyError(key) from err
-KeyError: 'Ticker-UA'
-2026-06-24 22:16:50 - OptionScanner.Main - INFO - Waiting 2 minutes for next market refresh...
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - Started at 2026-06-24 22:17:33
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:17:33 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:17:33
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:17:33 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:17:33 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:17:33 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:17:34 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:17:34 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:17:34 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - Started at 2026-06-24 22:18:39
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:18:39 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:18:39
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:18:39 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:18:39 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:18:39 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:18:40 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:18:40 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:18:40 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:18:40 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
-2026-06-24 22:18:40 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 22:18:40 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
-2026-06-24 22:18:40 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
-2026-06-24 22:18:40 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 22:18:40 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 57 contracts, 1 underlyings, parallel=False, workers=3
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - Started at 2026-06-24 22:30:28
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:30:28 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:30:28
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:30:28 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:30:28 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:30:28 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:30:28 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:30:28 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:30:28 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:30:28 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
-2026-06-24 22:30:28 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 22:41:18 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - Started at 2026-06-24 22:46:49
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 22:46:49 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 22:46:49
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 22:46:49 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 22:46:49 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 22:46:49 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 22:46:50 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 22:46:50 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 22:46:50 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 22:46:50 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
-2026-06-24 22:46:50 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 22:46:54 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
-2026-06-24 22:46:54 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
-2026-06-24 22:46:54 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 22:46:54 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 57 contracts, 1 underlyings, parallel=False, workers=3
-2026-06-24 22:49:10 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
-2026-06-24 22:49:10 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1: 1 -> 1 tickers remaining.
-2026-06-24 22:49:10 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2: 1 -> 1 tickers remaining.
-2026-06-24 22:49:10 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
-2026-06-24 22:54:23 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
-2026-06-24 22:55:42 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bear_put_spread: Generated 0 opportunities
-2026-06-24 22:55:56 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bull_call_spread: Generated 0 opportunities
-2026-06-24 22:55:56 - OptionScanner.Strategies.Generators.TwoLeg - INFO - collar: Generated 0 opportunities
-2026-06-24 22:55:56 - OptionScanner.Strategies.Generators.TwoLeg - INFO - conversion: Generated 0 opportunities
-2026-06-24 22:55:56 - OptionScanner.Strategies.Generators.StockOption - INFO - covered_call: Generated 13 opportunities
-2026-06-24 22:55:56 - OptionScanner.Strategies.Generators.FourLeg - INFO - iron_condor: Generated 0 opportunities
-2026-06-24 22:55:56 - OptionScanner.Strategies.Generators.FourLeg - INFO - long_box: Generated 0 opportunities
-2026-06-24 22:55:57 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_guts: Generated 0 opportunities
-2026-06-24 22:55:57 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_straddle: Generated 0 opportunities
-2026-06-24 22:55:57 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_strangle: Generated 0 opportunities
-2026-06-24 22:55:57 - OptionScanner.Strategies.Generators.StockOption - INFO - married_put: Generated 23 opportunities
-2026-06-24 22:55:57 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strap: Generated 0 opportunities
-2026-06-24 22:55:57 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strip: Generated 0 opportunities
-2026-06-24 22:55:57 - OptionScanner.Engine.TickerScanner - INFO - Generated 36 opportunities for اهرم
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - Started at 2026-06-24 23:01:41
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 23:01:41 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 23:01:41
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:01:41 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 23:01:41 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 23:01:41 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 23:01:42 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 23:01:42 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 23:01:42 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 23:01:42 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
-2026-06-24 23:01:42 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 23:01:43 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
-2026-06-24 23:01:43 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
-2026-06-24 23:01:43 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 23:01:43 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 57 contracts, 1 underlyings, parallel=False, workers=3
-2026-06-24 23:02:14 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
-2026-06-24 23:02:14 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1: 1 -> 1 tickers remaining.
-2026-06-24 23:02:14 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2: 1 -> 1 tickers remaining.
-2026-06-24 23:02:14 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
-2026-06-24 23:02:17 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bear_put_spread: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bull_call_spread: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.TwoLeg - INFO - collar: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.TwoLeg - INFO - conversion: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.StockOption - INFO - covered_call: Generated 18 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.FourLeg - INFO - iron_condor: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.FourLeg - INFO - long_box: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_guts: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_straddle: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_strangle: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.StockOption - INFO - married_put: Generated 23 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strap: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strip: Generated 0 opportunities
-2026-06-24 23:02:17 - OptionScanner.Engine.TickerScanner - INFO - Generated 41 opportunities for اهرم
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - Started at 2026-06-24 23:03:01
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 23:03:01 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 23:03:01
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:03:01 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 23:03:01 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 23:03:01 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 23:03:03 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 23:03:03 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 23:03:03 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 23:03:03 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
-2026-06-24 23:03:03 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 23:03:04 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
-2026-06-24 23:03:04 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
-2026-06-24 23:03:04 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 23:03:04 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 57 contracts, 1 underlyings, parallel=False, workers=3
-2026-06-24 23:03:06 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
-2026-06-24 23:03:06 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1: 1 -> 1 tickers remaining.
-2026-06-24 23:03:06 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2: 1 -> 1 tickers remaining.
-2026-06-24 23:03:06 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
-2026-06-24 23:03:07 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bear_put_spread: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bull_call_spread: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.TwoLeg - INFO - collar: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.TwoLeg - INFO - conversion: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.StockOption - INFO - covered_call: Generated 18 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.FourLeg - INFO - iron_condor: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.FourLeg - INFO - long_box: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_guts: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_straddle: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.TwoLeg - INFO - long_strangle: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.StockOption - INFO - married_put: Generated 23 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strap: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Strategies.Generators.ThreeLeg - INFO - strip: Generated 0 opportunities
-2026-06-24 23:03:07 - OptionScanner.Engine.TickerScanner - INFO - Generated 41 opportunities for اهرم
-2026-06-24 23:05:10 - OptionScanner.Engine.ScannerEngine - INFO - [SUCCESS] Full market scan completed in 124574.74 ms. Found 41 opportunities, scanned 1 tickers, errors: 0
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - Started at 2026-06-24 23:09:53
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 23:09:53 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 23:09:53
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:09:53 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 23:09:53 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 23:09:53 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 23:09:55 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 23:09:55 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 23:09:55 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 23:09:55 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
-2026-06-24 23:09:55 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 23:09:55 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
-2026-06-24 23:09:55 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
-2026-06-24 23:09:55 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 23:09:55 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 57 contracts, 1 underlyings, parallel=False, workers=3
-2026-06-24 23:10:40 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
-2026-06-24 23:10:40 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1: 1 -> 1 tickers remaining.
-2026-06-24 23:10:40 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2: 1 -> 1 tickers remaining.
-2026-06-24 23:10:40 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
-2026-06-24 23:10:52 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
-2026-06-24 23:11:56 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bear_put_spread: Generated 0 opportunities
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - Started at 2026-06-24 23:16:19
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 23:16:19 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 23:16:19
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:16:19 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 23:16:19 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 23:16:19 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 23:16:21 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 23:16:21 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 23:16:21 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 23:16:21 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
-2026-06-24 23:16:21 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 23:16:22 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
-2026-06-24 23:16:22 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
-2026-06-24 23:16:22 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 23:16:22 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 57 contracts, 1 underlyings, parallel=False, workers=3
-2026-06-24 23:16:24 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
-2026-06-24 23:16:24 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1: 1 -> 1 tickers remaining.
-2026-06-24 23:16:24 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2: 1 -> 1 tickers remaining.
-2026-06-24 23:16:24 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
-2026-06-24 23:16:24 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
-2026-06-24 23:17:29 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bear_put_spread: Generated 0 opportunities
-2026-06-24 23:17:31 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bull_call_spread: Generated 0 opportunities
-2026-06-24 23:17:51 - OptionScanner.Main - INFO - Received SIGINT signal. Initiating graceful shutdown...
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - Started at 2026-06-24 23:32:35
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - Loading strategies...
-2026-06-24 23:32:35 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-24 23:32:35
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - ============================================================
-2026-06-24 23:32:35 - OptionScanner.Main - INFO - Fetching market snapshot...
-2026-06-24 23:32:35 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
-2026-06-24 23:32:35 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
-2026-06-24 23:32:35 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
-2026-06-24 23:32:35 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
-2026-06-24 23:32:35 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
-2026-06-24 23:32:35 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
-2026-06-24 23:32:35 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
-2026-06-24 23:32:36 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
-2026-06-24 23:32:36 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
-2026-06-24 23:32:36 - OptionScanner.Main - INFO - Invoking ScannerEngine...
-2026-06-24 23:32:36 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine initialized with 57 contracts, 1 underlyings, parallel=False, workers=3
-2026-06-24 23:32:38 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
-2026-06-24 23:32:38 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1: 1 -> 1 tickers remaining.
-2026-06-24 23:32:38 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2: 1 -> 1 tickers remaining.
-2026-06-24 23:32:38 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
-2026-06-24 23:32:38 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
-2026-06-24 23:33:56 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bear_put_spread: Generated 0 opportunities
-2026-06-24 23:34:30 - OptionScanner.Strategies.Generators.TwoLeg - INFO - bull_call_spread: Generated 0 opportunities
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - Started at 2026-06-26 22:03:03
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy bear_put_spread: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy bull_call_spread: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy collar: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy conversion: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy covered_call: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy iron_condor: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy long_box: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy long_guts: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy long_straddle: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy long_strangle: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy married_put: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy strap: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy strip: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:03:03 - OptionScanner.Strategies.Core - INFO - Loaded 0 strategies
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-26 22:03:03
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:03:03 - OptionScanner.Main - INFO - Fetching market snapshot...
+2026-06-26 22:03:03 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
+2026-06-26 22:03:03 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
+2026-06-26 22:03:04 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
+2026-06-26 22:03:04 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
+2026-06-26 22:03:04 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
+2026-06-26 22:03:04 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
+2026-06-26 22:03:04 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
+2026-06-26 22:03:07 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
+2026-06-26 22:03:07 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
+2026-06-26 22:03:07 - OptionScanner.Main - INFO - Invoking ScannerEngine...
+2026-06-26 22:03:07 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine V4 initialized: 57 contracts, parallel=False, workers=3
+2026-06-26 22:03:07 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
+2026-06-26 22:03:07 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1 (_filter_min_volume): 1 -> 1 tickers remaining.
+2026-06-26 22:03:07 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2 (_filter_min_options): 1 -> 1 tickers remaining.
+2026-06-26 22:03:07 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
+2026-06-26 22:03:07 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
+2026-06-26 22:03:07 - OptionScanner.Engine.TickerScanner - INFO - Generated 0 opportunities for اهرم
+2026-06-26 22:03:07 - OptionScanner.Engine.ScannerEngine - INFO - [SUCCESS] Scan completed in 6.00 ms. Opportunities: 0 | Scanned Tickers: 0 | Generator Filtered: 0 | Errors: 0
+2026-06-26 22:03:07 - OptionScanner.Main - WARNING - No opportunities discovered in this market state.
+2026-06-26 22:03:08 - OptionScanner.Main - INFO - Waiting 2 minutes for next market refresh...
+2026-06-26 22:07:06 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:07:06 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:07:06 - OptionScanner.Main - INFO - Started at 2026-06-26 22:07:06
+2026-06-26 22:07:06 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:07:06 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:16:05 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:16:05 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:16:05 - OptionScanner.Main - INFO - Started at 2026-06-26 22:16:05
+2026-06-26 22:16:05 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:16:05 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:20:48 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:20:48 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:20:48 - OptionScanner.Main - INFO - Started at 2026-06-26 22:20:48
+2026-06-26 22:20:48 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:20:48 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:21:11 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy bear_put_spread: StrategyDefinition.__init__() got an unexpected keyword argument 'legs_count'
+2026-06-26 22:26:41 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:26:41 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:26:41 - OptionScanner.Main - INFO - Started at 2026-06-26 22:26:41
+2026-06-26 22:26:41 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:26:41 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:27:18 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy bull_call_spread: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:39:44 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:39:44 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:39:44 - OptionScanner.Main - INFO - Started at 2026-06-26 22:39:44
+2026-06-26 22:39:44 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:39:44 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:40:36 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy collar: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:40:45 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy conversion: StrategyDefinition.create() got an unexpected keyword argument 'weight_pattern'
+2026-06-26 22:40:57 - OptionScanner.Strategies.Core - INFO - Loaded 11 strategies
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-26 22:40:57
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:40:57 - OptionScanner.Main - INFO - Fetching market snapshot...
+2026-06-26 22:40:57 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
+2026-06-26 22:40:57 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
+2026-06-26 22:44:31 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:44:31 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:44:31 - OptionScanner.Main - INFO - Started at 2026-06-26 22:44:31
+2026-06-26 22:44:31 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:44:31 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:45:19 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:45:19 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:45:19 - OptionScanner.Main - INFO - Started at 2026-06-26 22:45:19
+2026-06-26 22:45:19 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:45:19 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:45:29 - OptionScanner.Strategies.Core - WARNING - Failed to load strategy conversion: StrategyDefinition.create() missing 1 required keyword-only argument: 'patterns'
+2026-06-26 22:46:29 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:46:29 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:46:29 - OptionScanner.Main - INFO - Started at 2026-06-26 22:46:29
+2026-06-26 22:46:29 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:46:29 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:46:47 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
+2026-06-26 22:47:14 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:47:14 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
+2026-06-26 22:47:14 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
+2026-06-26 22:47:14 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
+2026-06-26 22:47:14 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:47:24 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
+2026-06-26 22:47:26 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:47:27 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-26 22:47:27
+2026-06-26 22:47:28 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:47:30 - OptionScanner.Main - INFO - Fetching market snapshot...
+2026-06-26 22:47:31 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
+2026-06-26 22:47:31 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
+2026-06-26 22:47:35 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
+2026-06-26 22:47:35 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
+2026-06-26 22:47:35 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
+2026-06-26 22:47:35 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
+2026-06-26 22:47:35 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
+2026-06-26 22:47:39 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
+2026-06-26 22:47:41 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
+2026-06-26 22:47:43 - OptionScanner.Main - INFO - Invoking ScannerEngine...
+2026-06-26 22:47:44 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine V4 initialized: 57 contracts, parallel=False, workers=3
+2026-06-26 22:47:50 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
+2026-06-26 22:47:53 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1 (_filter_min_volume): 1 -> 1 tickers remaining.
+2026-06-26 22:47:53 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2 (_filter_min_options): 1 -> 1 tickers remaining.
+2026-06-26 22:47:56 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
+2026-06-26 22:48:12 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
+2026-06-26 22:50:32 - OptionScanner.Engine.TickerScanner - ERROR - Error generating bear_put_spread on اهرم: 'StrategyDefinition' object has no attribute 'weight_pattern'
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - OPTION STRATEGY SCANNER v3.0 [DSS ENGINE ARCHITECTURE]
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - Started at 2026-06-26 22:54:02
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - Loading strategies...
+2026-06-26 22:54:02 - OptionScanner.Strategies.Core - INFO - Loaded 13 strategies
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - Scan Mode: CONTINUOUS CYCLE (DSS Enabled)
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - Scan Interval: 2 minutes
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - Parallel Processing: False (workers: 3)
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - Continuous Decision Support System (DSS) Scan Mode Engaged.
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - Cycle #1 started at 2026-06-26 22:54:02
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - ============================================================
+2026-06-26 22:54:02 - OptionScanner.Main - INFO - Fetching market snapshot...
+2026-06-26 22:54:02 - OptionScanner.Data.Manager - INFO - Attempting to fetch from TSETMC (direct)...
+2026-06-26 22:54:02 - OptionScanner.Data.Downloader - INFO - Fetching data from TSETMC (direct)...
+2026-06-26 22:54:03 - OptionScanner.Data.Downloader - INFO - TSETMC direct: 1154 records loaded
+2026-06-26 22:54:03 - OptionScanner.Data.Manager - INFO - Successfully fetched from TSETMC (direct): 1154 records
+2026-06-26 22:54:03 - OptionScanner.Data.Cleaner - INFO - Starting cleaning with 1154 records
+2026-06-26 22:54:03 - OptionScanner.Data.Cleaner - INFO - Cleaning complete: 57 records kept, 1097 removed
+2026-06-26 22:54:03 - OptionScanner.Data.Manager - INFO - Calculating advanced metrics (BSM, Greeks, IV)...
+2026-06-26 22:54:04 - OptionScanner.Data.Manager - INFO - Advanced metrics calculated for 57 records
+2026-06-26 22:54:04 - OptionScanner.Main - INFO - MarketSnapshot: 57 contracts, 1 underlyings.
+2026-06-26 22:54:04 - OptionScanner.Main - INFO - Invoking ScannerEngine...
+2026-06-26 22:54:04 - OptionScanner.Engine.ScannerEngine - INFO - ScannerEngine V4 initialized: 57 contracts, parallel=False, workers=3
+2026-06-26 22:54:04 - OptionScanner.Engine.ScannerEngine - INFO - Starting full market scan for 1 underlying assets...
+2026-06-26 22:54:04 - OptionScanner.Engine.ScannerEngine - INFO - Filter 1 (_filter_min_volume): 1 -> 1 tickers remaining.
+2026-06-26 22:54:04 - OptionScanner.Engine.ScannerEngine - INFO - Filter 2 (_filter_min_options): 1 -> 1 tickers remaining.
+2026-06-26 22:54:04 - OptionScanner.Engine.ScannerEngine - INFO - Using sequential execution mode.
+2026-06-26 22:54:04 - OptionScanner.Engine.TickerScanner - INFO - Scanning اهرم: 57 contracts
+2026-06-26 22:54:09 - OptionScanner.Engine.OpportunityBuilder - ERROR - خطا در محاسبات مارجین ترکیبی استراتژی: LegDefinition.__init__() got an unexpected keyword argument 'entry_price'
+2026-06-26 22:54:09 - OptionScanner.Engine.TickerScanner - ERROR - Error generating bear_put_spread on اهرم: MarginCalculator.calculate_contract_margin() got an unexpected keyword argument 'underlying_close_price'
+2026-06-26 22:54:16 - OptionScanner.Engine.OpportunityBuilder - ERROR - خطا در محاسبات مارجین ترکیبی استراتژی: LegDefinition.__init__() got an unexpected keyword argument 'entry_price'
+2026-06-26 22:54:16 - OptionScanner.Engine.TickerScanner - ERROR - Error generating bull_call_spread on اهرم: MarginCalculator.calculate_contract_margin() got an unexpected keyword argument 'underlying_close_price'

@@ -1,15 +1,32 @@
 # strategies/definitions/long_straddle.py
+# -*- coding: utf-8 -*-
 
-from strategies.base import GeneratorType, StrategyDefinition
+from core.enums import GeneratorType
+from strategies.base import StrategyDefinition
 
 DEFINITION = StrategyDefinition.create(
     name="long_straddle",
     generator_type=GeneratorType.TWO_LEG,
-    weight_pattern=[("call", 1.0), ("put", 1.0)],
+    patterns=[
+        {
+            "option_type": "CALL",
+            "side": "BUY",
+            "ratio": 1,
+            "strike_group": "K1",
+            "maturity_group": "M1",
+        },
+        {
+            "option_type": "PUT",
+            "side": "BUY",
+            "ratio": 1,
+            # هر دو باید دقیقاً یک استرایک داشته باشند
+            "strike_group": "K1",
+            "maturity_group": "M1",
+        },
+    ],
     include_stock=False,
-    description="Long Straddle - خرید Call + خرید Put با strike یکسان",
+    description="Long Straddle - Buy ATM Call + Buy ATM Put",
     rules={
-        "strike_equal": True,
-        "same_maturity": True,
-    }
+        "maturity_order": "same",
+    },
 )

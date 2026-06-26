@@ -34,7 +34,7 @@ __all__ = [
     "StrategyDefinition",
     "LegDefinition",
     "GeneratorType",
-    
+
     # Core (Registry)
     "get_strategy",
     "get_all_strategies",
@@ -42,7 +42,7 @@ __all__ = [
     "get_strategies_by_generator",
     "reload_strategies",
     "register_strategy",
-    
+
     # Config
     "TARGET_STRATEGIES",
     "CLOSE_STOCK_POLICY",
@@ -50,7 +50,7 @@ __all__ = [
     "get_strategy_config",
     "get_close_stock_policy",
     "is_strategy_active",
-    
+
     # Generators
     "get_generator",
     "BaseGenerator",

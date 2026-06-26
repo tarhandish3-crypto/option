@@ -1,15 +1,35 @@
 # strategies/definitions/long_strangle.py
+# -*- coding: utf-8 -*-
 
-from strategies.base import GeneratorType, StrategyDefinition
+from core.enums import GeneratorType
+from strategies.base import StrategyDefinition
 
 DEFINITION = StrategyDefinition.create(
     name="long_strangle",
     generator_type=GeneratorType.TWO_LEG,
-    weight_pattern=[("put", 1.0), ("call", 1.0)],
+    patterns=[
+        {
+            "option_type": "PUT",
+            "side": "BUY",
+            "ratio": 1,
+            "strike_group": "K1",
+            "maturity_group": "M1",
+        },
+        {
+            "option_type": "CALL",
+            "side": "BUY",
+            "ratio": 1,
+            "strike_group": "K2",
+            "maturity_group": "M1",
+        },
+    ],
     include_stock=False,
-    description="Long Strangle - خرید Put + خرید Call (put_strike < call_strike)",
+    description="Long Strangle",
     rules={
-        "strike_order": "put_then_call",
-        "same_maturity": True,
-    }
+        "strike_order": "ascending",
+        "maturity_order": "same",
+
+        # فاصله حداقل بین دو استرایک
+        "min_strike_gap_pct": 0.01,
+    },
 )

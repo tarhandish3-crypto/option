@@ -1,15 +1,32 @@
 # strategies/definitions/bear_put_spread.py
 
-from strategies.base import GeneratorType, StrategyDefinition
+from core.enums import Side, OptionType
+from core.models import StrategyLegPattern
+from strategies.base import StrategyDefinition, GeneratorType
 
-DEFINITION = StrategyDefinition.create(
+DEFINITION = StrategyDefinition(
     name="bear_put_spread",
     generator_type=GeneratorType.TWO_LEG,
-    weight_pattern=[("put", -1.0), ("put", 1.0)],
-    include_stock=False,
-    description="Bear Put Spread - فروش Put پایین‌تر + خرید Put بالاتر",
+    patterns=(
+        StrategyLegPattern(
+            option_type=OptionType.PUT,
+            side=Side.SELL,
+            ratio=1,
+            strike_group="K1",
+            maturity_group="M1",
+        ),
+        StrategyLegPattern(
+            option_type=OptionType.PUT,
+            side=Side.BUY,
+            ratio=1,
+            strike_group="K2",
+            maturity_group="M1",
+        ),
+    ),
+
+    description="Bear Put Spread",
     rules={
         "strike_order": "ascending",
-        "same_maturity": True,
-    }
+        "maturity_order": "same",
+    },
 )

@@ -34,7 +34,6 @@ def _load_strategies():
         for _, name, _ in pkgutil.iter_modules(defs_module.__path__):
             try:
                 imported_module = importlib.import_module(f"strategies.definitions.{name}")
-                
                 if hasattr(imported_module, "DEFINITION"):
                     strategy = getattr(imported_module, "DEFINITION")
                     _strategies[strategy.name] = strategy

@@ -1,17 +1,38 @@
 # strategies/definitions/strip.py
+# -*- coding: utf-8 -*-
 
-from strategies.base import GeneratorType, StrategyDefinition
+from core.enums import GeneratorType
+from strategies.base import StrategyDefinition
 
 DEFINITION = StrategyDefinition.create(
     name="strip",
     generator_type=GeneratorType.THREE_LEG,
-    weight_pattern=[("call", 1.0), ("put", 1.0), ("put", 1.0)],
+    patterns=[
+        {
+            "option_type": "CALL",
+            "side": "BUY",
+            "ratio": 1,
+            "strike_group": "K1",
+            "maturity_group": "M1",
+        },
+        {
+            "option_type": "PUT",
+            "side": "BUY",
+            "ratio": 1,
+            "strike_group": "K1",
+            "maturity_group": "M1",
+        },
+        {
+            "option_type": "PUT",
+            "side": "BUY",
+            "ratio": 1,
+            "strike_group": "K1",
+            "maturity_group": "M1",
+        },
+    ],
     include_stock=False,
-    description="Strip - 1 Call + 2 Put - دیدگاه نزولی",
+    description="Strip - Long 1 Call + Long 2 Puts",
     rules={
-        "strike_equal": True,
-        "same_maturity": True,
-        "put_count": 2,
-        "call_count": 1,
-    }
+        "maturity_order": "same",
+    },
 )
