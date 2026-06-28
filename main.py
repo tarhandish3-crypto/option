@@ -21,6 +21,7 @@ from reports.chart_plotter import ChartPlotter
 from scoring.ranker import OpportunityRanker, RankingProfile
 from strategies.core import _load_strategies
 from analytics.risk_engine import RiskEngine
+from analytics.strategy_classifier import StrategyClassifier
 
 logger = logging.getLogger("OptionScanner.Main")
 
@@ -60,7 +61,8 @@ class OptionScanner:
         self,
         interval_minutes: Optional[int] = None,
         parallel: Optional[bool] = None,
-        max_workers: Optional[int] = None
+        max_workers: Optional[int] = None,
+        max_cycles: Optional[int] = None,
     ):
         sys_config = config.get_system_config()
 
@@ -69,6 +71,10 @@ class OptionScanner:
         self.parallel = parallel if parallel is not None else sys_config.get(
             "parallel_enabled", True)
         self.max_workers = max_workers or sys_config.get("max_workers", 1)
+
+        # تعداد چرخه: 0 یا None = بی‌نهایت
+        cfg_max = sys_config.get("max_cycles", 0)
+        self.max_cycles: int = max_cycles if max_cycles is not None else cfg_max
 
         self.is_running = True
         self.cycle_count = 0
@@ -111,8 +117,10 @@ class OptionScanner:
         self.is_running = False
 
     def _print_banner_info(self) -> None:
+        cycle_mode = f"{self.max_cycles} cycles" if self.max_cycles > 0 else "INFINITE"
         logger.info("=" * 60)
         logger.info(f"Scan Mode: CONTINUOUS CYCLE (DSS Enabled)")
+        logger.info(f"Max Cycles: {cycle_mode}")
         logger.info(f"Scan Interval: {self.interval_minutes} minutes")
         logger.info(
             f"Parallel Processing: {self.parallel} (workers: {self.max_workers})")
@@ -212,6 +220,9 @@ class OptionScanner:
             logger.info("Ranking & Classifying opportunities...")
             ranked = self.ranker.rank_opportunities(enriched_opportunities)
 
+            # ✅ Classification بعد از ranking اجرا می‌شود تا profile_scores موجود باشد
+            StrategyClassifier.batch_classify(ranked)
+
             top_n_limit = config.OUTPUT_CONFIG.get("top_n", 50)
             top_opportunities = self.ranker.get_top_n(ranked, n=top_n_limit)
 
@@ -275,27 +286,41 @@ class OptionScanner:
     # =====================================================
 
     def run_forever(self) -> None:
-        """حلقه اصلی اجرای مداوم سیستم با قابلیت خروج امن"""
-        logger.info(
-            "Continuous Decision Support System (DSS) Scan Mode Engaged.")
+        """حلقه اصلی اجرا — محدود به max_cycles چرخه یا بی‌نهایت اگر max_cycles == 0"""
+        if self.max_cycles > 0:
+            logger.info(f"Scheduled Scan Mode: {self.max_cycles} cycles, "
+                        f"{self.interval_minutes} min apart.")
+        else:
+            logger.info("Continuous Decision Support System (DSS) Scan Mode Engaged.")
 
         while self.is_running:
+            # بررسی رسیدن به حد چرخه
+            if self.max_cycles > 0 and self.cycle_count >= self.max_cycles:
+                logger.info(
+                    f"All {self.max_cycles} scheduled cycles completed. Shutting down.")
+                self.is_running = False
+                break
+
             try:
                 self.run_cycle()
                 gc.collect()
 
+                # اگر آخرین چرخه بود، صبر نکن
+                if self.max_cycles > 0 and self.cycle_count >= self.max_cycles:
+                    continue
+
                 sleep_seconds = int(self.interval_minutes * 60)
                 logger.info(
-                    f"Waiting {self.interval_minutes} minutes for next market refresh...")
+                    f"Waiting {self.interval_minutes} minutes for next cycle "
+                    + (f"({self.cycle_count}/{self.max_cycles})..."
+                       if self.max_cycles > 0 else "..."))
 
-                # چک کردن پرچم خروج هر ۵ ثانیه
                 check_step = 5
                 for spent in range(0, sleep_seconds, check_step):
                     if not self.is_running:
                         break
                     remaining = sleep_seconds - spent
-                    current_sleep = min(check_step, remaining)
-                    time.sleep(current_sleep)
+                    time.sleep(min(check_step, remaining))
 
             except Exception as e:
                 logger.error(

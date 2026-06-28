@@ -67,39 +67,33 @@ class StrategyClassifier:
         name = opp.strategy_name.lower()
         metadata = opp.metadata
         
-        # الف) ارزیابی بر اساس یونانی‌های پوزیشن (اولویت با رفتار ریاضی پوزیشن است)
+        # الف) ارزیابی بر اساس یونانی‌های پوزیشن
         gamma = metadata.get('total_gamma', 0.0)
         theta = metadata.get('total_theta', 0.0)
         total_delta = metadata.get('total_delta', 0.0)
 
-        # اگر گامای مثبت قوی داشته باشیم -> خریدار نوسان شدید
         if gamma > 0.5:
             return MarketType.HIGH_VOLATILITY
-        # اگر گامای منفی قوی داشته باشیم -> فروشنده نوسان / رنج‌باز
         elif gamma < -0.5:
-            return MarketType.RANGE_BOUND
+            return MarketType.NEUTRAL
 
-        # ب) ارزیابی بر اساس نام و ماهیت ساختاری استراتژی‌ها
+        # ب) ارزیابی بر اساس نام استراتژی
         if any(x in name for x in ['straddle', 'strangle', 'iron_butterfly', 'iron_condor', 'calendar']):
-            if 'short' in name or 'sell' in name or any(l.side == Side.SELL for l in opp.legs if not l.is_stock_leg):
-                return MarketType.RANGE_BOUND
+            if any(l.side == Side.SELL for l in opp.legs if not l.is_stock_leg):
+                return MarketType.NEUTRAL
             return MarketType.HIGH_VOLATILITY
-            
+
         if any(x in name for x in ['bull', 'call_calendar', 'covered_call', 'buy_call']):
-            return MarketType.MAIN_BULLISH if hasattr(MarketType, 'MAIN_BULLISH') else MarketType.BULLISH
-            
-        if any(x in name for x in ['bear', 'buy_put', 'protective_put']):
+            return MarketType.BULLISH
+
+        if any(x in name for x in ['bear', 'buy_put', 'protective_put', 'married_put']):
             return MarketType.BEARISH
 
-        # ج) کنترل ثانویه بر اساس دلتای کل پوزیشن
+        # ج) کنترل بر اساس دلتا
         if total_delta > 0.2:
             return MarketType.BULLISH
         elif total_delta < -0.2:
             return MarketType.BEARISH
-            
-        # د) اگر تتای پوزیشن مثبت باشد و هیچ روند خاصی کشف نشود
-        if theta > 0:
-            return MarketType.RANGE_BOUND
 
         return MarketType.NEUTRAL
 
@@ -110,8 +104,8 @@ class StrategyClassifier:
         is_uncapped_loss = metadata.get('is_uncapped_loss', False)
         
         if is_uncapped_loss or opp.max_loss == float('inf') or opp.max_loss < -50000000:
-            return RiskLevel.EXTREME
-            
+            return RiskLevel.HIGH
+
         if opp.required_margin > 0:
             loss_to_margin_ratio = abs(opp.max_loss) / opp.required_margin
             if loss_to_margin_ratio > 0.8:
@@ -155,7 +149,7 @@ class StrategyClassifier:
             highest_profile = InvestorProfile.VOLATILITY
 
         # کالیبراسیون محافظه‌کاری سیستم
-        if risk_level == RiskLevel.EXTREME and highest_profile in [InvestorProfile.CONSERVATIVE, InvestorProfile.INCOME]:
+        if risk_level == RiskLevel.HIGH and highest_profile in [InvestorProfile.CONSERVATIVE, InvestorProfile.INCOME]:
             return InvestorProfile.AGGRESSIVE
             
         return highest_profile

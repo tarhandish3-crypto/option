@@ -205,9 +205,7 @@ class OpportunityRanker:
             # غنی‌سازی ساختار لایه دیکشنری داخلی متادیتا جهت استفاده شیت اکسل
             if hasattr(opp, 'metadata') and isinstance(opp.metadata, dict):
                 opp.metadata['win_rate'] = metrics.win_rate
-                opp.metadata['expected_value'] = metrics.expected_return
                 opp.metadata['risk_reward_ratio'] = metrics.risk_reward_ratio
-                opp.metadata['sharpe_ratio'] = metrics.sharpe_ratio
                 opp.metadata['rom'] = metrics.rom
                 opp.metadata['margin_efficiency'] = metrics.margin_efficiency
             
@@ -222,19 +220,21 @@ class OpportunityRanker:
     def _extract_profits(self, opp: Union[Dict, Opportunity], metadata: Dict, is_dict: bool) -> List[float]:
         """استخراج آرایه پپ‌آف از نوع داده با مدیریت ساختارهای نامتوازن"""
         if is_dict:
-            profits = metadata.get('profits', [])
-            if not profits: profits = opp.get('profits', [])
+            profits = metadata.get('net_profits_closed', [])
             if not profits: profits = opp.get('net_profits_closed', [])
-            if not profits: profits = metadata.get('net_profits_closed', [])
+            if not profits: profits = metadata.get('profits', [])
+            if not profits: profits = opp.get('profits', [])
             return profits
         else:
-            profits = getattr(opp, 'profits', [])
-            if not profits and hasattr(opp, 'metadata') and isinstance(opp.metadata, dict):
-                profits = opp.metadata.get('profits', [])
-            if not profits and hasattr(opp, 'net_profits_closed'):
-                profits = getattr(opp, 'net_profits_closed', [])
-            if not profits and hasattr(opp, 'raw_scores') and isinstance(opp.raw_scores, dict):
-                profits = opp.raw_scores.get('net_profits_closed', [])
+            # اول از metadata که payoff_calculator آنجا ذخیره کرده
+            if hasattr(opp, 'metadata') and isinstance(opp.metadata, dict):
+                profits = opp.metadata.get('net_profits_closed', [])
+                if profits:
+                    return profits
+            # fallback به attribute مستقیم
+            profits = getattr(opp, 'net_profits_closed', [])
+            if not profits:
+                profits = getattr(opp, 'profits', [])
             return profits
 
     def _extract_value(self, opp: Union[Dict, Opportunity], metadata: Dict, key: str, 
@@ -306,12 +306,9 @@ class OpportunityRanker:
                 leg_definitions.append(leg)
             elif isinstance(leg, dict):
                 leg_definitions.append(LegDefinition(
-                    name=leg.get('name', ''),
-                    option_type=leg.get('option_type'),
+                    contract=leg.get('contract'),
                     side=leg.get('side'),
                     ratio=leg.get('ratio', 1),
-                    contract=leg.get('contract'),
-                    is_stock_leg=leg.get('is_stock_leg', False)
                 ))
         
         return Opportunity(
