@@ -9,7 +9,7 @@ import numpy as np
 from numba import njit
 from typing import List, Dict, Any, Optional
 
-from config import get_price_steps
+from config import get_price_steps, get_feature_flags
 from core.models import Opportunity, LegDefinition
 from core.enums import Side, OptionType
 from analytics.cost_calculator import IranMarketCostCalculator

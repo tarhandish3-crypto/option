@@ -11,6 +11,7 @@ from core.models import Opportunity, LegDefinition
 from core.enums import Side, OptionType
 from scoring.liquidity_score import LiquidityScorer
 from analytics.margin_calculator import MarginCalculator
+import config
 
 logger = logging.getLogger("OptionScanner.Engine.OpportunityBuilder")
 
@@ -130,9 +131,12 @@ class OpportunityBuilder:
     def _calculate_required_margin(legs: List[LegDefinition], underlying_price: float) -> float:
         """
         محاسبه وجه تضمین مورد نیاز استراتژی.
+        اگر feature flag مارجین غیرفعال باشد، صفر برمی‌گرداند.
         """
-        # 🛠️ رفع ایراد شماره ۳: پاس دادن کل ساختار پوزیشن به موتور مارجین
-        # تا در صورت اسپردهای کال/پوت، به جای جمع جبری، تخفیف مارجین (Spread Margin) اعمال شود.
+        flags = config.get_feature_flags()
+        if not flags.get("calculate_margin", True):
+            return 0.0
+
         try:
             margin_result = MarginCalculator.calculate_strategy_margin(legs, underlying_price)
             return round(margin_result.required_margin, 2)
