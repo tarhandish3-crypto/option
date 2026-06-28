@@ -6,6 +6,7 @@ from itertools import permutations
 from typing import List, Tuple, Optional, Dict, Any
 
 from core.models import OptionContract, StrategyLegPattern, LegDefinition
+from core.enums import OptionType, Side
 
 logger = logging.getLogger("OptionScanner.Strategies.Matching")
 
@@ -50,10 +51,19 @@ class PatternMatcher:
                     is_valid_match = False
                     break
 
+                # تعیین entry_price از قرارداد واقعی بر اساس جهت لگ
+                if contract.option_type == OptionType.STOCK:
+                    ep = contract.last_price
+                elif pattern.side == Side.BUY:
+                    ep = contract.ask if contract.ask > 0 else contract.last_price
+                else:
+                    ep = contract.bid if contract.bid > 0 else contract.last_price
+
                 matched_legs.append(LegDefinition(
                     side=pattern.side,
                     ratio=pattern.ratio,
-                    contract=contract
+                    contract=contract,
+                    entry_price=ep,
                 ))
 
             if is_valid_match:

@@ -134,13 +134,12 @@ class OpportunityBuilder:
         # 🛠️ رفع ایراد شماره ۳: پاس دادن کل ساختار پوزیشن به موتور مارجین
         # تا در صورت اسپردهای کال/پوت، به جای جمع جبری، تخفیف مارجین (Spread Margin) اعمال شود.
         try:
-            # اگر MarginCalculator شما متد دریافت کل لگ‌ها را دارد:
-            if hasattr(MarginCalculator, "calculate_strategy_margin"):
-                return MarginCalculator.calculate_strategy_margin(legs, underlying_price)
+            margin_result = MarginCalculator.calculate_strategy_margin(legs, underlying_price)
+            return round(margin_result.required_margin, 2)
         except Exception as e:
             logger.error(f"خطا در محاسبات مارجین ترکیبی استراتژی: {e}")
 
-        # Fallback به محاسبات تک‌لگی در صورت عدم پشتیبانی لایه مارجین از استراتژی‌های ترکیبی
+        # Fallback به محاسبات تک‌لگی در صورت خطای لایه مارجین
         total_margin = 0.0
         for leg in legs:
             if leg.side == Side.SELL:
@@ -149,10 +148,9 @@ class OpportunityBuilder:
                     continue
                 margin_info = MarginCalculator.calculate_contract_margin(
                     contract=contract,
-                    underlying_close_price=underlying_price or contract.underlying_price
+                    underlying_price=underlying_price or contract.underlying_price
                 )
-                total_margin += margin_info.get("required_margin",
-                                                0.0) * leg.ratio
+                total_margin += margin_info.get("required_margin", 0.0) * leg.ratio
 
         return round(total_margin, 2)
 

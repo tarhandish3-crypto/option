@@ -15,7 +15,7 @@ import logging
 import time
 from datetime import datetime
 from typing import List, Optional, Callable, Union, Dict, Any
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 import pandas as pd
 
@@ -23,6 +23,7 @@ import config
 from core.models import MarketSnapshot, ScanResult, Opportunity
 from engine.scanner import Scanner
 from analytics.payoff_calculator import enrich_opportunity_with_pnl
+from strategies.core import get_all_strategies
 
 logger = logging.getLogger("OptionScanner.Engine.ScannerEngine")
 
@@ -81,7 +82,7 @@ class ScannerEngine:
         logger.info(
             f"Starting full market scan for {len(target_tickers)} underlying assets...")
 
-        # اعمال فیلترهای پیش‌پردازش (مانند فیلتر حجم مبنا یا وضعیت معاملاتی دارایی پایه)
+        # اعمال فیلترهای پیش‌پردازش
         target_tickers = self._apply_filters(target_tickers)
 
         if not target_tickers:
@@ -89,14 +90,18 @@ class ScannerEngine:
                 "No underlying tickers passed the preprocessing filters.")
             return self._create_empty_result(start_time)
 
-        # انتخاب مکانیزم توزیع بار بر اساس حجم داده و تنظیمات
+        # ✅ بارگذاری استراتژی‌ها یک‌بار برای کل scan — نه هر ticker جداگانه
+        all_strategies = get_all_strategies()
+        logger.info(f"Loaded {len(all_strategies)} strategies for this scan cycle.")
+
+        # انتخاب مکانیزم توزیع بار
         if self.parallel and len(target_tickers) > 1:
             logger.info(
                 f"Using parallel execution with {self.max_workers} workers.")
-            all_opportunities = self._scan_parallel(target_tickers)
+            all_opportunities = self._scan_parallel(target_tickers, all_strategies)
         else:
             logger.info("Using sequential execution mode.")
-            all_opportunities = self._scan_sequential(target_tickers)
+            all_opportunities = self._scan_sequential(target_tickers, all_strategies)
 
         return self._create_result(all_opportunities, start_time)
 

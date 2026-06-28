@@ -254,11 +254,15 @@ class LegDefinition:
     side: Side = Side.BUY
     ratio: int = 1
     contract: Optional[OptionContract] = None
+    entry_price: float = 0.0   # قیمت ورود (mid_price یا last_price در زمان ساخت لگ)
 
     def __post_init__(self):
         # اعتبارسنجی نسبت‌های وزنی
         if self.ratio <= 0:
             raise ValueError(f"نسبت وزنی (Ratio) در لگ باید یک عدد مثبت بزرگتر از صفر باشد.")
+
+        if self.entry_price < 0:
+            raise ValueError(f"قیمت ورود (entry_price) نمی‌تواند منفی باشد: {self.entry_price}")
             
         if self.contract is not None:
             if not hasattr(self.contract, 'option_type'):

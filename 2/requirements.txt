@@ -1,0 +1,9 @@
+# requirements.txt
+numpy>=1.21.0
+pandas>=1.3.0
+numba>=0.56.0
+openpyxl>=3.0.0
+jdatetime>=3.0.0
+requests>=2.25.0
+beautifulsoup4>=4.9.0
+dnspython>=2.0.0

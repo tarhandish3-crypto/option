@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 from typing import List, Dict, Any
-
 from config import MIN_VOLUME
 from core.models import MarketSnapshot, Opportunity, OptionContract
 from strategies.core import get_all_strategies
@@ -39,6 +38,22 @@ class Scanner:
         """
         اسکن کامل زنجیره آپشن یک نماد پایه برای تمام استراتژی‌های فعال سیستم
         """
+        return self._scan_with_strategies(ticker, get_all_strategies())
+
+    def scan_ticker_with_strategies(
+        self,
+        ticker: str,
+        all_strategies: Dict[str, Any]
+    ) -> List[Opportunity]:
+        """
+        نسخه بهینه‌شده: استراتژی‌ها از بیرون پاس می‌شوند تا از re-copy در هر ticker جلوگیری شود
+        """
+        return self._scan_with_strategies(ticker, all_strategies)
+
+    def _scan_with_strategies(self, ticker: str, all_strategies: Dict[str, Any]) -> List[Opportunity]:
+        """
+        پیاده‌سازی مشترک اسکن — استراتژی‌ها یک‌بار از caller دریافت می‌شوند
+        """
         opportunities: List[Opportunity] = []
         
         # 1. دریافت دارایی پایه
@@ -61,12 +76,10 @@ class Scanner:
         
         # 3. پیش‌محاسبه امتیاز نقدشوندگی زنجیره
         self._contract_scores = self._calculate_liquidity_scores(contracts)
-        
-        # 4. دریافت همه استراتژی‌های فعال دایره ران‌تایم
-        all_strategies = get_all_strategies()
 
-        if underlying.ticker =='اهرم':
-            pass
+        # 4. پیش‌فیلتر قراردادها بر اساس نوع — تقسیم یک‌بار برای همه generator‌ها
+        calls = [c for c in contracts if c.option_type.value == 'call']
+        puts  = [c for c in contracts if c.option_type.value == 'put']
         
         for strategy_name, strategy_def in all_strategies.items():
             try:
@@ -75,9 +88,6 @@ class Scanner:
                 if generator is None:
                     logger.debug(f"No generator for {strategy_name}")
                     continue
-
-                if strategy_name =='covered_call':
-                    pass
                 
                 # 6. تولید ترکیب‌ها با ساختار امتیازدهی
                 generated_opps = generator.generate(

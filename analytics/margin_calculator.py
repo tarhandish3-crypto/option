@@ -116,10 +116,8 @@ class MarginCalculator:
             return LegDefinition(
                 contract=margin_contract,
                 side=side,
-                entry_price=entry_price,
-                weight=weight,
                 ratio=ratio,
-                is_stock_leg=is_stock
+                entry_price=entry_price,
             )
 
         # حالت دوم: ورودی دیکشنری است (تست‌باکس‌ها / لایه Legacy API)
@@ -147,10 +145,8 @@ class MarginCalculator:
             return LegDefinition(
                 contract=margin_contract,
                 side=side,
-                entry_price=leg.get('entry_price', leg.get('premium', 0.0)),
-                weight=ratio * (-1 if side == Side.SELL else 1),
                 ratio=ratio,
-                is_stock_leg=is_stock
+                entry_price=leg.get('entry_price', leg.get('premium', 0.0)),
             )
 
         else:
