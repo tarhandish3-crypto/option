@@ -130,15 +130,19 @@ class IranMarketPayoffCalculator:
             price_levels=price_levels
         )
 
-        net_profits_closed = gross_profits - strategy_costs.total_if_closed
-
-        fixed_entry_costs = (
-            strategy_costs.option_entry_fees +
-            strategy_costs.clearing_fees +
-            strategy_costs.underlying_buy_fees
-        )
-        net_profits_exercised = gross_profits - \
-            (exercise_costs_vector + fixed_entry_costs)
+        # اعمال کارمزد فقط اگر feature flag فعال باشد
+        flags = get_feature_flags()
+        if flags.get("apply_commissions", True):
+            net_profits_closed = gross_profits - strategy_costs.total_if_closed
+            net_profits_exercised = gross_profits - \
+                (exercise_costs_vector + strategy_costs.option_entry_fees +
+                 strategy_costs.clearing_fees + strategy_costs.underlying_buy_fees)
+        else:
+            # بدون کارمزد: P&L ناخالص
+            net_profits_closed = gross_profits.copy()
+            net_profits_exercised = gross_profits.copy()
+            strategy_costs.total_if_closed = 0.0
+            strategy_costs.total_if_exercised = 0.0
 
         max_profit = float(np.max(net_profits_closed))
         max_loss = float(np.min(net_profits_closed))
@@ -182,9 +186,9 @@ def enrich_opportunity_with_pnl(
     """
     S0_stock = opportunity.S0_stock if hasattr(
         opportunity, 'S0_stock') and opportunity.S0_stock else 10000.0
-    if S0_stock <= 0:
-        S0_stock = 10000.0
-        opportunity.S0_stock = S0_stock
+    # if S0_stock <= 0:
+    #     S0_stock = 10000.0
+    #     opportunity.S0_stock = S0_stock
 
     pct_steps = np.array(get_price_steps())
     price_levels = np.round(S0_stock * (1 + pct_steps / 100), 0)
@@ -206,12 +210,12 @@ def enrich_opportunity_with_pnl(
         'gross_profits': result['gross_profits'],
         'price_levels': result['price_levels'],
         'transaction_costs': transaction_costs,
-        'option_entry_fees': transaction_costs.get('option_entry_fees', 0.0),
-        'option_exit_fees': transaction_costs.get('option_exit_fees', 0.0),
-        'clearing_fees': transaction_costs.get('clearing_fees', 0.0),
-        'underlying_buy_fees': transaction_costs.get('underlying_buy_fees', 0.0),
-        'total_if_closed': transaction_costs.get('total_if_closed', 0.0),
-        'total_if_exercised': transaction_costs.get('total_if_exercised', 0.0),
+        'option_entry_fees': transaction_costs.get('option_entry_fees'),
+        'option_exit_fees': transaction_costs.get('option_exit_fees'),
+        'clearing_fees': transaction_costs.get('clearing_fees'),
+        'underlying_buy_fees': transaction_costs.get('underlying_buy_fees'),
+        'total_if_closed': transaction_costs.get('total_if_closed'),
+        'total_if_exercised': transaction_costs.get('total_if_exercised'),
     })
 
     return opportunity

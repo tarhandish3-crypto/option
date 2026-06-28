@@ -72,7 +72,7 @@ class IranMarketCostCalculator:
         for leg in legs:
             contract = getattr(leg, 'contract', None)
             if contract is not None:
-                qty = int(abs(getattr(leg, 'weight', 1)))
+                qty = int(abs(getattr(leg, 'weight')))
                 c_size = getattr(contract, 'contract_size')
                 entry_p = getattr(leg, 'entry_price', None) or getattr(
                     contract, 'last_price', 0.0)
@@ -145,13 +145,13 @@ class IranMarketCostCalculator:
         exercise_costs_vector = np.zeros_like(price_levels, dtype=np.float64)
 
         for leg in legs:
-            contract = getattr(leg, 'contract', None)
+            contract = getattr(leg, 'contract')
             if contract is None:
                 continue
 
-            qty = int(abs(getattr(leg, 'weight', 1)))
+            qty = int(abs(getattr(leg, 'weight')))
             c_size = getattr(contract, 'contract_size')
-            K = getattr(contract, 'strike_price', 0.0)
+            K = getattr(contract, 'strike_price')
             strike_value = K * c_size * qty
 
             # کارمزد اعمال فقط و فقط متعلق به دارنده موقعیت خرید (Long) است

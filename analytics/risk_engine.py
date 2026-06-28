@@ -94,9 +94,8 @@ class RiskEngine:
 
     @staticmethod
     def calculate_pnl_areas_and_ratio(
-        net_pnl_profile: np.ndarray,
-        price_levels: Optional[np.ndarray] = None
-    ) -> Dict[str, float]:
+            net_pnl_profile: np.ndarray,
+            price_levels: Optional[np.ndarray] = None) -> Dict[str, float]:
         """
         محاسبه مساحت هندسی واقعی سود و زیان با روش ذوزنقه‌ای پویا بر اساس سطوح قیمت
         """
@@ -106,15 +105,18 @@ class RiskEngine:
         # ⚡ اصلاح گام متغیر: اگر آرایه قیمت وجود دارد، انتگرال بر اساس فواصل واقعی گرفته می‌شود
         if price_levels is not None and len(price_levels) == len(net_pnl_profile):
             # انتگرال‌گیری بر مبنای محور X واقعی (قیمت‌ها)
-            profit_area = np.trapz(np.maximum(
-                0, net_pnl_profile), x=price_levels)
-            loss_area = np.trapz(np.maximum(
-                0, -net_pnl_profile), x=price_levels)
+            base_price = price_levels[0] if price_levels[0] > 0 else 1.0
+            pct_changes = (price_levels / base_price - 1) * 100
+
+            profit_area = np.trapezoid(np.maximum(
+                0, net_pnl_profile), x=pct_changes)
+            loss_area = np.trapezoid(np.maximum(
+                0, -net_pnl_profile), x=pct_changes)
         else:
             # همگام‌سازی اضطراری در صورت عدم دسترسی به سطوح قیمت کلاینت
             dx = 0.05
-            profit_area = np.trapz(np.maximum(0, net_pnl_profile), dx=dx)
-            loss_area = np.trapz(np.maximum(0, -net_pnl_profile), dx=dx)
+            profit_area = np.trapezoid(np.maximum(0, net_pnl_profile), dx=dx)
+            loss_area = np.trapezoid(np.maximum(0, -net_pnl_profile), dx=dx)
 
         return {
             'profit_area': round(float(profit_area), 2),
@@ -124,10 +126,9 @@ class RiskEngine:
 
     @staticmethod
     def calculate_probability_of_profit(
-        net_pnl_profile: np.ndarray,
-        probabilities: np.ndarray,
-        threshold: float = 0.0
-    ) -> float:
+            net_pnl_profile: np.ndarray,
+            probabilities: np.ndarray,
+            threshold: float = 0.0) -> float:
         """
         محاسبه واقعی POP بر اساس مجموع احتمالات سناریوهای سودآور
         """
@@ -140,10 +141,9 @@ class RiskEngine:
 
     @staticmethod
     def calculate_weighted_sharpe_ratio(
-        net_pnl_profile: np.ndarray,
-        probabilities: np.ndarray,
-        risk_free_rate: float = RISK_FREE_RATE
-    ) -> float:
+            net_pnl_profile: np.ndarray,
+            probabilities: np.ndarray,
+            risk_free_rate: float = RISK_FREE_RATE) -> float:
         """
         محاسبه نسبت شارپ وزنی با استفاده از توزیع احتمالات سناریوها
         """
@@ -163,10 +163,9 @@ class RiskEngine:
 
     @staticmethod
     def calculate_weighted_var(
-        net_pnl_profile: np.ndarray,
-        probabilities: np.ndarray,
-        confidence_level: float = 0.95
-    ) -> float:
+            net_pnl_profile: np.ndarray,
+            probabilities: np.ndarray,
+            confidence_level: float = 0.95) -> float:
         """
         محاسبه Value at Risk با استفاده از توزیع تجمعی احتمالات (CDF)
         """
@@ -205,9 +204,8 @@ class RiskEngine:
 
     @staticmethod
     def calculate_weighted_profit_factor(
-        net_pnl_profile: np.ndarray,
-        probabilities: np.ndarray
-    ) -> float:
+            net_pnl_profile: np.ndarray,
+            probabilities: np.ndarray) -> float:
         """
         محاسبه نسبت سود به ضرر با تاثیر دادن شانس وقوع هر سناریو
         """
@@ -225,10 +223,9 @@ class RiskEngine:
 
     @staticmethod
     def detect_curve_type(
-        pct_steps: np.ndarray,
-        net_pnl_profile: np.ndarray,
-        tolerance: float = 0.02
-    ) -> CurveType:
+            pct_steps: np.ndarray,
+            net_pnl_profile: np.ndarray,
+            tolerance: float = 0.02) -> CurveType:
         """
         تشخیص پیشرفته و پایدار ساختار هندسی منحنی سود/زیان استراتژی ترکیبی
         """
@@ -251,8 +248,7 @@ class RiskEngine:
 
                 near_max_count = np.sum(
                     net_pnl_profile >= (
-                        net_pnl_profile[max_idx] - peak_tolerance)
-                )
+                        net_pnl_profile[max_idx] - peak_tolerance))
 
                 if near_max_count <= 2:
                     return CurveType.BUTTERFLY
@@ -276,17 +272,16 @@ class RiskEngine:
 
     @classmethod
     def calculate_all_metrics(
-        cls,
-        net_pnl_profile: np.ndarray,
-        pct_steps: np.ndarray,
-        S0_stock: float,
-        days_to_maturity: int,
-        probabilities: Optional[np.ndarray] = None,
-        volatility: float = DEFAULT_VOLATILITY,
-        risk_free_rate: float = RISK_FREE_RATE,
-        price_levels: Optional[np.ndarray] = None,
-        confidence_level: float = 0.95
-    ) -> RiskMetrics:
+            cls,
+            net_pnl_profile: np.ndarray,
+            pct_steps: np.ndarray,
+            S0_stock: float,
+            days_to_maturity: int,
+            probabilities: Optional[np.ndarray] = None,
+            volatility: float = DEFAULT_VOLATILITY,
+            risk_free_rate: float = RISK_FREE_RATE,
+            price_levels: Optional[np.ndarray] = None,
+            confidence_level: float = 0.95) -> RiskMetrics:
         """
         محاسبه یکپارچه تمام معیارهای مدیریت ریسک آپشن بر پایه توزیع آماری تصحیح‌شده V4
         """
@@ -296,8 +291,7 @@ class RiskEngine:
                 pct_steps=pct_steps,
                 days_to_maturity=days_to_maturity,
                 volatility=volatility,
-                risk_free_rate=risk_free_rate
-            )
+                risk_free_rate=risk_free_rate)
 
         expected_value = cls.calculate_expected_value(
             net_pnl_profile, probabilities)
@@ -348,16 +342,14 @@ class RiskEngine:
             probabilities=probabilities,
             max_profit=round(float(np.max(net_pnl_profile)), 2),
             max_loss=round(float(np.min(net_pnl_profile)), 2),
-            std_profit=round(float(np.sqrt(weighted_variance)), 2)
-        )
+            std_profit=round(float(np.sqrt(weighted_variance)), 2))
 
     @classmethod
     def evaluate_opportunity(
-        cls,
-        opportunity: Opportunity,
-        volatility: float = DEFAULT_VOLATILITY,
-        risk_free_rate: float = RISK_FREE_RATE
-    ) -> Opportunity:
+            cls,
+            opportunity: Opportunity,
+            volatility: float = DEFAULT_VOLATILITY,
+            risk_free_rate: float = RISK_FREE_RATE) -> Opportunity:
         """
         تزریق داده‌های ریسک به شیء Opportunity با مکانیزم همگام‌سازی کامل فیلدها
         """
@@ -407,8 +399,7 @@ class RiskEngine:
                 days_to_maturity=int(days_to_maturity),
                 volatility=volatility,
                 risk_free_rate=risk_free_rate,
-                price_levels=price_levels
-            )
+                price_levels=price_levels)
 
             # 5. تزریق مستقیم به فیلدهای متناظر لایه مدل
             opportunity.pop = metrics.pop
@@ -434,8 +425,7 @@ class RiskEngine:
                 'probabilities_vector': metrics.probabilities.tolist(),
                 'avg_profit': metrics.avg_profit,
                 'avg_loss': metrics.avg_loss,
-                'std_profit': metrics.std_profit
-            })
+                'std_profit': metrics.std_profit})
 
             return opportunity
 
@@ -474,8 +464,7 @@ def calculate_risk_metrics_from_payoff(
     days_to_maturity: int,
     pct_steps: np.ndarray,
     volatility: float = DEFAULT_VOLATILITY,
-    risk_free_rate: float = RISK_FREE_RATE
-) -> RiskMetrics:
+        risk_free_rate: float = RISK_FREE_RATE) -> RiskMetrics:
     """
     محاسبه مستقیم معیارهای ریسک با پل زدن ایمن میان دیکشنری خروجی Payoff و موتور ریسک
     """
@@ -490,14 +479,12 @@ def calculate_risk_metrics_from_payoff(
         days_to_maturity=days_to_maturity,
         volatility=volatility,
         risk_free_rate=risk_free_rate,
-        price_levels=price_levels
-    )
+        price_levels=price_levels)
 
 
 def evaluate_opportunity_risk(
-    opportunity: Opportunity,
-    volatility: float = DEFAULT_VOLATILITY,
-    risk_free_rate: float = RISK_FREE_RATE
-) -> Opportunity:
+        opportunity: Opportunity,
+        volatility: float = DEFAULT_VOLATILITY,
+        risk_free_rate: float = RISK_FREE_RATE) -> Opportunity:
     """تابع Facade جهت اتصال سریع و تزریق مدل ریسک به فرصت"""
     return RiskEngine.evaluate_opportunity(opportunity, volatility, risk_free_rate)

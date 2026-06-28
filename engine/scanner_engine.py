@@ -157,8 +157,7 @@ class ScannerEngine:
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             future_to_ticker = {
                 executor.submit(self._scan_single_ticker, ticker, all_strategies): ticker
-                for ticker in tickers
-            }
+                for ticker in tickers}
 
             # ✅ as_completed: نتایج بلافاصله با تکمیل هر future پردازش می‌شوند
             for future in as_completed(future_to_ticker):
@@ -183,7 +182,7 @@ class ScannerEngine:
 
             # نمونه‌سازی اختصاصی در سطح ترد جهت حذف هم‌پوشانی اشاره‌گرها
             scanner = Scanner(self.snapshot)
-            # ✅ استراتژی‌ها از بیرون پاس می‌شوند — بدون re-copy در هر thread
+            # استراتژی‌ها از بیرون پاس می‌شوند — بدون re-copy در هر thread
             raw_opportunities = scanner.scan_ticker_with_strategies(ticker, all_strategies)
 
             if not raw_opportunities:
