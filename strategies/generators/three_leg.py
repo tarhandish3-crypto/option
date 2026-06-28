@@ -11,6 +11,7 @@ from core.models import OptionContract, UnderlyingAsset, Opportunity, LegDefinit
 from core.enums import OptionType, Side
 from strategies.base import StrategyDefinition, GeneratorType
 from strategies.generators.base import BaseGenerator
+from engine.opportunity_builder import OpportunityBuilder
 
 logger = logging.getLogger("OptionScanner.Strategies.Generators.ThreeLeg")
 
