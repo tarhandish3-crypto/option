@@ -355,7 +355,7 @@ LOGGING_CONFIG = {
 
 SYSTEM_CONFIG = {
     "scan_interval_minutes": 2,     # فاصله زمانی بین هر چرخه (دقیقه)
-    "max_cycles": 4,                # تعداد دفعات اجرا (0 = بی‌نهایت)
+    "max_cycles": 1,                # تعداد دفعات اجرا (0 = بی‌نهایت)
     "parallel_enabled": False,
     "max_workers": 3,
     "debug_mode": True,
