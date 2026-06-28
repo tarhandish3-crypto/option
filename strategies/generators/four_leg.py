@@ -30,6 +30,7 @@ from core.enums import GeneratorType
 from strategies.base import StrategyDefinition
 from strategies.generators.base import BaseGenerator
 from strategies.matching.pattern_matcher import PatternMatcher
+from strategies.matching.fast_filter import build_required_type_counts, can_match
 from engine.opportunity_builder import OpportunityBuilder
 
 logger = logging.getLogger("OptionScanner.Strategies.Generators.FourLeg")
@@ -56,6 +57,10 @@ class FourLegGenerator(BaseGenerator):
 
         logger.debug(f"FourLegGenerator initialized for {strategy_def.name}")
 
+        # ✅ یک‌بار محاسبه و کش — در هر ترکیب بدون re-compute
+        self._required_types = build_required_type_counts(strategy_def.patterns)
+        self._maturity_mode = (strategy_def.rules or {}).get("maturity_order", "same")
+
     def generate(
         self,
         underlying: UnderlyingAsset,
@@ -73,11 +78,11 @@ class FourLegGenerator(BaseGenerator):
             )
             return opportunities
 
-        patterns = self.strategy_def.weight_pattern
+        patterns = self.strategy_def.patterns
         rules = self.strategy_def.rules or {}
 
         seen_keys: Set[Tuple] = set()
-        maturity_mode = rules.get("maturity_order", "same")
+        maturity_mode = self._maturity_mode
 
         # مرحله ۱: تولید کاندیداها به صورت ژنراتور جهت حفظ بهینگی حافظه (RAM)
         candidate_iterables = self._generate_candidates(
@@ -89,6 +94,11 @@ class FourLegGenerator(BaseGenerator):
         # مرحله ۲: پردازش کاندیداها
         for candidate in candidate_iterables:
             candidate_contracts = list(candidate)
+
+            # ✅ Fast filter: قبل از permutation بررسی کن آیا این ۴ قرارداد
+            # اصلاً ساختار type/maturity لازم را دارند — O(4) بدون allocation
+            if not can_match(candidate_contracts, self._required_types, maturity_mode):
+                continue
 
             # تطبیق الگو با PatternMatcher مرکزی V4
             matched_sets = PatternMatcher.match_all(

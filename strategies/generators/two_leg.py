@@ -22,6 +22,7 @@ from strategies.base import (
 
 from strategies.generators.base import BaseGenerator
 from strategies.matching.pattern_matcher import PatternMatcher
+from strategies.matching.fast_filter import build_required_type_counts, can_match
 from engine.opportunity_builder import OpportunityBuilder
 
 logger = logging.getLogger(
@@ -59,6 +60,10 @@ class TwoLegGenerator(BaseGenerator):
                 "TwoLegGenerator requires exactly 2 legs"
             )
 
+        # ✅ یک‌بار محاسبه و کش
+        self._required_types = build_required_type_counts(strategy_def.patterns)
+        self._maturity_mode = (strategy_def.rules or {}).get("maturity_order", "same")
+
     # ---------------------------------------------------------
     # MAIN
     # ---------------------------------------------------------
@@ -77,7 +82,7 @@ class TwoLegGenerator(BaseGenerator):
         patterns = self.strategy_def.patterns
         rules = self.strategy_def.rules or {}
         seen_keys: Set[Tuple] = set()
-        maturity_mode = rules.get("maturity_order", "same")
+        maturity_mode = self._maturity_mode
 
         # =====================================================
         # حالت Vertical / Straddle / Strangle
@@ -108,6 +113,13 @@ class TwoLegGenerator(BaseGenerator):
 
         for candidate in candidate_iterables:
             candidate_contracts = list(candidate)
+
+            # ✅ Fast filter: قبل از PatternMatcher بررسی کن
+            # برای bull_call_spread: آیا ۲ CALL وجود دارد؟
+            # برای long_straddle: آیا ۱ CALL + ۱ PUT وجود دارد؟
+            if not can_match(candidate_contracts, self._required_types, maturity_mode):
+                continue
+
             matched_sets = PatternMatcher.match_all(
                 contracts=candidate_contracts,
                 patterns=patterns,
