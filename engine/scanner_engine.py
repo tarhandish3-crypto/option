@@ -137,12 +137,12 @@ class ScannerEngine:
     # مدیریت موازی‌سازی و همزمانی
     # =====================================================
 
-    def _scan_sequential(self, tickers: List[str]) -> List[Opportunity]:
+    def _scan_sequential(self, tickers: List[str], all_strategies: Dict[str, Any]) -> List[Opportunity]:
         """اسکن گام‌به‌گام و تک‌تردی نمادها"""
         all_opportunities = []
         for ticker in tickers:
             try:
-                opps = self._scan_single_ticker(ticker)
+                opps = self._scan_single_ticker(ticker, all_strategies)
                 if opps:
                     all_opportunities.extend(opps)
             except Exception as e:
@@ -151,16 +151,17 @@ class ScannerEngine:
                 logger.error(f"Error scanning ticker {ticker}: {e}")
         return all_opportunities
 
-    def _scan_parallel(self, tickers: List[str]) -> List[Opportunity]:
-        """اسکن کاملاً موازی و ایزوله با قفل‌های اختصاصی زمان اجرا"""
+    def _scan_parallel(self, tickers: List[str], all_strategies: Dict[str, Any]) -> List[Opportunity]:
+        """اسکن کاملاً موازی با as_completed برای پردازش سریع‌تر نتایج"""
         all_opportunities = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             future_to_ticker = {
-                executor.submit(self._scan_single_ticker, ticker): ticker
+                executor.submit(self._scan_single_ticker, ticker, all_strategies): ticker
                 for ticker in tickers
             }
 
-            for future in future_to_ticker:
+            # ✅ as_completed: نتایج بلافاصله با تکمیل هر future پردازش می‌شوند
+            for future in as_completed(future_to_ticker):
                 ticker = future_to_ticker[future]
                 try:
                     opps = future.result()
@@ -173,7 +174,7 @@ class ScannerEngine:
                         f"Error in parallel scan thread for {ticker}: {e}")
         return all_opportunities
 
-    def _scan_single_ticker(self, ticker: str) -> List[Opportunity]:
+    def _scan_single_ticker(self, ticker: str, all_strategies: Dict[str, Any]) -> List[Opportunity]:
         """اسکن تک نماد - کاملاً تردسیف همراه با هماهنگ‌سازی زنجیره قیمت ایران (Fallback)"""
         try:
             opts = self.snapshot.get_options(ticker)
@@ -182,7 +183,8 @@ class ScannerEngine:
 
             # نمونه‌سازی اختصاصی در سطح ترد جهت حذف هم‌پوشانی اشاره‌گرها
             scanner = Scanner(self.snapshot)
-            raw_opportunities = scanner.scan_ticker(ticker)
+            # ✅ استراتژی‌ها از بیرون پاس می‌شوند — بدون re-copy در هر thread
+            raw_opportunities = scanner.scan_ticker_with_strategies(ticker, all_strategies)
 
             if not raw_opportunities:
                 return []
