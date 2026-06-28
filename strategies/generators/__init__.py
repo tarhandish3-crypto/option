@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Optional
+
 from strategies.generators.base import BaseGenerator
 from strategies.generators.two_leg import TwoLegGenerator
 from strategies.generators.three_leg import ThreeLegGenerator
@@ -10,6 +13,8 @@ from strategies.generators.four_leg import FourLegGenerator
 from strategies.generators.stock_option import StockOptionGenerator
 
 from strategies.base import GeneratorType, StrategyDefinition
+
+logger = logging.getLogger("OptionScanner.Strategies.Generators")
 
 GENERATOR_MAP = {
     GeneratorType.STOCK_OPTION: StockOptionGenerator,
@@ -20,15 +25,19 @@ GENERATOR_MAP = {
 }
 
 
-def get_generator(strategy_def: StrategyDefinition) -> BaseGenerator:
-    """دریافت Generator مناسب برای استراتژی بر اساس الگوی طراحی فکتوری"""
+def get_generator(strategy_def: StrategyDefinition) -> Optional[BaseGenerator]:
+    """دریافت Generator مناسب برای استراتژی بر اساس الگوی طراحی فکتوری.
+    
+    Returns:
+        نمونه Generator مناسب، یا None اگر generator برای این نوع پیاده‌سازی نشده باشد.
+    """
     generator_class = GENERATOR_MAP.get(strategy_def.generator_type)
-    
+
     if generator_class is None:
-        if strategy_def.generator_type == GeneratorType.SINGLE_LEG:
-            raise NotImplementedError("تولیدکننده استراتژی‌های تک‌لگی (SINGLE_LEG) هنوز پیاده‌سازی نشده است.")
-        raise ValueError(f"نوع ژنراتور ناشناخته است: {strategy_def.generator_type}")
-    
+        # SINGLE_LEG و هر نوع ناشناخته → None (caller با if generator is None: continue مدیریت می‌کند)
+        logger.debug(f"No generator available for type: {strategy_def.generator_type} ({strategy_def.name})")
+        return None
+
     return generator_class(strategy_def)
 
 

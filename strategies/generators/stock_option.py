@@ -50,10 +50,13 @@ class StockOptionGenerator(BaseGenerator):
                 f"استراتژی {strategy_def.name} فاقد پرچم الزامی include_stock است."
             )
 
-        if getattr(strategy_def, "legs_count", 2) != 2:
+        # legs_count برای covered_call ممکن است ۱ باشد (فقط CALL pattern، سهم implicit است)
+        # بنابراین بررسی می‌کنیم بین ۱ تا ۲ لگ باشد
+        lc = getattr(strategy_def, "legs_count", 1)
+        if lc > 2:
             raise ValueError(
-                f"ژنراتور StockOptionGenerator اختصاصاً برای ترکیب‌های ۲ لگی طراحی شده است. "
-                f"تعداد لگ‌های درخواستی: {strategy_def.legs_count}"
+                f"StockOptionGenerator برای استراتژی‌های ۱ یا ۲ لگی است. "
+                f"تعداد لگ‌های درخواستی: {lc}"
             )
 
         logger.debug(
@@ -73,68 +76,77 @@ class StockOptionGenerator(BaseGenerator):
         if not contracts:
             return opportunities
 
-        # ۱. استخراج امن قیمت مبنای سهم (اولویت با قیمت پایانی جهت جلوگیری از پرش‌های دیتا لایه صفر)
+        # ۱. استخراج قیمت مبنای سهم
         spot_price = underlying.close_price or underlying.last_price or 0.0
 
         if spot_price <= 0:
-            logger.warning(
-                f"قیمت نامعتبر برای دارایی پایه {underlying.ticker}: {spot_price}"
-            )
+            logger.warning(f"قیمت نامعتبر برای دارایی پایه {underlying.ticker}: {spot_price}")
             return opportunities
 
-        # ۲. استخراج هوشمند نوع اختیار از weight_pattern
+        # ۲. استخراج نوع اختیار و جهت از patterns
         opt_type, weight = self._resolve_option_pattern()
 
         if opt_type is None:
-            logger.error(
-                f"امکان استخراج نوع اختیار از الگوی وزنی {self.strategy_def.name} وجود ندارد."
-            )
+            logger.error(f"امکان استخراج نوع اختیار از patterns {self.strategy_def.name} وجود ندارد.")
             return opportunities
 
         rules = self.strategy_def.rules or {}
         seen_keys: Set[Tuple] = set()
 
-        # ۳. پردازش قراردادها
+        # ۳. ساخت یک stock_contract مجازی برای لگ سهم پایه
+        # (is_stock_leg یک @property است که از option_type==STOCK استنتاج می‌شود)
+        from core.models import OptionContract as OC
+        stock_contract = OC(
+            ticker=underlying.ticker,
+            name=underlying.name,
+            underlying_ticker=underlying.ticker,
+            option_type=OptionType.STOCK,
+            strike_price=spot_price,
+            contract_size=1,
+            last_price=spot_price,
+            underlying_price=spot_price,
+        )
+
+        # ۴. پردازش قراردادهای اختیار
         for contract in contracts:
-            # فیلتر بر اساس نوع اختیار
             if contract.option_type != opt_type:
                 continue
 
-            # اعمال فیلترهای استرایک داینامیک بورس ایران
             if not self._apply_strike_rules(contract, spot_price, rules):
                 continue
 
-            # جلوگیری از تکرار
-            unique_key = (underlying.ticker, contract.ticker, weight > 0)
+            unique_key = (underlying.ticker, contract.ticker)
             if unique_key in seen_keys:
                 continue
             seen_keys.add(unique_key)
 
-            # ۴. ساخت لگ‌های جفت استاندارد
+            # لگ سهم پایه — option_type=STOCK → is_stock_leg=True (از property)
             stock_leg = LegDefinition(
-                contract=None,
+                contract=stock_contract,
                 side=Side.BUY,
                 ratio=1,
+                entry_price=spot_price,
             )
-            stock_leg.is_stock_leg = True
 
+            # لگ اختیار
+            option_side = Side.BUY if weight > 0 else Side.SELL
+            ep = (contract.ask if contract.ask > 0 else contract.last_price) if option_side == Side.BUY \
+                 else (contract.bid if contract.bid > 0 else contract.last_price)
             option_leg = LegDefinition(
                 contract=contract,
-                side=Side.BUY if weight > 0 else Side.SELL,
-                ratio=abs(int(weight)) if abs(weight) > 0 else 1,
+                side=option_side,
+                ratio=max(1, abs(int(weight))),
+                entry_price=ep,
             )
-            option_leg.is_stock_leg = False
 
             legs = [stock_leg, option_leg]
 
-            # ۵. ساخت متادیتای غنی کانتراکت پایانی
             metadata = self._build_metadata(
                 contract=contract,
                 spot=spot_price,
-                contract_scores=contract_scores
+                contract_scores=contract_scores,
             )
 
-            # ۶. ساخت فرصت نهایی از بیلدر کارخانه مرکزی V4
             opportunity = OpportunityBuilder.create_opportunity(
                 strategy_name=self.strategy_def.name,
                 ticker=underlying.ticker,
@@ -147,12 +159,8 @@ class StockOptionGenerator(BaseGenerator):
             if opportunity is not None:
                 opportunities.append(opportunity)
 
-        logger.info(
-            "%s: %d stock-option opportunities generated",
-            self.strategy_def.name,
-            len(opportunities),
-        )
-
+        logger.info("%s: %d stock-option opportunities generated",
+                    self.strategy_def.name, len(opportunities))
         return opportunities
 
     # ---------------------------------------------------------
@@ -161,42 +169,19 @@ class StockOptionGenerator(BaseGenerator):
 
     def _resolve_option_pattern(self) -> Tuple[Optional[OptionType], float]:
         """
-        استخراج امضا و وزن آپشن از روی weight_pattern با سازگاری همه‌جانبه ساختارهای V4.
+        استخراج نوع اختیار و جهت از روی patterns استراتژی (StrategyLegPattern).
         """
-        patterns = self.strategy_def.weight_pattern
+        # ✅ patterns به جای weight_pattern که در StrategyDefinition وجود ندارد
+        patterns = self.strategy_def.patterns
         if not patterns:
             return None, 0.0
 
-        target_pattern = patterns[0]
-
-        # ساختار شی‌گرا (StrategyLegPattern)
-        if hasattr(target_pattern, 'option_type'):
-            opt_type = target_pattern.option_type
-            weight = getattr(target_pattern, 'weight',
-                             getattr(target_pattern, 'ratio', 1.0))
-            return opt_type, float(weight)
-
-        # ساختار توپل با انوم یا رشته متنی
-        if isinstance(target_pattern, tuple) and len(target_pattern) >= 2:
-            first = target_pattern[0]
-            weight = float(target_pattern[1])
-
-            if isinstance(first, OptionType):
-                return first, weight
-
-            if isinstance(first, str):
-                opt_str = first.strip().lower()
-                if opt_str in ["put", "p"]:
-                    return OptionType.PUT, weight
-                elif opt_str in ["call", "c"]:
-                    return OptionType.CALL, weight
-
-        # ساختار دیکشنری
-        if isinstance(target_pattern, dict):
-            opt_type = target_pattern.get('option_type')
-            weight = float(target_pattern.get('weight', 1.0))
-            if opt_type:
-                return opt_type, weight
+        # پیدا کردن اولین لگ غیر-STOCK
+        for p in patterns:
+            if hasattr(p, 'option_type') and p.option_type != OptionType.STOCK:
+                # weight = ratio با علامت (مثبت برای BUY، منفی برای SELL)
+                weight = float(p.weight)  # property روی StrategyLegPattern
+                return p.option_type, weight
 
         return None, 0.0
 

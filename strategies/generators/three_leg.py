@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 from typing import List, Dict, Optional
-from datetime import datetime
 import logging
 
 from core.models import OptionContract, UnderlyingAsset, Opportunity, LegDefinition
@@ -23,8 +22,10 @@ class ThreeLegGenerator(BaseGenerator):
 
     def __init__(self, strategy_def: StrategyDefinition):
         super().__init__(strategy_def)
-        assert strategy_def.generator_type == GeneratorType.THREE_LEG
-        assert strategy_def.legs_count == 3, "ThreeLegGenerator فقط برای استراتژی‌های ۳ لگی است"
+        if strategy_def.generator_type != GeneratorType.THREE_LEG:
+            raise ValueError(f"{strategy_def.name} با ThreeLegGenerator سازگار نیست.")
+        if strategy_def.legs_count != 3:
+            raise ValueError("ThreeLegGenerator فقط برای استراتژی‌های ۳ لگی است.")
 
     def generate(
         self,
@@ -39,7 +40,11 @@ class ThreeLegGenerator(BaseGenerator):
             return opportunities
 
         # ===== مرحله ۱: استخراج تعاریف الگو =====
-        leg_def1, leg_def2, leg_def3 = self.strategy_def.weight_pattern
+        # ✅ patterns (نه weight_pattern که در StrategyDefinition وجود ندارد)
+        if len(self.strategy_def.patterns) != 3:
+            logger.error(f"{self.strategy_def.name}: expected 3 patterns, got {len(self.strategy_def.patterns)}")
+            return opportunities
+        leg_def1, leg_def2, leg_def3 = self.strategy_def.patterns
 
         # ===== مرحله ۲: گروه‌بندی بر اساس سررسید =====
         maturity_groups: Dict[int, List[OptionContract]] = {}
@@ -92,13 +97,16 @@ class ThreeLegGenerator(BaseGenerator):
                         "l2_ticker": legs[1].contract.ticker if legs[1].contract else "",
                         "l3_ticker": legs[2].contract.ticker if legs[2].contract else "",
                     }
-                    
-                    opp = self._create_opportunity(
+
+                    # ✅ BaseGenerator._create_opportunity وجود ندارد — از OpportunityBuilder استفاده می‌کنیم
+                    spot = self._get_S0_stock(underlying)
+                    opp = OpportunityBuilder.create_opportunity(
+                        strategy_name=self.strategy_def.name,
+                        ticker=underlying.ticker,
                         legs=legs,
-                        underlying=underlying,
+                        metrics=local_metadata,
                         days_to_maturity=days_to_maturity,
-                        contract_scores=contract_scores,
-                        base_metadata=local_metadata
+                        underlying_price=spot,
                     )
                     if opp:
                         opportunities.append(opp)
@@ -122,6 +130,8 @@ class ThreeLegGenerator(BaseGenerator):
             if isinstance(opt_type, str):
                 opt_type = OptionType.PUT if opt_type.strip().lower() in ["put", "p"] else OptionType.CALL
 
+            side = Side.BUY if weight > 0 else Side.SELL
+
             found_contract = None
             for c in remaining_contracts:
                 if c.option_type == opt_type:
@@ -130,11 +140,17 @@ class ThreeLegGenerator(BaseGenerator):
 
             if found_contract:
                 remaining_contracts.remove(found_contract)
+                # entry_price بر اساس جهت لگ
+                if side == Side.BUY:
+                    ep = found_contract.ask if found_contract.ask > 0 else found_contract.last_price
+                else:
+                    ep = found_contract.bid if found_contract.bid > 0 else found_contract.last_price
                 matched_legs.append(
                     LegDefinition(
                         contract=found_contract,
-                        side=Side.BUY if weight > 0 else Side.SELL,
-                        ratio=abs(int(weight))
+                        side=side,
+                        ratio=abs(int(weight)),
+                        entry_price=ep,
                     )
                 )
             else:
