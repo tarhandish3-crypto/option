@@ -15,7 +15,6 @@ import logging
 from typing import List, Dict, Any
 from config import MIN_VOLUME
 from core.models import MarketSnapshot, Opportunity, OptionContract
-from core.enums import OptionType
 from strategies.core import get_all_strategies
 from strategies.generators import get_generator
 
@@ -44,8 +43,7 @@ class Scanner:
     def scan_ticker_with_strategies(
         self,
         ticker: str,
-        all_strategies: Dict[str, Any]
-    ) -> List[Opportunity]:
+        all_strategies: Dict[str, Any]) -> List[Opportunity]:
         """
         نسخه بهینه‌شده: استراتژی‌ها از بیرون پاس می‌شوند تا از re-copy در هر ticker جلوگیری شود
         """
@@ -75,13 +73,9 @@ class Scanner:
         
         logger.info(f"Scanning {ticker}: {len(contracts)} contracts")
         
-        # 3. پیش‌محاسبه امتیاز نقدشوندگی زنجیره
+        # 4. پیش‌محاسبه امتیاز نقدشوندگی زنجیره
         self._contract_scores = self._calculate_liquidity_scores(contracts)
 
-        # 4. پیش‌فیلتر قراردادها بر اساس نوع — تقسیم یک‌بار برای همه generator‌ها
-        calls = [c for c in contracts if c.option_type == OptionType.CALL]
-        puts  = [c for c in contracts if c.option_type == OptionType.PUT]
-        
         for strategy_name, strategy_def in all_strategies.items():
             try:
                 # 5. دریافت Generator تخصصی معادل استراتژی
@@ -94,8 +88,7 @@ class Scanner:
                 generated_opps = generator.generate(
                     underlying=underlying,
                     contracts=contracts,
-                    contract_scores=self._contract_scores
-                )
+                    contract_scores=self._contract_scores)
                 
                 # استخراج و انباشت آمارهای فیلترینگ داخلی ژنراتور (V4)
                 if hasattr(generator, 'get_stats'):
@@ -151,8 +144,7 @@ class Scanner:
         """ارائه آمارهای تجمیعی به موتور ارکستراتور بالادستی (ScannerEngine)"""
         return {
             "generated": self._generated_count,
-            "filtered": self._filtered_count
-        }
+            "filtered": self._filtered_count}
     
     def scan_all_tickers(self) -> List[Opportunity]:
         """اسکن ترتیبی پشتیبان برای تمام نمادهای موجود در مارکت اسنپ‌شات"""

@@ -42,5 +42,8 @@ DEFINITION = StrategyDefinition.create(
     rules={
         "strike_order": "ascending",
         "maturity_order": "same",
+        # محدود کردن تعداد فرصت‌های long_box: فاصله استرایک حداقل ۵٪
+        "min_strike_gap_pct": 0.05,
+        "max_strike_gap_pct": 0.50,
     },
 )

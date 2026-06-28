@@ -211,19 +211,28 @@ class ScannerEngine:
                     "generated", len(raw_opportunities))
                 self.total_filtered_stats += scanner_stats.get("filtered", 0)
 
-            enriched_opportunities = []
-            for opp in raw_opportunities:
-                try:
-                    if s0_stock > 0:
-                        opp.S0_stock = s0_stock
+            # S0 را روی همه فرصت‌ها تنظیم کن
+            if s0_stock > 0:
+                for opp in raw_opportunities:
+                    opp.S0_stock = s0_stock
 
-                    # هدایت پوزیشن به سمت موتور محاسبات ریاضی و ماتریس سود و زیان (PnL Engine)
-                    enriched_opp = enrich_opportunity_with_pnl(opp)
-                    enriched_opportunities.append(enriched_opp)
+            # ✅ enrichment موازی — هر opportunity مستقل است، thread-safe
+            enrich_workers = min(len(raw_opportunities), 4)
+
+            def _enrich(opp: Opportunity) -> Opportunity:
+                try:
+                    return enrich_opportunity_with_pnl(opp)
                 except Exception as enrich_err:
                     logger.warning(
-                        f"Failed to enrich opportunity {opp.strategy_name} on {ticker}: {enrich_err}")
-                    enriched_opportunities.append(opp)
+                        f"Failed to enrich {opp.strategy_name} on {ticker}: {enrich_err}")
+                    return opp
+
+            if enrich_workers > 1:
+                with ThreadPoolExecutor(max_workers=enrich_workers) as enrich_pool:
+                    enriched_opportunities = list(
+                        enrich_pool.map(_enrich, raw_opportunities))
+            else:
+                enriched_opportunities = [_enrich(opp) for opp in raw_opportunities]
 
             return enriched_opportunities
 

@@ -98,7 +98,9 @@ class IranMarketPayoffCalculator:
                 strikes[idx] = getattr(contract, 'strike_price', 0.0)
                 entry_prices[idx] = getattr(leg, 'entry_price', None) or getattr(
                     contract, 'last_price', 0.0)
-                option_types[idx] = 1 if leg.contract.option_type == OptionType.CALL else 2
+                # ✅ STOCK=0, CALL=1, PUT=2
+                ot = leg.contract.option_type
+                option_types[idx] = 1 if ot == OptionType.CALL else (0 if ot == OptionType.STOCK else 2)
                 contract_sizes[idx] = getattr(contract, 'contract_size')
             else:
                 strikes[idx] = 0.0

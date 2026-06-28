@@ -105,7 +105,7 @@ class ExcelExporter:
 
             # یکپارچه‌سازی توصیف پوزیشن لگ‌ها
             positions_desc = " | ".join([
-                f"{leg.contract.ticker if leg.contract else 'Stock'} ({leg.direction})"
+                f"{leg.contract.ticker if leg.contract else 'Stock'} ({leg.side.value})"
                 for leg in opp.legs
             ]) if getattr(opp, 'legs', None) else metadata.get('positions_desc', 'Custom Leg')
 
