@@ -15,6 +15,7 @@ import logging
 from typing import List, Dict, Any
 from config import MIN_VOLUME
 from core.models import MarketSnapshot, Opportunity, OptionContract
+from core.enums import OptionType
 from strategies.core import get_all_strategies
 from strategies.generators import get_generator
 
@@ -78,8 +79,8 @@ class Scanner:
         self._contract_scores = self._calculate_liquidity_scores(contracts)
 
         # 4. پیش‌فیلتر قراردادها بر اساس نوع — تقسیم یک‌بار برای همه generator‌ها
-        calls = [c for c in contracts if c.option_type.value == 'call']
-        puts  = [c for c in contracts if c.option_type.value == 'put']
+        calls = [c for c in contracts if c.option_type == OptionType.CALL]
+        puts  = [c for c in contracts if c.option_type == OptionType.PUT]
         
         for strategy_name, strategy_def in all_strategies.items():
             try:
