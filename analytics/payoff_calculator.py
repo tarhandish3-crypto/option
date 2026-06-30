@@ -132,7 +132,7 @@ class IranMarketPayoffCalculator:
 
         # اعمال کارمزد فقط اگر feature flag فعال باشد
         flags = get_feature_flags()
-        if flags.get("apply_commissions", True):
+        if flags.get("apply_commissions"):
             net_profits_closed = gross_profits - strategy_costs.total_if_closed
             net_profits_exercised = gross_profits - \
                 (exercise_costs_vector + strategy_costs.option_entry_fees +

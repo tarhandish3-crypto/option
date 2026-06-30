@@ -378,6 +378,9 @@ FEATURE_FLAGS = {
     # و در ستون‌های اکسل نمایش داده می‌شوند
     # اگر False باشد، ستون‌های یونانی مقدار 0 خواهند داشت
     "calculate_greeks": True,
+
+    # اگر True باشد، Risk Metrics (POP, Sharpe, VaR, ...) محاسبه شود
+    "calculate_risk_metrics": True,
 }
 
 
