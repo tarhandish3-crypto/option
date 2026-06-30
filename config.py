@@ -298,9 +298,9 @@ EXCEL_CONFIG = {
 # =====================================================
 
 OUTPUT_CONFIG = {
-    "top_n": 20,
-    "min_score_threshold": 30.0,
-    "include_chart_data": True,
+    "top_n": 100,
+    "min_score_threshold": 20.0,
+    "include_chart_data": False,
     "excel_filename": "opportunities",
 }
 

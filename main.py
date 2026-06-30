@@ -223,7 +223,7 @@ class OptionScanner:
             # ✅ Classification بعد از ranking اجرا می‌شود تا profile_scores موجود باشد
             StrategyClassifier.batch_classify(ranked)
 
-            top_n_limit = config.OUTPUT_CONFIG.get("top_n", 50)
+            top_n_limit = config.OUTPUT_CONFIG.get("top_n")
             top_opportunities = self.ranker.get_top_n(ranked, n=top_n_limit)
 
             if not top_opportunities:

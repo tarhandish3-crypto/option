@@ -334,7 +334,7 @@ class OpportunityRanker:
         """متد موروثی و سازگار نگهداری شده برای کدهای قدیمی لایه‌های بالا"""
         return self._calculate_liquidity_score(opp, True)
 
-    def get_top_n(self, ranked_opportunities: List[Opportunity], n: int = 10) -> List[Opportunity]:
+    def get_top_n(self, ranked_opportunities: List[Opportunity], n: int = 100) -> List[Opportunity]:
         """انتخاب سطرهای برتر جهت مانیتورینگ اولیه یا کنترل موضعی فلو"""
         return ranked_opportunities[:n]
 
