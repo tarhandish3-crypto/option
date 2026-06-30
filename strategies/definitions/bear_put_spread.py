@@ -1,36 +1,39 @@
 # strategies/definitions/bear_put_spread.py
 # -*- coding: utf-8 -*-
 
-from core.enums import GeneratorType
-from strategies.base import StrategyDefinition
+from core.enums import Side, OptionType
+from core.models import StrategyLegPattern
+from strategies.base import StrategyDefinition, GeneratorType
 
-DEFINITION = StrategyDefinition.create(
+DEFINITION = StrategyDefinition(
     name="bear_put_spread",
     generator_type=GeneratorType.TWO_LEG,
-    patterns=[
-        {
-            # خرید PUT با استرایک بالاتر — سود اصلی استراتژی
-            "option_type": "PUT",
-            "side": "BUY",
-            "ratio": 1,
-            "strike_group": "K2",
-            "maturity_group": "M1",
-        },
-        {
-            # فروش PUT با استرایک پایین‌تر — کاهش هزینه
-            "option_type": "PUT",
-            "side": "SELL",
-            "ratio": 1,
-            "strike_group": "K1",
-            "maturity_group": "M1",
-        },
-    ],
     include_stock=False,
-    description="Bear Put Spread - Buy Higher Strike Put / Sell Lower Strike Put",
+    
+    patterns=(
+        # لگ ۱: خرید PUT با strike بالاتر (سود اصلی در حرکت نزولی)
+        StrategyLegPattern(
+            option_type=OptionType.PUT,
+            side=Side.BUY,
+            ratio=1,
+            strike_group="K2",      # strike بالاتر
+            maturity_group="M1",
+        ),
+        # لگ ۲: فروش PUT با strike پایین‌تر (کاهش هزینه خالص)
+        StrategyLegPattern(
+            option_type=OptionType.PUT,
+            side=Side.SELL,
+            ratio=1,
+            strike_group="K1",      # strike پایین‌تر
+            maturity_group="M1",
+        ),
+    ),
+    
+    description="Bear Put Spread - Buy Higher Strike Put / Sell Lower Strike Put (Debit Spread)",
     rules={
-        "strike_order": "ascending",   # K1 < K2
+        "strike_order": "ascending",      # K1 < K2
         "maturity_order": "same",
-        "min_strike_gap_pct": 0.01,
-        "max_strike_gap_pct": 0.15,
+        "min_strike_gap_pct": 0.01,       # حداقل فاصله ۱٪
+        "max_strike_gap_pct": 0.15,       # حداکثر فاصله منطقی
     },
 )

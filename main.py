@@ -242,12 +242,14 @@ class OptionScanner:
                 f"Multi-sheet Excel report exported successfully: {report_path}")
 
             try:
-                colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+                colors = ['#1f77b4', '#ff7f0e',
+                          '#2ca02c', '#d62728', '#9467bd']
                 chart_data = [
-                    (opp.strategy_name, opp, colors[i % len(colors)]) 
+                    (opp.strategy_name, opp, colors[i % len(colors)])
                     for i, opp in enumerate(top_opportunities[:5])]
-                
-                self.chart_plotter.plot_comparison(data=chart_data, ticker="Market")
+
+                self.chart_plotter.plot_comparison(
+                    data=chart_data, ticker="Market")
                 logger.info("Analytical charts generated successfully.")
             except Exception as chart_err:
                 logger.warning(
@@ -291,7 +293,8 @@ class OptionScanner:
             logger.info(f"Scheduled Scan Mode: {self.max_cycles} cycles, "
                         f"{self.interval_minutes} min apart.")
         else:
-            logger.info("Continuous Decision Support System (DSS) Scan Mode Engaged.")
+            logger.info(
+                "Continuous Decision Support System (DSS) Scan Mode Engaged.")
 
         while self.is_running:
             # بررسی رسیدن به حد چرخه

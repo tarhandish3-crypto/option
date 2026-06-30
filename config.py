@@ -542,3 +542,9 @@ def get_price_labels(steps: np.ndarray = None) -> List[str]:
 
     format_str = PRICE_RANGE_CONFIG.get("labels_format", "{:.0f}%")
     return [format_str.format(s) for s in steps]
+
+
+def get_price_levels(S0_stock: float) -> np.ndarray:
+    """تولید سطوح قیمت مطلق بر اساس S0"""
+    pct_steps = get_price_steps()
+    return np.round(S0_stock * (1 + pct_steps / 100.0), 0)

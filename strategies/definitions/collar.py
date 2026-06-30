@@ -1,37 +1,36 @@
 # strategies/definitions/collar.py
 # -*- coding: utf-8 -*-
 
-from core.enums import GeneratorType
-from strategies.base import StrategyDefinition
+from core.enums import Side, OptionType
+from core.models import StrategyLegPattern
+from strategies.base import StrategyDefinition, GeneratorType
 
-DEFINITION = StrategyDefinition.create(
+DEFINITION = StrategyDefinition(
     name="collar",
-    generator_type=GeneratorType.TWO_LEG,
-    patterns=[
-        {
-            # خرید اختیار فروش
-            "option_type": "PUT",
-            "side": "BUY",
-            "ratio": 1,
-            "strike_group": "K1",
-            "maturity_group": "M1",
-        },
-        {
-            # فروش اختیار خرید
-            "option_type": "CALL",
-            "side": "SELL",
-            "ratio": 1,
-            "strike_group": "K2",
-            "maturity_group": "M1",
-        },
-    ],
+    generator_type=GeneratorType.STOCK_OPTION,   # چون ۱ لگ سهم + ۲ لگ آپشن
     include_stock=True,
-    description="Collar - Long Stock + Long Put + Short Call",
+    
+    patterns=(
+        StrategyLegPattern(
+            option_type=OptionType.PUT,
+            side=Side.BUY,
+            ratio=1,
+            strike_group="K1",      # کف قیمت (حمایت)
+            maturity_group="M1",
+        ),
+        StrategyLegPattern(
+            option_type=OptionType.CALL,
+            side=Side.SELL,
+            ratio=1,
+            strike_group="K2",      # سقف قیمت (فروش پوشش)
+            maturity_group="M1",
+        ),
+    ),
+    
+    description="Collar Strategy - Long Stock + Long Put + Short Call (Zero-Cost or Low-Cost Hedge)",
     rules={
-        # هر دو اختیار باید هم‌سررسید باشند
+        "strike_order": "ascending",   # K1 (Put) < K2 (Call)
         "maturity_order": "same",
-
-        # استرایک Put پایین‌تر از Call
-        "strike_order": "ascending",
+        "min_strike_gap_pct": 0.03,    # حداقل فاصله بین strikeها
     },
 )

@@ -9,7 +9,7 @@ import numpy as np
 from numba import njit
 from typing import List, Dict, Any, Optional
 
-from config import get_price_steps, get_feature_flags
+from config import get_price_steps, get_feature_flags, get_price_levels
 from core.models import Opportunity, LegDefinition
 from core.enums import Side, OptionType
 from analytics.cost_calculator import IranMarketCostCalculator
@@ -17,14 +17,13 @@ from analytics.cost_calculator import IranMarketCostCalculator
 
 @njit(cache=True)
 def calc_pure_gross_payoff_numba(
-    price_levels: np.ndarray,
-    weights: np.ndarray,
-    strikes: np.ndarray,
-    entry_prices: np.ndarray,
-    option_types: np.ndarray,
-    sides: np.ndarray,
-    contract_sizes: np.ndarray
-) -> np.ndarray:
+        price_levels: np.ndarray,
+        weights: np.ndarray,
+        strikes: np.ndarray,
+        entry_prices: np.ndarray,
+        option_types: np.ndarray,
+        sides: np.ndarray,
+        contract_sizes: np.ndarray) -> np.ndarray:
     """
     تابع عددی محض - فقط سود ناخالص را محاسبه می‌کند
     """
@@ -100,7 +99,8 @@ class IranMarketPayoffCalculator:
                     contract, 'last_price', 0.0)
                 # ✅ STOCK=0, CALL=1, PUT=2
                 ot = leg.contract.option_type
-                option_types[idx] = 1 if ot == OptionType.CALL else (0 if ot == OptionType.STOCK else 2)
+                option_types[idx] = 1 if ot == OptionType.CALL else (
+                    0 if ot == OptionType.STOCK else 2)
                 contract_sizes[idx] = getattr(contract, 'contract_size')
             else:
                 strikes[idx] = 0.0
@@ -184,14 +184,10 @@ def enrich_opportunity_with_pnl(
     Returns:
         Opportunity: شیء غنی‌شده با داده‌های P&L
     """
-    S0_stock = opportunity.S0_stock if hasattr(
-        opportunity, 'S0_stock') and opportunity.S0_stock else 10000.0
-    # if S0_stock <= 0:
-    #     S0_stock = 10000.0
-    #     opportunity.S0_stock = S0_stock
 
+    S0_stock = getattr(opportunity, 'S0_stock')
     pct_steps = np.array(get_price_steps())
-    price_levels = np.round(S0_stock * (1 + pct_steps / 100), 0)
+    price_levels = get_price_levels(S0_stock)
 
     result = IranMarketPayoffCalculator.calculate_strategy_payoff(
         underlying_symbol=opportunity.underlying_ticker,
@@ -203,12 +199,23 @@ def enrich_opportunity_with_pnl(
     opportunity.max_loss = result['max_loss']
     opportunity.risk_reward_ratio = result['risk_reward_ratio']
 
+    net_profits = result.get('net_profits_closed', [])
+    # محاسبه درصد سود نسبت به سرمایه اولیه (یا مارجین)
+    if opportunity.required_margin > 0:
+        returns_pct = [(p / opportunity.required_margin)
+                       * 100 for p in net_profits]
+    else:
+        returns_pct = [(p / S0_stock) * 100 for p in net_profits]
+
     transaction_costs = result.get('transaction_costs', {})
     opportunity.metadata.update({
         'net_profits_closed': result['net_profits_closed'],
         'net_profits_exercised': result['net_profits_exercised'],
         'gross_profits': result['gross_profits'],
         'price_levels': result['price_levels'],
+        'pct_steps': pct_steps.tolist(),
+        'net_profits_closed': [float(x) for x in net_profits],
+        'returns_monthly_pct': [float(x) for x in returns_pct],
         'transaction_costs': transaction_costs,
         'option_entry_fees': transaction_costs.get('option_entry_fees'),
         'option_exit_fees': transaction_costs.get('option_exit_fees'),

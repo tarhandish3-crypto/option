@@ -85,17 +85,15 @@ class ExcelExporter:
             metadata = opp.metadata if opp.metadata else {}
             
             # استخراج قیمت مرجع بر اساس استاندارد چندلایه بورس ایران
-            S0_stock = getattr(opp, 'S0_stock', 0.0)
-            if not S0_stock or S0_stock <= 0:
-                S0_stock = metadata.get('S0_stock', 10000.0)
-
+            S0_stock = getattr(opp, 'S0_stock')
+        
             # واکشی بردارهای بازدهی ماتریس سود و زیان (P&L Array Mapping)
             pnl_data = metadata.get('returns_monthly_pct', [])
             if not pnl_data:
                 pnl_data = metadata.get('net_returns_closed', [])
             
             # بازسازی لایه گام‌های قیمت بر مبنای هماهنگی با Payoff Core
-            price_levels = metadata.get('price_levels', [])
+            price_levels = np.array(metadata.get('price_levels', []))
             
             classification = getattr(opp, 'classification', None)
             cls_market = classification.market_type if classification else 'Neutral'
@@ -110,16 +108,16 @@ class ExcelExporter:
             ]) if getattr(opp, 'legs', None) else metadata.get('positions_desc', 'Custom Leg')
 
             base_info = {
-                "Rank": getattr(opp, 'rank', 0),
+                "Rank": getattr(opp, 'rank'),
                 "Strategy": opp.strategy_name,
                 "Positions": positions_desc,
-                "DTE": getattr(opp, 'days_to_maturity', 0),
+                "DTE": getattr(opp, 'days_to_maturity'),
                 "Ticker": opp.underlying_ticker,
                 "Market Type": cls_market,
                 "Investor Profile": cls_profile,
                 "Risk Level": cls_risk,
 
-                "Confidence": metadata.get('confidence', 0.80),
+                "Confidence": metadata.get('confidence'),
                 "Conservative Score": opp.profile_scores.conservative if opp.profile_scores else 0.0,
                 "Balanced Score": opp.profile_scores.balanced if opp.profile_scores else 0.0,
                 "Aggressive Score": opp.profile_scores.aggressive if opp.profile_scores else 0.0,
@@ -145,10 +143,9 @@ class ExcelExporter:
                 "Description": cls_desc,
                 "Recommendation": metadata.get('recommended_action', 'بررسی سناریوها'),
                 "Liquidity": getattr(opp, 'liquidity_score', 0.0),
-                "Score": getattr(opp, 'final_score', 0.0)
-            }
+                "Score": getattr(opp, 'final_score', 0.0)}
 
-            # 🛠️ بازنویسی مکانیسم نگاشت P&L جهت هماهنگی کامل با گام‌های ثابت محاسباتی (V4)
+            # بازنویسی مکانیسم نگاشت P&L جهت هماهنگی کامل با گام‌های ثابت محاسباتی (V4)
             if len(price_levels) > 1 and len(pnl_data) == len(price_levels):
                 # تبدیل سطوح قیمت مطلق به درصدهای انحراف واقعی جهت تطبیق با گام‌های پیکربندی
                 actual_pcts = ((np.array(price_levels) / S0_stock) - 1) * 100

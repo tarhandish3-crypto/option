@@ -42,13 +42,11 @@ class StockOptionGenerator(BaseGenerator):
 
         if strategy_def.generator_type != GeneratorType.STOCK_OPTION:
             raise ValueError(
-                f"{strategy_def.name} با StockOptionGenerator سازگار نیست."
-            )
+                f"{strategy_def.name} با StockOptionGenerator سازگار نیست.")
 
         if not getattr(strategy_def, "include_stock", True):
             raise ValueError(
-                f"استراتژی {strategy_def.name} فاقد پرچم الزامی include_stock است."
-            )
+                f"استراتژی {strategy_def.name} فاقد پرچم الزامی include_stock است.")
 
         # legs_count برای covered_call ممکن است ۱ باشد (فقط CALL pattern، سهم implicit است)
         # بنابراین بررسی می‌کنیم بین ۱ تا ۲ لگ باشد
@@ -56,18 +54,16 @@ class StockOptionGenerator(BaseGenerator):
         if lc > 2:
             raise ValueError(
                 f"StockOptionGenerator برای استراتژی‌های ۱ یا ۲ لگی است. "
-                f"تعداد لگ‌های درخواستی: {lc}"
-            )
+                f"تعداد لگ‌های درخواستی: {lc}")
 
         logger.debug(
             f"StockOptionGenerator initialized for {strategy_def.name}")
 
     def generate(
-        self,
-        underlying: UnderlyingAsset,
-        contracts: List[OptionContract],
-        contract_scores: Dict[str, float],
-    ) -> List[Opportunity]:
+            self,
+            underlying: UnderlyingAsset,
+            contracts: List[OptionContract],
+            contract_scores: Dict[str, float],) -> List[Opportunity]:
         """
         اسکن هوشمند و ساخت فرصت‌های معاملاتی کاورکال و مریدپوت بر پایه قیمت پایانی/آخرین معامله.
         """
@@ -80,14 +76,16 @@ class StockOptionGenerator(BaseGenerator):
         spot_price = underlying.close_price or underlying.last_price or 0.0
 
         if spot_price <= 0:
-            logger.warning(f"قیمت نامعتبر برای دارایی پایه {underlying.ticker}: {spot_price}")
+            logger.warning(
+                f"قیمت نامعتبر برای دارایی پایه {underlying.ticker}: {spot_price}")
             return opportunities
 
         # ۲. استخراج نوع اختیار و جهت از patterns
         opt_type, weight = self._resolve_option_pattern()
 
         if opt_type is None:
-            logger.error(f"امکان استخراج نوع اختیار از patterns {self.strategy_def.name} وجود ندارد.")
+            logger.error(
+                f"امکان استخراج نوع اختیار از patterns {self.strategy_def.name} وجود ندارد.")
             return opportunities
 
         rules = self.strategy_def.rules or {}
@@ -131,7 +129,7 @@ class StockOptionGenerator(BaseGenerator):
             # لگ اختیار
             option_side = Side.BUY if weight > 0 else Side.SELL
             ep = (contract.ask if contract.ask > 0 else contract.last_price) if option_side == Side.BUY \
-                 else (contract.bid if contract.bid > 0 else contract.last_price)
+                else (contract.bid if contract.bid > 0 else contract.last_price)
             option_leg = LegDefinition(
                 contract=contract,
                 side=option_side,
@@ -181,6 +179,7 @@ class StockOptionGenerator(BaseGenerator):
             if hasattr(p, 'option_type') and p.option_type != OptionType.STOCK:
                 # weight = ratio با علامت (مثبت برای BUY، منفی برای SELL)
                 weight = float(p.weight)  # property روی StrategyLegPattern
+                # weight = float(p.ratio if p.side == Side.BUY else -p.ratio)
                 return p.option_type, weight
 
         return None, 0.0

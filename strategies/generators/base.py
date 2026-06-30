@@ -38,8 +38,7 @@ class BaseGenerator(ABC):
         self,
         underlying: UnderlyingAsset,
         contracts: List[OptionContract],
-        contract_scores: Dict[str, float]
-    ) -> List[Opportunity]:
+        contract_scores: Dict[str, float]) -> List[Opportunity]:
         """
         متد انتزاعی تولید فرصت‌ها که باید در تمام کلاس‌های فرزند (مانند StockOptionGenerator) 
         اورراید و پیاده‌سازی شود.
@@ -53,8 +52,7 @@ class BaseGenerator(ABC):
     def _calculate_liquidity_score(
         self,
         legs: List[LegDefinition],
-        contract_scores: Dict[str, float]
-    ) -> float:
+        contract_scores: Dict[str, float]) -> float:
         """
         محاسبه هوشمند و ترکیبی امتیاز نقدشوندگی کل پوزیشن.
         
@@ -95,8 +93,7 @@ class BaseGenerator(ABC):
             return underlying.yesterday_price
 
         logger.warning(
-            f"قیمت معتبری برای دارایی پایه {getattr(underlying, 'ticker', 'Unknown')} یافت نشد. مقدار پیش‌فرض 0.0"
-        )
+            f"قیمت معتبری برای دارایی پایه {getattr(underlying, 'ticker', 'Unknown')} یافت نشد. مقدار پیش‌فرض 0.0")
         return 0.0
 
     def _build_base_metadata(self, custom_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -130,8 +127,7 @@ class BaseGenerator(ABC):
         """دریافت گزارش آماری اسکن جاری جهت مانیتورینگ سلامت انجین"""
         return {
             'generated': self._generated_count,
-            'filtered': self._filtered_count
-        }
+            'filtered': self._filtered_count}
 
     def reset_stats(self) -> None:
         """بازنشانی شمارنده‌های آماری ژنراتور برای چرخه اسکن بعدی"""
