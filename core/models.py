@@ -323,6 +323,10 @@ class Opportunity:
     max_loss: float = 0.0
     break_even_points: List[float] = field(default_factory=list)
 
+    # اضافه شدن فیلد رسمی برای منحنی بازدهی درصدی جهت دسترسی سریع لایه فیلترها
+    returns_monthly_pct: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=float))
+
     # ===== معیارهای سرمایه =====
     required_margin: float = 0.0
     total_premium: float = 0.0
@@ -443,7 +447,7 @@ class MarketSnapshot:
     timestamp: datetime = field(default_factory=datetime.now)
     underlying_assets: Dict[str, UnderlyingAsset] = field(default_factory=dict)
     option_contracts: List[OptionContract] = field(default_factory=list)
-    risk_free_rate: float = 0.23
+    risk_free_rate: float = 0.24
 
     # کش‌های داخلی سریع
     _options_by_underlying: Dict[str, List[OptionContract]] = field(
@@ -504,14 +508,10 @@ class MarketSnapshot:
                 continue
 
             ticker_str = str(ticker)
-            underlying_price = 0.0
-            if 'UnderlyingPrice' in group.columns:
-                underlying_price = cls._clean_float(
-                    group['UnderlyingPrice'].iloc[0])
+            underlying_price = cls._clean_float(
+                group['UnderlyingPrice'].iloc[0])
 
-            name = ticker_str
-            if 'Name' in group.columns and pd.notna(group['Name'].iloc[0]):
-                name = str(group['Name'].iloc[0])
+            name = str(group['Name'].iloc[0])
 
             market = ExchangeType.TSE
             if 'Market' in group.columns and pd.notna(group['Market'].iloc[0]):

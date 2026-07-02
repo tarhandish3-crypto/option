@@ -84,9 +84,8 @@ def apply_strategy_filter(opp: Opportunity, user_conditions: Dict[str, Any] = No
 
 
 def filter_payoff_matrix_vectorized(
-    strategy_names: List[str],
-    returns_matrix: np.ndarray
-) -> np.ndarray:
+        strategy_names: List[str],
+        returns_matrix: np.ndarray) -> np.ndarray:
     """
     فیلتر برداری سریع روی ماتریس درصد بازدهی
     """

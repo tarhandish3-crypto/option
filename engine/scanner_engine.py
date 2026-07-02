@@ -1,14 +1,6 @@
 # engine/scanner_engine.py
 # -*- coding: utf-8 -*-
 
-"""
-موتور ارکستراتور اسکن زنجیره بازار (ScannerEngine) - معماری V4
-
-این ماژول فرآیند دریافت تصاویر بازار، فیلترینگ اولیه دارایی‌های پایه، توزیع بار روی 
-ThreadPoolExecutor به صورت کاملاً Thread-Safe و غنی‌سازی نهایی مدل‌ها با P&L را مدیریت می‌کند.
-اصلاحات V4: همگام‌سازی کامل با زنجیره قیمت پایانی بورس ایران و جمع‌آوری آمارهای فیلترینگ ژنراتورها.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -141,15 +133,7 @@ class ScannerEngine:
         logger.info(
             f"Starting full market scan for {len(target_tickers)} underlying assets...")
 
-        # اعمال فیلترهای پیش‌پردازش
-        target_tickers = self._apply_filters(target_tickers)
-
-        if not target_tickers:
-            logger.warning(
-                "No underlying tickers passed the preprocessing filters.")
-            return self._create_empty_result(start_time)
-
-        # ✅ بارگذاری استراتژی‌ها یک‌بار برای کل scan — نه هر ticker جداگانه
+        #  بارگذاری استراتژی‌ها یک‌بار برای کل scan — نه هر ticker جداگانه
         all_strategies = get_all_strategies()
         logger.info(
             f"Loaded {len(all_strategies)} strategies for this scan cycle.")
@@ -166,34 +150,6 @@ class ScannerEngine:
                 target_tickers, all_strategies)
 
         return self._create_result(all_opportunities, start_time)
-
-    # =====================================================
-    # پیاده‌سازی متدهای فیلترینگ
-    # =====================================================
-
-    def _apply_filters(self, tickers: List[str]) -> List[str]:
-        """اعمال زنجیره‌ای فیلترهای پیش‌پردازش به صورت وکتورایز شده"""
-        for i, filter_func in enumerate(self.filters, 1):
-            try:
-                before_count = len(tickers)
-                tickers_series = pd.Series(tickers)
-                filtered_res = filter_func(tickers_series, self.snapshot)
-
-                if isinstance(filtered_res, (pd.Series, pd.DataFrame)):
-                    tickers = filtered_res.tolist()
-                else:
-                    tickers = list(filtered_res)
-
-                logger.info(
-                    f"Filter {i} ({filter_func.__name__}): {before_count} -> {len(tickers)} tickers remaining.")
-            except Exception as e:
-                with self._stats_lock:
-                    self.error_count += 1
-                logger.error(
-                    f"Error applying filter {i}: {e}. Skipping filter step.")
-                continue
-
-        return tickers
 
     # =====================================================
     # مدیریت موازی‌سازی و همزمانی
