@@ -22,8 +22,7 @@ def validate_inputs(
     t: float,
     r: float,
     sigma: float,
-    option_type: Optional[str] = None
-) -> None:
+    option_type: Optional[str] = None) -> None:
     if S <= 0:
         raise ValueError(f" قیمت پایه (S) باید مثبت باشد: {S}")
     if K <= 0:
@@ -57,7 +56,7 @@ def handle_numerical_issues(func):
                         result[key] = 0.0
             return result
         except Exception as e:
-            warnings.warn(f"⚠️ خطای محاسباتی در ران‌پایپ: {e}")
+            warnings.warn(f" خطای محاسباتی در ران‌پایپ: {e}")
             return 0.0 if not func.__annotations__.get('return') == dict else {}
     return wrapper
 
@@ -72,8 +71,7 @@ def calculate_d1_d2(
     K: float,
     t: float,
     r: float,
-    sigma: float
-) -> Tuple[float, float]:
+    sigma: float) -> Tuple[float, float]:
     validate_inputs(S, K, t, r, sigma)
     
     # کنترل شرایط مرزی در سررسید لحظه‌ای
@@ -104,8 +102,7 @@ def calculate_leg_greeks(
     t: float,
     r: float,
     sigma: float,
-    option_type: str
-) -> Tuple[float, float, float]:
+    option_type: str) -> Tuple[float, float, float]:
     validate_inputs(S, K, t, r, sigma, option_type)
     
     d1, d2 = calculate_d1_d2(S, K, t, r, sigma)
@@ -193,8 +190,7 @@ def get_price_step_probabilities(
     t: float,
     r: float,
     sigma: float,
-    normalize: bool = True
-) -> np.ndarray:
+    normalize: bool = True) -> np.ndarray:
     validate_inputs(S0, K=S0, t=t, r=r, sigma=sigma)
     
     if not isinstance(pct_steps, np.ndarray):
@@ -228,8 +224,7 @@ def calculate_strategy_greeks(
     days_to_maturity: int,
     risk_free_rate: float = 0.20,
     volatility: float = 0.35,
-    include_rho: bool = True
-) -> Dict[str, float]:
+    include_rho: bool = True) -> Dict[str, float]:
     if not legs:
         return {'delta': 0.0, 'gamma': 0.0, 'theta_daily': 0.0, 'vega': 0.0}
         
@@ -248,8 +243,7 @@ def calculate_strategy_greeks(
             t=t,
             r=risk_free_rate,
             sigma=volatility,
-            option_type=leg['option_type']
-        )
+            option_type=leg['option_type'])
         
         total['delta'] += position * greeks['delta']
         total['gamma'] += position * greeks['gamma']

@@ -11,7 +11,7 @@ import signal
 import sys
 import gc
 from datetime import datetime
-from typing import List, Callable, Optional
+from typing import Optional
 
 import config
 from data.manager import DataManager
@@ -22,13 +22,14 @@ from scoring.ranker import OpportunityRanker, RankingProfile
 from strategies.core import _load_strategies
 from analytics.risk_engine import RiskEngine
 from analytics.strategy_classifier import StrategyClassifier
+from filters.strategy_filters import apply_strategy_filter
 
 logger = logging.getLogger("OptionScanner.Main")
-
 
 # =====================================================
 # تنظیمات لاگینگ متمرکز
 # =====================================================
+
 
 def setup_logging() -> None:
     """تنظیمات لاگینگ متمرکز پروژه"""
@@ -44,9 +45,7 @@ def setup_logging() -> None:
         datefmt=date_format,
         handlers=[
             logging.StreamHandler(sys.stdout),
-            logging.FileHandler(log_dir / "scanner.log", encoding="utf-8")
-        ]
-    )
+            logging.FileHandler(log_dir / "scanner.log", encoding="utf-8")])
 
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
@@ -58,12 +57,11 @@ def setup_logging() -> None:
 
 class OptionScanner:
     def __init__(
-        self,
-        interval_minutes: Optional[int] = None,
-        parallel: Optional[bool] = None,
-        max_workers: Optional[int] = None,
-        max_cycles: Optional[int] = None,
-    ):
+            self,
+            interval_minutes: Optional[int] = None,
+            parallel: Optional[bool] = None,
+            max_workers: Optional[int] = None,
+            max_cycles: Optional[int] = None,):
         sys_config = config.get_system_config()
 
         self.interval_minutes = interval_minutes or sys_config.get(
@@ -73,7 +71,7 @@ class OptionScanner:
         self.max_workers = max_workers or sys_config.get("max_workers", 1)
 
         # تعداد چرخه: 0 یا None = بی‌نهایت
-        cfg_max = sys_config.get("max_cycles", 0)
+        cfg_max = sys_config.get("max_cycles")
         self.max_cycles: int = max_cycles if max_cycles is not None else cfg_max
 
         self.is_running = True
@@ -85,16 +83,14 @@ class OptionScanner:
         self.data_manager = DataManager(
             cache_dir=str(config.CACHE_DIR),
             use_cache=True,
-            ttl_seconds=config.CACHE_TTL_SECONDS
-        )
+            ttl_seconds=config.CACHE_TTL_SECONDS)
 
         profile_map = {
             "conservative": RankingProfile.CONSERVATIVE,
             "balanced": RankingProfile.BALANCED,
             "aggressive": RankingProfile.AGGRESSIVE,
             "income": RankingProfile.INCOME,
-            "volatility": RankingProfile.VOLATILITY,
-        }
+            "volatility": RankingProfile.VOLATILITY, }
         profile_name = config.RANKING_CONFIG.get("default_profile", "balanced")
         profile = profile_map.get(profile_name, RankingProfile.BALANCED)
 
@@ -102,12 +98,10 @@ class OptionScanner:
         self.excel_exporter = ExcelExporter(output_dir=str(config.OUTPUT_DIR))
         self.chart_plotter = ChartPlotter(output_dir=str(config.CHARTS_DIR))
 
-        # ✅ مدیریت سیگنال‌های سیستم‌عامل برای خروج امن
+        # مدیریت سیگنال‌های سیستم‌عامل برای خروج امن
         # توجه: SIGINT توسط handler مدیریت می‌شود و KeyboardInterrupt صادر نمی‌شود
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-
-        self._print_banner_info()
 
     def _signal_handler(self, signum, frame) -> None:
         """مدیریت سیگنال‌های خروج با حفظ امنیت داده‌ها"""
@@ -115,49 +109,6 @@ class OptionScanner:
         logger.info(
             f"Received {signal_name} signal. Initiating graceful shutdown...")
         self.is_running = False
-
-    def _print_banner_info(self) -> None:
-        cycle_mode = f"{self.max_cycles} cycles" if self.max_cycles > 0 else "INFINITE"
-        logger.info("=" * 60)
-        logger.info(f"Scan Mode: CONTINUOUS CYCLE (DSS Enabled)")
-        logger.info(f"Max Cycles: {cycle_mode}")
-        logger.info(f"Scan Interval: {self.interval_minutes} minutes")
-        logger.info(
-            f"Parallel Processing: {self.parallel} (workers: {self.max_workers})")
-        logger.info("=" * 60)
-
-    # =====================================================
-    # متدهای فیلترینگ
-    # =====================================================
-
-    def _filter_min_volume(self, tickers_series, snapshot, min_volume: int = 1.0) -> list:
-        filtered = []
-        for ticker in tickers_series:
-            opts = snapshot.get_options(ticker)
-            if not opts:
-                continue
-            if hasattr(opts, 'columns'):
-                if 'volume' in opts.columns and opts['volume'].sum() >= min_volume:
-                    filtered.append(ticker)
-            else:
-                try:
-                    total_volume = sum(getattr(o, 'volume', 0) for o in opts)
-                    if total_volume >= min_volume:
-                        filtered.append(ticker)
-                except Exception:
-                    filtered.append(ticker)
-        return filtered
-
-    def _filter_min_options(self, tickers_series, snapshot, min_options: int = 2) -> list:
-        filtered = []
-        for ticker in tickers_series:
-            opts = snapshot.get_options(ticker)
-            if opts is not None and len(opts) >= min_options:
-                filtered.append(ticker)
-        return filtered
-
-    def _get_filters(self) -> List[Callable]:
-        return [self._filter_min_volume, self._filter_min_options]
 
     # =====================================================
     # اجرای اسکن چرخه‌ای
@@ -174,8 +125,9 @@ class OptionScanner:
 
         try:
             logger.info("Fetching market snapshot...")
+            calc_advanced = config.FEATURE_FLAGS.get("calculate_greeks")
             snapshot = self.data_manager.get_market_snapshot(
-                force_refresh=False, calc_advanced=True)
+                force_refresh=False, calc_advanced=calc_advanced)
 
             if not snapshot or not snapshot.option_contracts:
                 logger.warning("MarketSnapshot is empty. Skipping cycle.")
@@ -186,8 +138,7 @@ class OptionScanner:
 
             logger.info("Invoking ScannerEngine...")
             engine = ScannerEngine(
-                snapshot=snapshot,
-                filters=self._get_filters())
+                snapshot=snapshot,)
             scan_result = engine.execute_full_scan()
 
             if not scan_result.opportunities:
@@ -198,6 +149,24 @@ class OptionScanner:
             logger.info(
                 f"Discovered {len(scan_result.opportunities)} valid combinations.")
 
+            # =====================================================
+            # فیلتر پویا بر اساس استراتژی
+            # =====================================================
+            logger.info("Applying dynamic strategy filters...")
+            filtered_opportunities = [
+                opp for opp in scan_result.opportunities
+                if apply_strategy_filter(opp)]
+
+            logger.info(
+                f"After dynamic filter: {len(filtered_opportunities)} opportunities remained.")
+
+            if not filtered_opportunities:
+                logger.warning("No opportunities passed the dynamic filter.")
+                return False
+
+            # =====================================================
+            # Risk + Ranking + Classification
+            # =====================================================
             logger.info("Calculating risk metrics via RiskEngine...")
             enriched_opportunities = []
             risk_success_count = 0
@@ -220,12 +189,13 @@ class OptionScanner:
             logger.info("Ranking & Classifying opportunities...")
             ranked = self.ranker.rank_opportunities(enriched_opportunities)
 
-            # ✅ Classification بعد از ranking اجرا می‌شود تا profile_scores موجود باشد
+            # Classification بعد از ranking اجرا می‌شود تا profile_scores موجود باشد
             StrategyClassifier.batch_classify(ranked)
 
             top_n_limit = config.OUTPUT_CONFIG.get("top_n")
             top_opportunities = self.ranker.get_top_n(ranked, n=top_n_limit)
 
+            # انتخاب نهایی
             if not top_opportunities:
                 logger.warning("No opportunities passed ranking layer.")
                 return False
@@ -233,6 +203,9 @@ class OptionScanner:
             logger.info(
                 f"Selected Top {len(top_opportunities)} opportunities for data-dense report.")
 
+            # =====================================================
+            # خروجی
+            # =====================================================
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"opportunities_cycle_{self.cycle_count}_{timestamp}.xlsx"
 

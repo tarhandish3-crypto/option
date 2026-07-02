@@ -5,7 +5,7 @@
 پکیج تحلیل پیشرفته برای استراتژی‌های اختیار معامله بورس ایران
 """
 
-from analytics.greeks_and_probabilities import (
+from analytics.probabilities_calculator import (
     calculate_d1_d2,
     calculate_leg_greeks,
     calculate_vega,

@@ -4,6 +4,7 @@
 import logging
 from itertools import permutations
 from typing import List, Tuple, Optional, Dict, Any
+import numpy as np
 
 from core.models import OptionContract, StrategyLegPattern, LegDefinition
 from core.enums import OptionType, Side
@@ -13,47 +14,39 @@ logger = logging.getLogger("OptionScanner.Strategies.Matching")
 
 class PatternMatcher:
     """
-    موتور تطبیق الگوهای استراتژی (نسخه استاندارد صنعتی نهایی)
-    کاملاً داینامیک، امن در برابر قفل CPU، و هماهنگ با لایه تعاریف استراتژی‌ها.
+    موتور تطبیق الگوهای استراتژی
     """
 
     @staticmethod
     def match_all(
-        contracts: List[OptionContract], 
+        contracts: List[OptionContract],
         patterns: Tuple[StrategyLegPattern, ...],
-        strategy_rules: Optional[Dict[str, Any]] = None
-    ) -> List[List[LegDefinition]]:
+        strategy_rules: Optional[Dict[str, Any]] = None) -> List[List[LegDefinition]]:
         """
-        تطبیق قراردادهای ورودی با پترن‌های تئوریک استراتژی.
-        
-        توجه: ژنراتورها باید قبلاً با استفاده از combinations، دقیقاً به تعداد
-        لگ‌های استراتژی قرارداد به این متد پاس بدهند.
+        تطبیق قراردادها با الگوهای استراتژی
         """
         strategy_rules = strategy_rules or {}
-        
-        # 🛠️ رفع ایراد شماره ۱ (حل قطعی باگ کراش CPU):
-        # با این گارد، طول لزوماً برابر تعداد پترن‌هاست (مثلا ۴). 
-        # جایگشت یک لیست ۴ تایی کلاً ۲۴ حالت است که در میکروثانیه اجرا می‌شود.
+
         if len(contracts) != len(patterns):
-            logger.error(f"تعداد کانتراکت‌های ورودی ({len(contracts)}) با تعداد پترن‌ها ({len(patterns)}) برابر نیست.")
+            logger.error(
+                f"تعداد قراردادها ({len(contracts)}) با تعداد الگوها ({len(patterns)}) مطابقت ندارد.")
             return []
 
         valid_matches: List[List[LegDefinition]] = []
 
-        # اجرا روی حداکثر ۲۴ یا ۶ حالت (کاملاً بهینه)
         for contract_perm in permutations(contracts):
-            is_valid_match = True
+            is_valid = True
             matched_legs: List[LegDefinition] = []
 
             for contract, pattern in zip(contract_perm, patterns):
-                # تطبیق نوع اختیار (Call/Put/Stock)
+                # تطبیق نوع
                 if contract.option_type != pattern.option_type:
-                    is_valid_match = False
+                    is_valid = False
                     break
 
-                # تعیین entry_price از قرارداد واقعی بر اساس جهت لگ
+                # تعیین entry_price
                 if contract.option_type == OptionType.STOCK:
-                    ep = contract.last_price
+                    ep = contract.last_price or contract.close_price or 0.0
                 elif pattern.side == Side.BUY:
                     ep = contract.ask if contract.ask > 0 else contract.last_price
                 else:
@@ -66,70 +59,101 @@ class PatternMatcher:
                     entry_price=ep,
                 ))
 
-            if is_valid_match:
-                # بررسی روابط قیمتی و زمانی کلان بین لگ‌ها
-                if PatternMatcher._validate_structural_relationships(matched_legs, patterns, strategy_rules):
+            if is_valid:
+                if PatternMatcher._validate_structural_relationships(
+                    matched_legs, patterns, strategy_rules
+                ):
                     valid_matches.append(matched_legs)
 
         return valid_matches
 
     @staticmethod
-    def _validate_structural_relationships(
-        legs: List[LegDefinition], 
-        patterns: Tuple[StrategyLegPattern, ...],
-        rules: Dict[str, Any]
-    ) -> bool:
+    def extract_batch_vectors(
+        valid_matches: List[List[LegDefinition]],
+        max_legs: int = 4) -> Dict[str, np.ndarray]:
         """
-        راستی‌آزمایی ماتریس روابط بین لگ‌ها بدون هاردکد کردن ترتیبات صلب بازار.
+        استخراج برداری داده‌ها برای Numba
+        """
+        num_strategies = len(valid_matches)
+
+        weights_matrix = np.zeros((num_strategies, max_legs), dtype=np.float64)
+        strikes_matrix = np.zeros((num_strategies, max_legs), dtype=np.float64)
+        entry_prices_matrix = np.zeros(
+            (num_strategies, max_legs), dtype=np.float64)
+        option_types_matrix = np.zeros(
+            (num_strategies, max_legs), dtype=np.int32)
+        sides_matrix = np.zeros((num_strategies, max_legs), dtype=np.int32)
+        contract_sizes_matrix = np.zeros(
+            (num_strategies, max_legs), dtype=np.int32)
+
+        for i, legs in enumerate(valid_matches):
+            for j, leg in enumerate(legs):
+                if j >= max_legs:
+                    break
+
+                weights_matrix[i, j] = leg.weight
+                sides_matrix[i, j] = 1 if leg.side == Side.BUY else -1
+
+                contract = leg.contract
+                if contract is not None:
+                    strikes_matrix[i, j] = contract.strike_price
+                    entry_prices_matrix[i, j] = leg.entry_price
+
+                    ot = contract.option_type
+                    option_types_matrix[i, j] = (
+                        0 if ot == OptionType.STOCK else
+                        1 if ot == OptionType.CALL else 2
+                    )
+                    contract_sizes_matrix[i, j] = contract.contract_size
+                else:
+                    strikes_matrix[i, j] = 0.0
+                    entry_prices_matrix[i, j] = leg.entry_price
+                    option_types_matrix[i, j] = 0
+                    contract_sizes_matrix[i, j] = 1
+
+        return {
+            "weights": weights_matrix,
+            "strikes": strikes_matrix,
+            "entry_prices": entry_prices_matrix,
+            "option_types": option_types_matrix,
+            "sides": sides_matrix,
+            "contract_sizes": contract_sizes_matrix}
+
+    @staticmethod
+    def _validate_structural_relationships(
+        legs: List[LegDefinition],
+        patterns: Tuple[StrategyLegPattern, ...],
+        rules: Dict[str, Any]) -> bool:
+        """
+        اعتبارسنجی روابط ساختاری
         """
         strike_groups: Dict[str, float] = {}
         maturity_groups: Dict[str, int] = {}
 
-        # 🛠️ رفع ایراد شماره ۳: اطلاعات strike_group و maturity_group مستقیماً 
-        # از پترن (که خود از فایل definition لود شده) خوانده می‌شود. 
-        # لذا برای Butterfly به صورت خودکار K1, K2, K2, K3 جفت‌وجور خواهد شد.
         for leg, pattern in zip(legs, patterns):
             contract = leg.contract
             if not contract:
                 return False
 
+            # گروه‌بندی strike
             if pattern.strike_group:
-                g_strike = pattern.strike_group
-                # اگر این گروه قبلاً پر شده، پوزیشن فعلی باید دقیقاً همان استرایک را داشته باشد
-                if g_strike in strike_groups and strike_groups[g_strike] != contract.strike_price:
+                g = pattern.strike_group
+                if g in strike_groups and abs(strike_groups[g] - contract.strike_price) > 1e-6:
                     return False
-                strike_groups[g_strike] = contract.strike_price
+                strike_groups[g] = contract.strike_price
 
+            # گروه‌بندی maturity
             if pattern.maturity_group:
-                g_mat = pattern.maturity_group
-                if g_mat in maturity_groups and maturity_groups[g_mat] != contract.days_to_maturity:
+                g = pattern.maturity_group
+                if g in maturity_groups and maturity_groups[g] != contract.days_to_maturity:
                     return False
-                maturity_groups[g_mat] = contract.days_to_maturity
+                maturity_groups[g] = contract.days_to_maturity
 
-        # 🛠️ رفع ایراد شماره ۲: انطباق کامل با شبیه‌سازی مالی تئوریک (K1 < K2 < K3 < K4)
-        # در تمام استراتژی‌ها اعم از Bull یا Bear، نام‌گذاری نمادین استرایک‌ها صعودی است.
-        # مثلاً در Bear Put Spread نیز K1 (پایین‌تر) < K2 (بالاتر) است، فقط سمت خرید و فروش جابجا می‌شود.
+        # بررسی ترتیب strike
         strike_order = rules.get("strike_order", "ascending")
         if strike_order == "ascending":
-            sorted_keys = sorted([k for k in strike_groups.keys() if k.startswith("K")])
-            strike_values = [strike_groups[k] for k in sorted_keys]
+            strike_values = list(strike_groups.values())
             if strike_values != sorted(strike_values):
-                return False
-        elif strike_order == "descending":
-            sorted_keys = sorted([k for k in strike_groups.keys() if k.startswith("K")])
-            strike_values = [strike_groups[k] for k in sorted_keys]
-            if strike_values != sorted(strike_values, reverse=True):
-                return False
-
-        # 🛠️ رفع ایراد شماره ۴: تکمیل و ارتقای کامل روابط سررسید (Maturity Order)
-        maturity_order = rules.get("maturity_order", "same")
-        if "M1" in maturity_groups and "M2" in maturity_groups:
-            if maturity_order == "same" and maturity_groups["M1"] != maturity_groups["M2"]:
-                return False
-            elif maturity_order == "calendar" and maturity_groups["M1"] >= maturity_groups["M2"]:
-                # لگ کوتاه (M1) زودتر از لگ بلند (M2) سررسید می‌شود
-                return False
-            elif maturity_order == "diagonal" and maturity_groups["M1"] == maturity_groups["M2"]:
                 return False
 
         return True

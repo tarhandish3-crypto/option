@@ -4,7 +4,7 @@
 پاکسازی و پیش‌پردازش داده‌های بازار اختیار معامله
 
 وظایف:
-    1. حذف داده‌های نامعتبر و缺失
+    1. حذف داده‌های نامعتبر و
     2. مدیریت صف‌های خرید و فروش (Bid/Ask Queue)
     3. محاسبه ستون‌های مشتق شده (Intrinsic Value, Mid Price, Time Value, Moneyness)
     4. نرمالایز کردن داده‌ها برای استفاده در موتور اسکن
@@ -13,9 +13,8 @@
 import pandas as pd
 import numpy as np
 import logging
-
-from config import MIN_VOLUME, MAX_SPREAD_PCT
-
+from core.enums import OptionType, OptionStatus
+from config import MIN_VOLUME, MAX_SPREAD_PCT, DaysToMaturity
 logger = logging.getLogger("OptionScanner.Data.Cleaner")
 
 
@@ -32,42 +31,32 @@ class DataCleaner:
     def clean(df: pd.DataFrame) -> pd.DataFrame:
         """
         پاکسازی کامل داده
-
         """
-        if df.empty:
-            logger.warning("Empty dataframe received")
-            return df
 
         original_count = len(df)
         logger.info(f"Starting cleaning with {original_count} records")
 
         df = df.copy()
 
-        # 1. حذف ردیف‌های بدون داده‌های حیاتی
-        df = DataCleaner._remove_missing(df)
-
-        # 2. فیلتر مقادیر نامعتبر
+        # 1. فیلتر مقادیر نامعتبر
         df = DataCleaner._filter_invalid(df)
 
-        # 3. مدیریت صف‌های خرید و فروش
-        df = DataCleaner._handle_queues(df)
-
-        # 4. فیلتر سررسید
-        df = DataCleaner._filter_maturity(df, min_days=1.0)
-
-        # 5. فیلتر حجم (اختیاری)
+        # 2. فیلتر حجم (اختیاری)
         min_volume = MIN_VOLUME
         df = DataCleaner._filter_volume(df, min_volume)
 
-        # 6. نرمالایز کردن نوع اختیار
-        df = DataCleaner._normalize_types(df)
+        # 3. مدیریت صف‌های خرید و فروش
+        # چون در مرحله قبلی حجم صفر حذف شده لذا مدیریت صف درست انجام میشود
+        df = DataCleaner._handle_queues(df)
 
-        # DEBUG_SYMBOLS = ['اهرم', 'اخابر']
-        DEBUG_SYMBOLS = ['اهرم']
+        # 4. فیلتر سررسید
+        df = DataCleaner._filter_maturity(df, DaysToMaturity)
+
+        # DEBUG_SYMBOls = ['اهرم', 'اخابر']
+        DEBUG_SYMBOls = ['اهرم']
         before_debug = len(df)
-        df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOLS)]
+        # df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
         after_debug = len(df)
-        print(f"Keept {after_debug} records symbol  (removed {before_debug - after_debug})")
 
         removed_count = original_count - len(df)
         logger.info(
@@ -80,22 +69,6 @@ class DataCleaner:
     # =====================================================
 
     @staticmethod
-    def _remove_missing(df: pd.DataFrame) -> pd.DataFrame:
-        """حذف ردیف‌های با داده‌های缺失 حیاتی"""
-        required_cols = ['Ticker', 'StrikePrice',
-                         'LastPrice', 'UnderlyingPrice']
-        existing_cols = [col for col in required_cols if col in df.columns]
-
-        if existing_cols:
-            before = len(df)
-            df = df.dropna(subset=existing_cols)
-            if before - len(df) > 0:
-                logger.debug(
-                    f"Removed {before - len(df)} rows with missing data")
-
-        return df
-
-    @staticmethod
     def _filter_invalid(df: pd.DataFrame) -> pd.DataFrame:
         """فیلتر مقادیر نامعتبر"""
         before = len(df)
@@ -103,11 +76,8 @@ class DataCleaner:
         if 'StrikePrice' in df.columns:
             df = df[df['StrikePrice'] > 0]
 
-        if 'DaysToMaturity' in df.columns:
-            df = df[df['DaysToMaturity'] > 1]
-
         if 'LastPrice' in df.columns:
-            df = df[df['LastPrice'] >= 1]
+            df = df[df['LastPrice'] > 0]
 
         if before - len(df) > 0:
             logger.debug(
@@ -118,15 +88,8 @@ class DataCleaner:
     @staticmethod
     def _handle_queues(df: pd.DataFrame) -> pd.DataFrame:
         """مدیریت صف‌های خرید و فروش"""
-        if not all(col in df.columns for col in ['BidPrice', 'AskPrice', 'LastPrice']):
-            return df
 
         df = df.copy()
-
-        # پر کردن مقادیر
-        df['BidPrice'] = df['BidPrice'].fillna(0)
-        df['AskPrice'] = df['AskPrice'].fillna(0)
-
         # صف خرید
         bid_queue = (df['AskPrice'] == 0) & (df['BidPrice'] > 0)
         if bid_queue.any():
@@ -144,16 +107,14 @@ class DataCleaner:
         return df
 
     @staticmethod
-    def _filter_maturity(df: pd.DataFrame, min_days: float = 1.0) -> pd.DataFrame:
+    def _filter_maturity(df: pd.DataFrame, min_days: int = 2) -> pd.DataFrame:
         """فیلتر سررسید"""
-        min_days = 1.0
         if 'DaysToMaturity' in df.columns:
             before = len(df)
             df = df[df['DaysToMaturity'] > min_days]
             if before - len(df) > 0:
                 logger.debug(
                     f"Removed {before - len(df)} contracts with <= {min_days} days")
-
         return df
 
     @staticmethod
@@ -165,17 +126,6 @@ class DataCleaner:
             if before - len(df) > 0:
                 logger.debug(
                     f"Removed {before - len(df)} rows with low volume")
-        return df
-
-    @staticmethod
-    def _normalize_types(df: pd.DataFrame) -> pd.DataFrame:
-        """نرمالایز کردن نوع اختیار به 'Call' و 'Put'"""
-        if 'Type' in df.columns:
-            df['Type'] = df['Type'].astype(str).str.strip()
-            df['Type'] = df['Type'].apply(
-                lambda x: 'Call' if x.upper() in ['CALL', 'C', '1'] else 'Put'
-            )
-
         return df
 
     # =====================================================
@@ -196,7 +146,7 @@ class DataCleaner:
         if all(col in df.columns for col in ['UnderlyingPrice', 'StrikePrice', 'Type']):
             S = df['UnderlyingPrice'].values.astype(float)
             K = df['StrikePrice'].values.astype(float)
-            is_call = (df['Type'] == 'Call').values
+            is_call = (df['Type'] == OptionType.CALL).values
 
             df['IntrinsicValue'] = np.where(
                 is_call, np.maximum(S - K, 0), np.maximum(K - S, 0))
@@ -223,7 +173,7 @@ class DataCleaner:
         if all(col in df.columns for col in ['UnderlyingPrice', 'StrikePrice', 'Type']):
             S = df['UnderlyingPrice'].values.astype(float)
             K = df['StrikePrice'].values.astype(float)
-            is_call = (df['Type'] == 'Call').values
+            is_call = (df['Type'] == OptionType.CALL).values
 
             # جلوگیری از تقسیم بر صفر
             S_safe = np.where(S <= 0, np.nan, S)
@@ -233,17 +183,22 @@ class DataCleaner:
 
             # وضعیت ITM/ATM/OTM
             conditions = [
-                (df['Type'] == 'Call') & (
+                (df['Type'] == OptionType.CALL) & (
                     df['UnderlyingPrice'] > df['StrikePrice']),
-                (df['Type'] == 'Put') & (
+                (df['Type'] == OptionType.PUT) & (
                     df['UnderlyingPrice'] < df['StrikePrice']),
                 (df['UnderlyingPrice'] == df['StrikePrice']),
-                (df['Type'] == 'Call') & (
+                (df['Type'] == OptionType.CALL) & (
                     df['UnderlyingPrice'] < df['StrikePrice']),
-                (df['Type'] == 'Put') & (
-                    df['UnderlyingPrice'] > df['StrikePrice'])
+                (df['Type'] == OptionType.PUT) & (
+                    df['UnderlyingPrice'] > df['StrikePrice'])]
+            choices = [
+                OptionStatus.ITM.value,  # ITM Call
+                OptionStatus.ITM.value,  # ITM Put
+                OptionStatus.ATM.value,  # ATM
+                OptionStatus.OTM.value,  # OTM Call
+                OptionStatus.OTM.value   # OTM Put
             ]
-            choices = ['ITM', 'ITM', 'ATM', 'OTM', 'OTM']
             df['OptionStatus'] = np.select(
                 conditions, choices, default='Unknown')
 
@@ -273,15 +228,4 @@ class DataCleaner:
 
         logger.debug(f"Added derived columns successfully")
 
-        return df
-
-    # =====================================================
-    # پاکسازی کامل (یک مرحله‌ای)
-    # =====================================================
-
-    @staticmethod
-    def clean_and_derive(df: pd.DataFrame) -> pd.DataFrame:
-        """پاکسازی و اضافه کردن ستون‌های مشتق شده (یک مرحله‌ای)"""
-        df = DataCleaner.clean(df)
-        df = DataCleaner.add_derived_columns(df)
         return df

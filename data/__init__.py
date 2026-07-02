@@ -8,7 +8,7 @@
 from data.manager import DataManager, get_market_snapshot, Options
 from data.downloader import MarketDownloader
 from data.cleaner import DataCleaner
-from data.calculator import FinancialCalculator
+from analytics.graaks_calculator import calculate_greeks_vectorized, get_risk_free_rate
 
 __all__ = [
     "DataManager",
@@ -16,5 +16,6 @@ __all__ = [
     "Options",
     "MarketDownloader",
     "DataCleaner",
-    "FinancialCalculator",
+    "calculate_greeks_vectorized",
+    "get_risk_free_rate"
 ]

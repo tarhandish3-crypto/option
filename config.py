@@ -154,6 +154,7 @@ PRICE_RANGE_CONFIG = {
 # آستانه‌های نقدشوندگی (Liquidity Thresholds)
 # =====================================================
 
+DaysToMaturity = 2               # حداقل روز تا سررسید
 MIN_VOLUME = 1                   # حداقل حجم معاملات روزانه
 MIN_OPEN_INTEREST = 50           # حداقل موقعیت‌های باز
 MAX_SPREAD_PCT = 0.05            # حداکثر اسپرد قابل قبول (5%)
@@ -164,7 +165,7 @@ DEFAULT_DEPTH_THRESHOLD = 30     # آستانه عمق سفارشات
 # نرخ بهره و نوسان‌پذیری (Rates & Volatility)
 # =====================================================
 
-RISK_FREE_RATE = 0.23            # نرخ بدون ریسک سالانه (23%)
+RISK_FREE_RATE = 0.24            # نرخ بدون ریسک سالانه (23%)
 RISK_FREE_RATE_MONTHLY = 0.019   # نرخ بدون ریسک ماهانه (1.9%)
 DEFAULT_VOLATILITY = 0.30        # نوسان‌پذیری پیش‌فرض (30%)
 HISTORICAL_VOLATILITY_WINDOW = 30  # پنجره محاسبه نوسان تاریخی (روز)
@@ -173,8 +174,8 @@ HISTORICAL_VOLATILITY_WINDOW = 30  # پنجره محاسبه نوسان تاری
 # تنظیمات کش (Cache Settings)
 # =====================================================
 
-CACHE_TTL_SECONDS = 60           # زمان انقضای کش (ثانیه)
-MAX_CACHE_SIZE = 10000           # حداکثر تعداد آیتم‌های کش
+CACHE_TTL_SECONDS = 600           # زمان انقضای کش (ثانیه)
+MAX_CACHE_SIZE = 30000           # حداکثر تعداد آیتم‌های کش
 CACHE_ENABLED = True             # فعال/غیرفعال کردن کش
 
 # =====================================================
@@ -377,9 +378,11 @@ FEATURE_FLAGS = {
     # اگر True باشد، یونانی‌ها (Delta, Gamma, Theta, Vega) محاسبه شده
     # و در ستون‌های اکسل نمایش داده می‌شوند
     # اگر False باشد، ستون‌های یونانی مقدار 0 خواهند داشت
-    "calculate_greeks": True,
+    "calculate_greeks": False,
 
     # اگر True باشد، Risk Metrics (POP, Sharpe, VaR, ...) محاسبه شود
+    "calculate_risk_metrics": True,
+
     "calculate_risk_metrics": True,
 }
 
@@ -467,18 +470,9 @@ def get_fee_config() -> Dict[str, Any]:
 def get_commission_rate(
     market: str,
     asset_type: str,
-    is_buy: bool
-) -> float:
+    is_buy: bool) -> float:
     """
     دریافت نرخ کارمزد بر اساس نوع بازار و دارایی
-
-    Args:
-        market: نوع بازار ('tse' یا 'ifb')
-        asset_type: نوع دارایی ('stock', 'etf-stock', 'etf-gold', 'etf-fix', 'etf-mix', 'option')
-        is_buy: True برای خرید، False برای فروش
-
-    Returns:
-        float: نرخ کارمزد
     """
     key = (market, asset_type, is_buy)
     return COMMISSION_DICT.get(key, 0.00103)  # مقدار پیش‌فرض
@@ -487,13 +481,6 @@ def get_commission_rate(
 def get_exercise_fee_rate(market: str, kind: str) -> float:
     """
     دریافت نرخ کارمزد اعمال بر اساس بازار و نوع دارایی
-
-    Args:
-        market: بازار ('tse' یا 'ifb')
-        kind: نوع دارایی ('stock', 'etf-stock', 'etf-gold', 'etf-fix', 'etf-mix')
-
-    Returns:
-        float: نرخ کارمزد اعمال
     """
     key = (market, kind)
     return EXERCISE_FEE_RATE.get(key, 0.001)  # ۰.۱٪ پیش‌فرض

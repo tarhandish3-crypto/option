@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import logging
 
 from config import RISK_FREE_RATE, DEFAULT_VOLATILITY, get_price_steps
-from analytics.greeks_and_probabilities import get_price_step_probabilities
+from analytics.probabilities_calculator import get_price_step_probabilities
 from core.models import Opportunity
 from core.enums import CurveType
 

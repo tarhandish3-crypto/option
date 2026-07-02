@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import logging
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Union
 
 from core.enums import ExchangeType, AssetType, OptionType, Side, MarketType, RiskLevel, InvestorProfile
+from config import get_price_levels, get_price_steps
 
 # تنظیم logger برای این ماژول
 logger = logging.getLogger("OptionScanner.Core.Models")
@@ -18,6 +20,7 @@ logger = logging.getLogger("OptionScanner.Core.Models")
 # =====================================================
 # مدل‌های داده‌ای دامنه (Domain Models)
 # =====================================================
+
 
 @dataclass(slots=True)
 class UnderlyingAsset:
@@ -56,7 +59,6 @@ class OptionContract:
     """
     مدل داده‌ای یک قرارداد اختیار معامله یا دارایی لگ دارایی پایه در بورس تهران
     """
-    
     # ===== مشخصات پایه =====
     ticker: str                               # نماد قرارداد
     name: str                                 # نام قرارداد
@@ -66,7 +68,7 @@ class OptionContract:
     contract_size: int = 1000                 # اندازه هر قرارداد (تعداد سهام)
     expiry_date: Optional[Union[str, datetime]] = None  # تاریخ سررسید
     days_to_maturity: int = 0                 # روزهای باقی‌مانده تا سررسید
-    
+
     # ===== اطلاعات تابلو و قیمت =====
     bid: float = 0.0                          # قیمت خرید (Bid)
     ask: float = 0.0                          # قیمت فروش (Ask)
@@ -74,7 +76,7 @@ class OptionContract:
     close_price: float = 0.0                  # قیمت پایانی جلسه قبل
     underlying_price: float = 0.0             # قیمت لحظه‌ای دارایی پایه
     yesterday_price: float = 0.0              # قیمت دیروز قرارداد
-    
+
     # ===== حجم و ارزش =====
     volume: int = 0                          # حجم معاملات روز
     open_interest: int = 0                   # تعداد موقعیت‌های باز
@@ -82,7 +84,7 @@ class OptionContract:
     bid_volume: int = 0                      # حجم در صف خرید
     ask_volume: int = 0                      # حجم در صف فروش
     initial_margin: float = 0.0              # وجه تضمین اولیه
-    
+
     # ===== پارامترهای تحلیلی و یونانی‌ها (Greeks) =====
     iv: Optional[float] = None               # نوسان‌پذیری ضمنی
     delta: Optional[float] = None            # دلتا
@@ -92,7 +94,7 @@ class OptionContract:
     rho: Optional[float] = None              # رو
     implied_volatility: Optional[float] = None  # نوسان ضمنی (از مدل BSM)
     iv_hv_ratio: float = 1.0                 # نسبت نوسان ضمنی به تاریخی
-    
+
     # ===== کدهای داخلی سازمان بورس =====
     instrument_code: str = ""                # کد ابزار
     instrument_code_ua: str = ""             # کد ابزار دارایی پایه
@@ -100,12 +102,13 @@ class OptionContract:
     def __post_init__(self):
         """اعتبارسنجی و بهسازی داده‌های کثیف بازار در زمان لود"""
         if self.days_to_maturity < 0:
-            logger.debug(f"روزهای سررسید منفی برای قرارداد {self.ticker} اصلاح شد.")
+            logger.debug(
+                f"روزهای سررسید منفی برای قرارداد {self.ticker} اصلاح شد.")
             self.days_to_maturity = 0
 
     def __str__(self) -> str:
         return f"OptionContract(Ticker={self.ticker}, Strike={self.strike_price:,}, DTE={self.days_to_maturity})"
-    
+
     @property
     def intrinsic_value(self) -> float:
         """ارزش ذاتی (Intrinsic Value)"""
@@ -115,20 +118,20 @@ class OptionContract:
             return max(0.0, self.underlying_price - self.strike_price)
         else:
             return max(0.0, self.strike_price - self.underlying_price)
-    
+
     @property
     def time_value(self) -> float:
         """ارزش زمانی = آخرین قیمت - ارزش ذاتی"""
         if self.option_type == OptionType.STOCK:
             return 0.0
         return max(0.0, self.last_price - self.intrinsic_value)
-    
+
     @property
     def mid_price(self) -> float:
         if self.bid > 0 and self.ask > 0:
             return (self.bid + self.ask) / 2
         return self.last_price
-    
+
     @property
     def spread_pct(self) -> float:
         if self.bid <= 0 or self.ask <= 0:
@@ -137,7 +140,7 @@ class OptionContract:
         if mid <= 0:
             return 1.0
         return (self.ask - self.bid) / mid
-    
+
     @property
     def moneyness(self) -> float:
         if self.option_type == OptionType.STOCK:
@@ -148,14 +151,15 @@ class OptionContract:
             return self.underlying_price / self.strike_price
         else:
             return self.strike_price / self.underlying_price
-    
+
     @property
     def option_status(self) -> str:
         if self.option_type == OptionType.STOCK:
             return "ATM"
         if self.strike_price <= 0 or self.underlying_price <= 0:
             return "OTM"
-        distance_pct = abs(self.underlying_price - self.strike_price) / self.strike_price
+        distance_pct = abs(self.underlying_price -
+                           self.strike_price) / self.strike_price
         if distance_pct <= 0.01:
             return "ATM"
         if self.option_type == OptionType.CALL:
@@ -254,16 +258,19 @@ class LegDefinition:
     side: Side = Side.BUY
     ratio: int = 1
     contract: Optional[OptionContract] = None
-    entry_price: float = 0.0   # قیمت ورود (mid_price یا last_price در زمان ساخت لگ)
+    # قیمت ورود (mid_price یا last_price در زمان ساخت لگ)
+    entry_price: float = 0.0
 
     def __post_init__(self):
         # اعتبارسنجی نسبت‌های وزنی
         if self.ratio <= 0:
-            raise ValueError(f"نسبت وزنی (Ratio) در لگ باید یک عدد مثبت بزرگتر از صفر باشد.")
+            raise ValueError(
+                f"نسبت وزنی (Ratio) در لگ باید یک عدد مثبت بزرگتر از صفر باشد.")
 
         if self.entry_price < 0:
-            raise ValueError(f"قیمت ورود (entry_price) نمی‌تواند منفی باشد: {self.entry_price}")
-            
+            raise ValueError(
+                f"قیمت ورود (entry_price) نمی‌تواند منفی باشد: {self.entry_price}")
+
         if self.contract is not None:
             if not hasattr(self.contract, 'option_type'):
                 raise ValueError("آبجکت متصل شده به لگ یک قرارداد معتبر نیست.")
@@ -308,43 +315,45 @@ class Opportunity:
     legs: List[LegDefinition]
     S0_stock: float = 0.0
     days_to_maturity: int = 0
-    
+
     # ===== معیارهای مالی =====
     net_premium: float = 0.0
     pop: float = 0.0
     max_profit: float = 0.0
     max_loss: float = 0.0
     break_even_points: List[float] = field(default_factory=list)
-    
+
     # ===== معیارهای سرمایه =====
     required_margin: float = 0.0
     total_premium: float = 0.0
-    
+
     # ===== معیارهای نسبت‌ها =====
     risk_reward_ratio: float = 0.0
     expected_return_pct: float = 0.0
     max_profit_pct: float = 0.0
     max_loss_pct: float = 0.0
-    
+
     # ===== معیارهای اجرا و نقدشوندگی =====
     liquidity_score: float = 0.0
     execution_score: float = 0.0
-    
+
     # ===== سیستم امتیازدهی و کلاس‌بندی چندبعدی (DSS) =====
-    classification: StrategyClassification = field(default_factory=StrategyClassification)
+    classification: StrategyClassification = field(
+        default_factory=StrategyClassification)
     profile_scores: ProfileScores = field(default_factory=ProfileScores)
-    
+
     # ===== امتیاز نهایی و رتبه‌بندی عمومی =====
     final_score: float = 0.0
     rank: int = 0
-    
+
     # ===== اطلاعات تکمیلی =====
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.days_to_maturity < 0:
-            logger.warning(f"روزهای سررسید منفی برای فرصت {self.underlying_ticker} به صفر اصلاح شد.")
+            logger.warning(
+                f"روزهای سررسید منفی برای فرصت {self.underlying_ticker} به صفر اصلاح شد.")
             self.days_to_maturity = 0
 
     def __str__(self) -> str:
@@ -375,18 +384,18 @@ class Opportunity:
 @dataclass(slots=True)
 class ScanResult:
     """مدل نهایی خروجی یک دور اسکن کامل بازار"""
-    
+
     timestamp: datetime = field(default_factory=datetime.now)
     total_strategies_scanned: int = 0
     total_combinations_generated: int = 0
     total_combinations_filtered: int = 0
     opportunities: List[Opportunity] = field(default_factory=list)
     execution_time_ms: float = 0.0
-    
+
     def to_dataframe(self) -> pd.DataFrame:
         if not self.opportunities:
             return pd.DataFrame()
-        
+
         records = []
         for opp in self.opportunities:
             record = {
@@ -412,10 +421,11 @@ class ScanResult:
             for i, leg in enumerate(opp.legs, 1):
                 if leg.contract:
                     record[f'Leg{i}_Symbol'] = leg.contract.ticker
-                    record[f'Leg{i}_Side'] = leg.side.value if isinstance(leg.side, Enum) else leg.side
+                    record[f'Leg{i}_Side'] = leg.side.value if isinstance(
+                        leg.side, Enum) else leg.side
                     record[f'Leg{i}_Ratio'] = leg.ratio
             records.append(record)
-        
+
         df = pd.DataFrame(records)
         if 'Rank' in df.columns:
             df = df.sort_values('Rank')
@@ -429,114 +439,127 @@ class ScanResult:
 @dataclass(slots=True)
 class MarketSnapshot:
     """تصویر لحظه‌ای از کل زنجیره بازار آپشن و دارایی‌های پایه بورس ایران"""
-    
+
     timestamp: datetime = field(default_factory=datetime.now)
     underlying_assets: Dict[str, UnderlyingAsset] = field(default_factory=dict)
     option_contracts: List[OptionContract] = field(default_factory=list)
     risk_free_rate: float = 0.23
-    
+
     # کش‌های داخلی سریع
-    _options_by_underlying: Dict[str, List[OptionContract]] = field(default_factory=dict, repr=False)
-    _options_by_symbol: Dict[str, OptionContract] = field(default_factory=dict, repr=False)
+    _options_by_underlying: Dict[str, List[OptionContract]] = field(
+        default_factory=dict, repr=False)
+    _options_by_symbol: Dict[str, OptionContract] = field(
+        default_factory=dict, repr=False)
     _indices_built: bool = field(default=False, repr=False)
-    
+
+    # سطوح قیمتی متمرکز (جدید)
+    price_levels: Optional[np.ndarray] = None
+    pct_steps: Optional[np.ndarray] = None
+
     def __post_init__(self):
         self.sync_underlying_prices()
         self.build_indices()
-    
+        # تولید یکبار سطوح قیمتی
+        if self.price_levels is None:
+            self.price_levels = get_price_levels(10000.0)  # S0 پیش‌فرض
+            self.pct_steps = get_price_steps()
+
     @classmethod
     def from_dataframe(cls, df: pd.DataFrame) -> MarketSnapshot:
         if df.empty:
             logger.warning("انتقال دیتای خالی به قالب DataFrame.")
             return cls()
-        
+
         underlying_assets = cls._extract_underlyings(df)
         option_contracts = []
         skipped_rows = 0
-        
-        for idx, row in df.iterrows():
+
+        raw_records = df.to_dict(orient='records')
+        for row in raw_records:
             try:
-                contract = cls._row_to_option_contract(row)
+                contract = cls._row_to_option_contract_from_dict(row)
                 if contract.ticker:
                     option_contracts.append(contract)
                 else:
                     skipped_rows += 1
             except Exception as e:
-                logger.debug(f"خطا در پارس سطر {idx}: {e}")
+                logger.debug(f"خطا در پارس سطر: {e}")
                 skipped_rows += 1
                 continue
-        
+
         if skipped_rows > 0:
-            logger.info(f"تعداد {skipped_rows} سطر در فرآیند نگاشت فیلتر شدند.")
-        
+            logger.info(
+                f"تعداد {skipped_rows} سطر در فرآیند نگاشت فیلتر شدند.")
+
         return cls(
             timestamp=datetime.now(),
             underlying_assets=underlying_assets,
             option_contracts=option_contracts)
-    
+
     @classmethod
     def _extract_underlyings(cls, df: pd.DataFrame) -> Dict[str, UnderlyingAsset]:
         underlyings = {}
         for ticker, group in df.groupby('UnderlyingTicker'):
             if pd.isna(ticker) or ticker == '':
                 continue
-            
+
             ticker_str = str(ticker)
             underlying_price = 0.0
             if 'UnderlyingPrice' in group.columns:
-                underlying_price = cls._clean_float(group['UnderlyingPrice'].iloc[0])
-            
+                underlying_price = cls._clean_float(
+                    group['UnderlyingPrice'].iloc[0])
+
             name = ticker_str
             if 'Name' in group.columns and pd.notna(group['Name'].iloc[0]):
                 name = str(group['Name'].iloc[0])
-            
+
             market = ExchangeType.TSE
             if 'Market' in group.columns and pd.notna(group['Market'].iloc[0]):
                 market_str = str(group['Market'].iloc[0]).lower()
                 if market_str in ['ifb', 'فرابورس']:
                     market = ExchangeType.IFB
-            
+
             asset_type = AssetType.STOCK
             if 'IsETF' in group.columns and pd.notna(group['IsETF'].iloc[0]):
                 if bool(group['IsETF'].iloc[0]):
                     asset_type = AssetType.ETF_STOCK
-            
+
             underlyings[ticker_str] = UnderlyingAsset(
                 ticker=ticker_str, name=name, last_price=underlying_price,
                 close_price=underlying_price, market=market, asset_type=asset_type,
                 yesterday_price=underlying_price)
         return underlyings
-    
+
     @classmethod
-    def _row_to_option_contract(cls, row: pd.Series) -> OptionContract:
-        option_type = OptionType.CALL
-        if 'Type' in row and pd.notna(row['Type']):
-            type_str = str(row['Type']).upper().strip()
-            if type_str in ['PUT', 'P']:
-                option_type = OptionType.PUT
-            elif type_str in ['STOCK', 'S']:
-                option_type = OptionType.STOCK
-        
+    def _row_to_option_contract_from_dict(cls, row: pd.Series) -> OptionContract:
+
         return OptionContract(
             ticker=str(row.get('Ticker', '')),
             name=str(row.get('Name', '')),
             underlying_ticker=str(row.get('UnderlyingTicker', '')),
-            option_type=option_type,
+            option_type=row['Type'],
             strike_price=cls._clean_float(row.get('StrikePrice')),
-            contract_size=int(row.get('ContractSize', 1000)) if pd.notna(row.get('ContractSize')) else 1000,
-            expiry_date=row.get('MaturityDate') if pd.notna(row.get('MaturityDate')) else None,
-            days_to_maturity=int(row.get('DaysToMaturity', 0)) if pd.notna(row.get('DaysToMaturity')) else 0,
+            contract_size=int(row.get('ContractSize', 1000)) if pd.notna(
+                row.get('ContractSize')) else 1000,
+            expiry_date=row.get('MaturityDate') if pd.notna(
+                row.get('MaturityDate')) else None,
+            days_to_maturity=int(row.get('DaysToMaturity', 0)) if pd.notna(
+                row.get('DaysToMaturity')) else 0,
             bid=cls._clean_float(row.get('BidPrice')),
             ask=cls._clean_float(row.get('AskPrice')),
             last_price=cls._clean_float(row.get('LastPrice')),
             close_price=cls._clean_float(row.get('ClosePrice')),
             underlying_price=cls._clean_float(row.get('UnderlyingPrice')),
             yesterday_price=cls._clean_float(row.get('ClosePrice')),
-            volume=int(row.get('Volume', 0)) if pd.notna(row.get('Volume')) else 0,
-            open_interest=int(row.get('OpenPositions', 0)) if pd.notna(row.get('OpenPositions')) else 0,
+            volume=int(row.get('Volume', 0)) if pd.notna(
+                row.get('Volume')) else 0,
+            open_interest=int(row.get('OpenPositions', 0)) if pd.notna(
+                row.get('OpenPositions')) else 0,
             value=cls._clean_float(row.get('Value')),
-            bid_volume=int(row.get('BidVolume', 0)) if pd.notna(row.get('BidVolume')) else 0,
-            ask_volume=int(row.get('AskVolume', 0)) if pd.notna(row.get('AskVolume')) else 0,
+            bid_volume=int(row.get('BidVolume', 0)) if pd.notna(
+                row.get('BidVolume')) else 0,
+            ask_volume=int(row.get('AskVolume', 0)) if pd.notna(
+                row.get('AskVolume')) else 0,
             iv=cls._clean_float_or_none(row.get('IV')),
             delta=cls._clean_float_or_none(row.get('Delta')),
             gamma=cls._clean_float_or_none(row.get('Gamma')),
@@ -546,19 +569,25 @@ class MarketSnapshot:
             implied_volatility=cls._clean_float_or_none(row.get('BS_Price')),
             instrument_code=str(row.get('InstrumentCode', '')),
             instrument_code_ua=str(row.get('InstrumentCode-UA', '')))
-    
+
     @staticmethod
     def _clean_float(val) -> float:
-        if pd.isna(val) or val is None: return 0.0
-        try: return float(val)
-        except (ValueError, TypeError): return 0.0
-    
+        if pd.isna(val) or val is None:
+            return 0.0
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return 0.0
+
     @staticmethod
     def _clean_float_or_none(val) -> Optional[float]:
-        if pd.isna(val) or val is None: return None
-        try: return float(val)
-        except (ValueError, TypeError): return None
-    
+        if pd.isna(val) or val is None:
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
     def sync_underlying_prices(self) -> None:
         for opt in self.option_contracts:
             if not opt.underlying_ticker:
@@ -570,35 +599,37 @@ class MarketSnapshot:
     def build_indices(self) -> None:
         self._options_by_underlying.clear()
         self._options_by_symbol.clear()
-        
+
         for opt in self.option_contracts:
-            if not opt.underlying_ticker: 
+            if not opt.underlying_ticker:
                 continue
-                
+
             if opt.underlying_ticker not in self._options_by_underlying:
                 self._options_by_underlying[opt.underlying_ticker] = []
             self._options_by_underlying[opt.underlying_ticker].append(opt)
-            
+
             if opt.ticker:
                 self._options_by_symbol[opt.ticker] = opt
-                
+
         self._indices_built = True
-    
+
     def get_options(self, underlying_ticker: str) -> List[OptionContract]:
-        if not self._indices_built: self.build_indices()
+        if not self._indices_built:
+            self.build_indices()
         return self._options_by_underlying.get(underlying_ticker, [])
-    
+
     def get_option(self, symbol: str) -> Optional[OptionContract]:
-        if not self._indices_built: self.build_indices()
+        if not self._indices_built:
+            self.build_indices()
         return self._options_by_symbol.get(symbol)
-    
+
     def get_underlying(self, ticker: str) -> Optional[UnderlyingAsset]:
         return self.underlying_assets.get(ticker)
-    
+
     def refresh(self) -> None:
         self.sync_underlying_prices()
         self.build_indices()
-    
+
     def summary(self) -> Dict[str, Any]:
         return {
             'timestamp': self.timestamp,

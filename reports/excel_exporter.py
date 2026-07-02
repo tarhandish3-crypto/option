@@ -1,19 +1,11 @@
 # reports/excel_exporter.py
 # -*- coding: utf-8 -*-
 
-"""
-ماژول خروجی اکسل (Excel Exporter Module) - نسخه ارتقایافته سیستم تصمیم‌یار (DSS) - معماری V4
-
-این ماژول وظیفه تبدیل ساختار موقعیت‌های کشف‌شده اسکنر به فایل‌های فرمت‌ شده و استاندارد اکسل را 
-بر عهده دارد. در نسخه V4، سیستم درون‌یابی ماتریس P&L و نگاشت گام‌های قیمت کاملاً با رفتار 
-ماتریس محاسباتی Payoff هماهنگ شده و از فساد ساختاری شیت‌های فرعی جلوگیری می‌کند.
-"""
-
 import os
 import logging
 import numpy as np
 import pandas as pd
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
 

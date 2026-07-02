@@ -23,9 +23,69 @@ import config
 from core.models import MarketSnapshot, ScanResult, Opportunity
 from engine.scanner import Scanner
 from analytics.payoff_calculator import enrich_opportunity_with_pnl
+from analytics.probabilities_calculator import calculate_strategy_greeks
 from strategies.core import get_all_strategies
+import config
 
 logger = logging.getLogger("OptionScanner.Engine.ScannerEngine")
+
+
+def _inject_greeks(opp: Opportunity, spot_price: float) -> None:
+    """
+    محاسبه یونانی‌های position-level و تزریق به metadata opportunity.
+    از calculate_strategy_greeks برای جمع‌بندی یونانی همه لگ‌ها استفاده می‌کند.
+    """
+    from core.enums import OptionType as OT, Side as SD
+    from config import RISK_FREE_RATE, DEFAULT_VOLATILITY
+
+    if not opp.legs or spot_price <= 0:
+        return
+
+    legs_input = []
+    for leg in opp.legs:
+        contract = leg.contract
+        if not contract or contract.option_type == OT.STOCK:
+            continue
+        opt_type_str = 'call' if contract.option_type == OT.CALL else 'put'
+        position = 1 if leg.side == SD.BUY else -1
+        iv = getattr(contract, 'iv', None) or getattr(
+            contract, 'implied_volatility', None) or DEFAULT_VOLATILITY
+        legs_input.append({
+            'option_type': opt_type_str,
+            'strike_price': contract.strike_price,
+            'position': position * leg.ratio,
+            'iv': float(iv) if iv and iv > 0 else DEFAULT_VOLATILITY,
+        })
+
+    if not legs_input:
+        return
+
+    # میانگین DTE لگ‌های اختیار
+    dte = opp.days_to_maturity or 30
+    # میانگین IV لگ‌ها
+    avg_iv = sum(l['iv'] for l in legs_input) / len(legs_input)
+
+    # ساخت ساختار ورودی برای calculate_strategy_greeks
+    legs_for_greeks = [
+        {**l, 'position': l['position']}
+        for l in legs_input
+    ]
+
+    result = calculate_strategy_greeks(
+        legs=legs_for_greeks,
+        current_price=spot_price,
+        days_to_maturity=dte,
+        risk_free_rate=RISK_FREE_RATE,
+        volatility=avg_iv,
+    )
+
+    opp.metadata.update({
+        'delta': result.get('delta', 0.0),
+        'gamma': result.get('gamma', 0.0),
+        'theta': result.get('theta_daily', 0.0),
+        'vega': result.get('vega', 0.0),
+        'rho':  result.get('rho', 0.0),
+    })
 
 
 class ScannerEngine:
@@ -34,10 +94,9 @@ class ScannerEngine:
     """
 
     def __init__(
-        self,
-        snapshot: Union[MarketSnapshot, pd.DataFrame],
-        filters: Optional[List[Callable]] = None
-    ):
+            self,
+            snapshot: Union[MarketSnapshot, pd.DataFrame],
+            filters: Optional[List[Callable]] = None):
         # تبدیل خودکار DataFrame به ساختار داده غنی مرجع پروژه
         if isinstance(snapshot, pd.DataFrame):
             self.snapshot = MarketSnapshot.from_dataframe(snapshot)
@@ -46,6 +105,7 @@ class ScannerEngine:
 
         # ساخت ایندکس‌های جستجوی سریع در حافظه
         self.snapshot.build_indices()
+
         self.filters = filters or []
 
         # بارگذاری پارامترهای پردازش موازی از کانفیگ سیستم
@@ -64,8 +124,7 @@ class ScannerEngine:
 
         logger.info(
             f"ScannerEngine V4 initialized: {len(self.snapshot.option_contracts)} contracts, "
-            f"parallel={self.parallel}, workers={self.max_workers}"
-        )
+            f"parallel={self.parallel}, workers={self.max_workers}")
 
     # =====================================================
     # متدهای اصلی اجرای عملیات
@@ -92,16 +151,19 @@ class ScannerEngine:
 
         # ✅ بارگذاری استراتژی‌ها یک‌بار برای کل scan — نه هر ticker جداگانه
         all_strategies = get_all_strategies()
-        logger.info(f"Loaded {len(all_strategies)} strategies for this scan cycle.")
+        logger.info(
+            f"Loaded {len(all_strategies)} strategies for this scan cycle.")
 
         # انتخاب مکانیزم توزیع بار
         if self.parallel and len(target_tickers) > 1:
             logger.info(
                 f"Using parallel execution with {self.max_workers} workers.")
-            all_opportunities = self._scan_parallel(target_tickers, all_strategies)
+            all_opportunities = self._scan_parallel(
+                target_tickers, all_strategies)
         else:
             logger.info("Using sequential execution mode.")
-            all_opportunities = self._scan_sequential(target_tickers, all_strategies)
+            all_opportunities = self._scan_sequential(
+                target_tickers, all_strategies)
 
         return self._create_result(all_opportunities, start_time)
 
@@ -183,7 +245,8 @@ class ScannerEngine:
             # نمونه‌سازی اختصاصی در سطح ترد جهت حذف هم‌پوشانی اشاره‌گرها
             scanner = Scanner(self.snapshot)
             # استراتژی‌ها از بیرون پاس می‌شوند — بدون re-copy در هر thread
-            raw_opportunities = scanner.scan_ticker_with_strategies(ticker, all_strategies)
+            raw_opportunities = scanner.scan_ticker_with_strategies(
+                ticker, all_strategies)
 
             if not raw_opportunities:
                 return []
@@ -220,18 +283,28 @@ class ScannerEngine:
 
             def _enrich(opp: Opportunity) -> Opportunity:
                 try:
-                    return enrich_opportunity_with_pnl(opp)
+                    opp = enrich_opportunity_with_pnl(opp)
                 except Exception as enrich_err:
                     logger.warning(
                         f"Failed to enrich {opp.strategy_name} on {ticker}: {enrich_err}")
-                    return opp
+
+                # ✅ محاسبه یونانی‌های position-level اگر flag فعال باشد
+                try:
+                    if config.get_feature_flags().get("calculate_greeks", True):
+                        _inject_greeks(opp, s0_stock)
+                except Exception as greek_err:
+                    logger.debug(
+                        f"Greeks calculation skipped for {opp.strategy_name}: {greek_err}")
+
+                return opp
 
             if enrich_workers > 1:
                 with ThreadPoolExecutor(max_workers=enrich_workers) as enrich_pool:
                     enriched_opportunities = list(
                         enrich_pool.map(_enrich, raw_opportunities))
             else:
-                enriched_opportunities = [_enrich(opp) for opp in raw_opportunities]
+                enriched_opportunities = [
+                    _enrich(opp) for opp in raw_opportunities]
 
             return enriched_opportunities
 

@@ -9,7 +9,7 @@ import numpy as np
 from numba import njit
 from typing import List, Dict, Any, Optional
 
-from config import get_price_steps, get_feature_flags, get_price_levels
+from config import get_price_steps, get_price_levels, get_feature_flags
 from core.models import Opportunity, LegDefinition
 from core.enums import Side, OptionType
 from analytics.cost_calculator import IranMarketCostCalculator
@@ -75,8 +75,7 @@ class IranMarketPayoffCalculator:
         underlying_symbol: str,
         legs: List[LegDefinition],
         price_levels: np.ndarray,
-        spot_price: Optional[float] = None
-    ) -> Dict[str, Any]:
+        spot_price: Optional[float] = None) -> Dict[str, Any]:
         """
         محاسبه P&L یک استراتژی
         """
@@ -91,23 +90,27 @@ class IranMarketPayoffCalculator:
         for idx, leg in enumerate(legs):
             weights[idx] = abs(getattr(leg, 'weight', 1.0))
             sides[idx] = 1 if leg.side == Side.BUY else -1
+            # contract = getattr(leg, 'contract')
+            contract = leg.contract
 
-            contract = getattr(leg, 'contract', None)
             if contract is not None:
-                strikes[idx] = getattr(contract, 'strike_price', 0.0)
-                entry_prices[idx] = getattr(leg, 'entry_price', None) or getattr(
-                    contract, 'last_price', 0.0)
-                # ✅ STOCK=0, CALL=1, PUT=2
+                # strikes[idx] = getattr(contract, 'strike_price', 0.0)
+                strikes[idx] = contract.strike_price
+                entry_prices[idx] = getattr(leg, 'entry_price', None) or getattr(contract, 'last_price', 0.0)
+                # entry_prices[idx] = leg.entry_price or contract.last_price
+                # STOCK=0, CALL=1, PUT=2
                 ot = leg.contract.option_type
                 option_types[idx] = 1 if ot == OptionType.CALL else (
                     0 if ot == OptionType.STOCK else 2)
-                contract_sizes[idx] = getattr(contract, 'contract_size')
+                # contract_sizes[idx] = getattr(contract, 'contract_size')
+                contract_sizes[idx] = contract.contract_size
             else:
                 strikes[idx] = 0.0
                 entry_prices[idx] = spot_price or 0.0
                 option_types[idx] = 0
                 contract_sizes[idx] = 1
 
+        # محاسبه سود ناخالص
         gross_profits = calc_pure_gross_payoff_numba(
             price_levels=price_levels,
             weights=weights,
@@ -115,14 +118,13 @@ class IranMarketPayoffCalculator:
             entry_prices=entry_prices,
             option_types=option_types,
             sides=sides,
-            contract_sizes=contract_sizes
-        )
+            contract_sizes=contract_sizes)
 
+        # محاسبه هزینه‌ها
         strategy_costs = IranMarketCostCalculator.calculate_strategy_costs(
             underlying_symbol=underlying_symbol,
             legs=legs,
-            spot_price=spot_price
-        )
+            spot_price=spot_price)
 
         exercise_costs_vector = IranMarketCostCalculator.generate_exercise_cost_vector(
             underlying_symbol=underlying_symbol,
@@ -165,12 +167,7 @@ class IranMarketPayoffCalculator:
 # تابع Orchestration برای غنی‌سازی Opportunity
 # ================================================================
 
-def enrich_opportunity_with_pnl(
-        opportunity: Opportunity,
-        factor: float = 1.0,
-        include_clearing: bool = True,
-        include_exercise_tax: bool = True,
-        profit_threshold: Optional[float] = None) -> Opportunity:
+def enrich_opportunity_with_pnl(opportunity: Opportunity,) -> Opportunity:
     """
     غنی‌سازی یک فرصت با محاسبات P&L
 
@@ -195,10 +192,6 @@ def enrich_opportunity_with_pnl(
         price_levels=price_levels,
         spot_price=S0_stock)
 
-    opportunity.max_profit = result['max_profit']
-    opportunity.max_loss = result['max_loss']
-    opportunity.risk_reward_ratio = result['risk_reward_ratio']
-
     net_profits = result.get('net_profits_closed', [])
     # محاسبه درصد سود نسبت به سرمایه اولیه (یا مارجین)
     if opportunity.required_margin > 0:
@@ -207,6 +200,9 @@ def enrich_opportunity_with_pnl(
     else:
         returns_pct = [(p / S0_stock) * 100 for p in net_profits]
 
+    opportunity.max_profit = result['max_profit']
+    opportunity.max_loss = result['max_loss']
+    opportunity.risk_reward_ratio = result['risk_reward_ratio']
     transaction_costs = result.get('transaction_costs', {})
     opportunity.metadata.update({
         'net_profits_closed': result['net_profits_closed'],
