@@ -172,7 +172,7 @@ class OptionScanner:
             risk_success_count = 0
             risk_fail_count = 0
 
-            for opp in scan_result.opportunities:
+            for opp in filtered_opportunities:
                 try:
                     enriched_opp = RiskEngine.evaluate_opportunity(opp)
                     enriched_opportunities.append(enriched_opp)
