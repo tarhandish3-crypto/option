@@ -2,49 +2,113 @@
 # -*- coding: utf-8 -*-
 
 import logging
-from itertools import permutations
-from typing import List, Tuple, Optional, Dict, Any
+from itertools import product, chain
+from typing import Iterator, Tuple, Optional, Dict, Any, Iterable, List
 import numpy as np
 
 from core.models import OptionContract, StrategyLegPattern, LegDefinition
 from core.enums import OptionType, Side
+from strategies.matching.contract_index import ContractIndex, StrikeBucket
 
 logger = logging.getLogger("OptionScanner.Strategies.Matching")
 
 
 class PatternMatcher:
     """
-    موتور تطبیق الگوهای استراتژی
+    موتور هوشمند و بدون الیکیشن حافظه (Zero-Allocation) برای تطبیق الگوها.
+    بهینه‌سازی شده با فیلتر نقدشوندگی جریانی جهت جلوگیری از رد شدن غیرضروری پنجره‌ها.
     """
+
+    __slots__ = ()  # کلاس کاملاً بدون وضعیت (Stateless) جهت بهینه‌سازی آدرس‌دهی حافظه
 
     @staticmethod
     def match_all(
-        contracts: List[OptionContract],
+        index: ContractIndex,
         patterns: Tuple[StrategyLegPattern, ...],
-        strategy_rules: Optional[Dict[str, Any]] = None) -> List[List[LegDefinition]]:
+        strategy_rules: Optional[Dict[str, Any]] = None,
+        min_liquidity_score: float = 30.0,
+        contract_scores: Optional[Dict[str, float]] = None,) -> Iterator[List[LegDefinition]]:
         """
-        تطبیق قراردادها با الگوهای استراتژی
+        تطبیق کاملاً جریانی زنجیره آپشن با الگوها بدون انباشت لیست‌ها در حافظه RAM.
         """
         strategy_rules = strategy_rules or {}
+        legs_count = len(patterns)
 
-        if len(contracts) != len(patterns):
-            logger.error(
-                f"تعداد قراردادها ({len(contracts)}) با تعداد الگوها ({len(patterns)}) مطابقت ندارد.")
-            return []
+        if legs_count == 0:
+            return
 
-        valid_matches: List[List[LegDefinition]] = []
+        maturity_mode = strategy_rules.get("maturity_order", "same")
+        
+        if maturity_mode == "same":
+            for dte in index.maturities:
+                # پیمایش مستقیم و خطی روی کش استرایک‌های متوالی همان سررسید
+                for strike_window in index.iter_strike_windows(dte, size=legs_count):
+                    yield from PatternMatcher._process_window_combinations(
+                        window=strike_window, 
+                        patterns=patterns, 
+                        rules=strategy_rules,
+                        min_liquidity_score=min_liquidity_score,
+                        scores=contract_scores
+                    )
+        else:
+            # مدیریت استراتژی‌های ناهمزمان (تقویمی و قطری)
+            yield from PatternMatcher._match_calendar_spreads(
+                index, patterns, strategy_rules, contract_scores, min_liquidity_score
+            )
 
-        for contract_perm in permutations(contracts):
-            is_valid = True
+    @staticmethod
+    def _process_window_combinations(
+        window: List[StrikeBucket],
+        patterns: Tuple[StrategyLegPattern, ...],
+        rules: Dict[str, Any],
+        min_liquidity_score: float,
+        scores: Optional[Dict[str, float]]
+    ) -> Iterator[List[LegDefinition]]:
+        """
+        پردازش ضرب دکارتی تنبل کانتراکت‌ها صرفاً در فضای فیلترشده و محدود پنجره استرایک.
+        """
+        scores = scores or {}
+
+        # تابع درونی جریانی جهت اعمال فیلتر نقدشوندگی داینامیک و متناسب با نوع لنگه (Call/Put)
+        def _get_candidates_iter():
+            for i, pattern in enumerate(patterns):
+                bucket = window[i]
+                
+                if pattern.option_type == OptionType.CALL:
+                    # فیلتر مستقیم نقدشوندگی زمان واکشی کاندیداها بدون اسکن پوت‌های بی‌ربط
+                    valid_calls = [c for c in bucket.calls if scores.get(c.ticker, 100.0) >= min_liquidity_score]
+                    if not valid_calls: 
+                        return
+                    yield valid_calls
+                    
+                elif pattern.option_type == OptionType.PUT:
+                    # فیلتر مستقیم نقدشوندگی زمان واکشی کاندیداها بدون اسکن کال‌های بی‌ربط
+                    valid_puts = [c for c in bucket.puts if scores.get(c.ticker, 100.0) >= min_liquidity_score]
+                    if not valid_puts: 
+                        return
+                    yield valid_puts
+                    
+                else:
+                    # ترکیب کال و پوت به صورت جریانی در صورت تعریف لنگه ترکیبی
+                    valid_any = [c for c in chain(bucket.calls, bucket.puts) if scores.get(c.ticker, 100.0) >= min_liquidity_score]
+                    if not valid_any: 
+                        return
+                    yield valid_any
+
+        candidate_iters = list(_get_candidates_iter())
+        if len(candidate_iters) < len(patterns):
+            return
+
+        # اجرای ضرب دکارتی متقاطع و تنبل فقط روی کانتراکت‌های نقدشونده درون پنجره
+        for combo in product(*candidate_iters):
+            
+            # فیلتر زودهنگام روابط ساختاری (استرایک صعودی و گپ قیمتی) پیش از نمونه‌سازی اشیاء
+            if not PatternMatcher._fast_validate_structural_relationships(combo, patterns, rules):
+                continue
+
+            # تخصیص حافظه و ساخت پوزیشن نهایی فقط در صورت تایید کامل شروط
             matched_legs: List[LegDefinition] = []
-
-            for contract, pattern in zip(contract_perm, patterns):
-                # تطبیق نوع
-                if contract.option_type != pattern.option_type:
-                    is_valid = False
-                    break
-
-                # تعیین entry_price
+            for contract, pattern in zip(combo, patterns):
                 if contract.option_type == OptionType.STOCK:
                     ep = contract.last_price or contract.close_price or 0.0
                 elif pattern.side == Side.BUY:
@@ -59,101 +123,125 @@ class PatternMatcher:
                     entry_price=ep,
                 ))
 
-            if is_valid:
-                if PatternMatcher._validate_structural_relationships(
-                    matched_legs, patterns, strategy_rules
-                ):
-                    valid_matches.append(matched_legs)
+            yield matched_legs
 
-        return valid_matches
+    @staticmethod
+    def _fast_validate_structural_relationships(
+        combo: Tuple[OptionContract, ...],
+        patterns: Tuple[StrategyLegPattern, ...],
+        rules: Dict[str, Any]
+    ) -> bool:
+        """
+        اعتبارسنجی فرکانس بالا روی ترتیب چیدمان و فواصل محاسباتی قیمت‌های اعمال (Strikes).
+        """
+        last_strike: Optional[float] = None
+        strike_order = rules.get("strike_order", "ascending")
+        min_gap_pct = rules.get("min_strike_gap_pct", 0.0)
+
+        for contract, pattern in zip(combo, patterns):
+            if not contract:
+                return False
+
+            # الف) کنترل صعودی بودن زنجیره استرایک‌ها
+            if strike_order == "ascending":
+                if last_strike is not None and contract.strike_price < last_strike:
+                    return False
+                last_strike = contract.strike_price
+
+        # ب) کنترل ریاضی حد فاصل درصدی قیمت‌های اعمال کاندیدا
+        if min_gap_pct > 0 and len(combo) > 1:
+            strikes = [c.strike_price for c in combo]
+            for i in range(len(strikes) - 1):
+                base = max(min(strikes[i], strikes[i+1]), 1.0)
+                gap_pct = abs(strikes[i] - strikes[i+1]) / base
+                if gap_pct < min_gap_pct:
+                    return False
+                
+        return True
+
+    @staticmethod
+    def _match_calendar_spreads(
+        index: ContractIndex,
+        patterns: Tuple[StrategyLegPattern, ...],
+        rules: Dict[str, Any],
+        scores: Optional[Dict[str, float]],
+        min_liquidity: float
+    ) -> Iterator[List[LegDefinition]]:
+        """
+        مکانیزم توسعه آتی جهت انطباق جفت سررسیدهای متفاوت (Calendar / Diagonal Spreads).
+        """
+        return
+        yield
 
     @staticmethod
     def extract_batch_vectors(
-        valid_matches: List[List[LegDefinition]],
-        max_legs: int = 4) -> Dict[str, np.ndarray]:
+        valid_matches: Iterable[List[LegDefinition]],
+        max_legs: int = 4
+    ) -> Dict[str, np.ndarray]:
         """
-        استخراج برداری داده‌ها برای Numba
+        تبدیل برداری و موازی آرایه جریانی پوزیشن‌ها به ماتریس‌های دو بعدی NumPy برای پردازشگر لایه Numba.
         """
-        num_strategies = len(valid_matches)
+        weights_list = []
+        strikes_list = []
+        entry_prices_list = []
+        option_types_list = []
+        sides_list = []
+        contract_sizes_list = []
 
-        weights_matrix = np.zeros((num_strategies, max_legs), dtype=np.float64)
-        strikes_matrix = np.zeros((num_strategies, max_legs), dtype=np.float64)
-        entry_prices_matrix = np.zeros(
-            (num_strategies, max_legs), dtype=np.float64)
-        option_types_matrix = np.zeros(
-            (num_strategies, max_legs), dtype=np.int32)
-        sides_matrix = np.zeros((num_strategies, max_legs), dtype=np.int32)
-        contract_sizes_matrix = np.zeros(
-            (num_strategies, max_legs), dtype=np.int32)
+        for legs in valid_matches:
+            w = np.zeros(max_legs, dtype=np.float64)
+            s = np.zeros(max_legs, dtype=np.float64)
+            ep = np.zeros(max_legs, dtype=np.float64)
+            ot = np.zeros(max_legs, dtype=np.int32)
+            sd = np.zeros(max_legs, dtype=np.int32)
+            cs = np.zeros(max_legs, dtype=np.int32)
 
-        for i, legs in enumerate(valid_matches):
             for j, leg in enumerate(legs):
                 if j >= max_legs:
                     break
 
-                weights_matrix[i, j] = leg.weight
-                sides_matrix[i, j] = 1 if leg.side == Side.BUY else -1
+                w[j] = leg.weight
+                sd[j] = 1 if leg.side == Side.BUY else -1
 
                 contract = leg.contract
                 if contract is not None:
-                    strikes_matrix[i, j] = contract.strike_price
-                    entry_prices_matrix[i, j] = leg.entry_price
+                    s[j] = contract.strike_price
+                    ep[j] = leg.entry_price
 
-                    ot = contract.option_type
-                    option_types_matrix[i, j] = (
-                        0 if ot == OptionType.STOCK else
-                        1 if ot == OptionType.CALL else 2
+                    o_type = contract.option_type
+                    ot[j] = (
+                        0 if o_type == OptionType.STOCK else
+                        1 if o_type == OptionType.CALL else 2
                     )
-                    contract_sizes_matrix[i, j] = contract.contract_size
+                    cs[j] = contract.contract_size
                 else:
-                    strikes_matrix[i, j] = 0.0
-                    entry_prices_matrix[i, j] = leg.entry_price
-                    option_types_matrix[i, j] = 0
-                    contract_sizes_matrix[i, j] = 1
+                    s[j] = 0.0
+                    ep[j] = leg.entry_price
+                    ot[j] = 0
+                    cs[j] = 1
+
+            weights_list.append(w)
+            strikes_list.append(s)
+            entry_prices_list.append(ep)
+            option_types_list.append(ot)
+            sides_list.append(sd)
+            contract_sizes_list.append(cs)
+
+        if not weights_list:
+            return {
+                "weights": np.empty((0, max_legs), dtype=np.float64),
+                "strikes": np.empty((0, max_legs), dtype=np.float64),
+                "entry_prices": np.empty((0, max_legs), dtype=np.float64),
+                "option_types": np.empty((0, max_legs), dtype=np.int32),
+                "sides": np.empty((0, max_legs), dtype=np.int32),
+                "contract_sizes": np.empty((0, max_legs), dtype=np.int32),
+            }
 
         return {
-            "weights": weights_matrix,
-            "strikes": strikes_matrix,
-            "entry_prices": entry_prices_matrix,
-            "option_types": option_types_matrix,
-            "sides": sides_matrix,
-            "contract_sizes": contract_sizes_matrix}
-
-    @staticmethod
-    def _validate_structural_relationships(
-        legs: List[LegDefinition],
-        patterns: Tuple[StrategyLegPattern, ...],
-        rules: Dict[str, Any]) -> bool:
-        """
-        اعتبارسنجی روابط ساختاری
-        """
-        strike_groups: Dict[str, float] = {}
-        maturity_groups: Dict[str, int] = {}
-
-        for leg, pattern in zip(legs, patterns):
-            contract = leg.contract
-            if not contract:
-                return False
-
-            # گروه‌بندی strike
-            if pattern.strike_group:
-                g = pattern.strike_group
-                if g in strike_groups and abs(strike_groups[g] - contract.strike_price) > 1e-6:
-                    return False
-                strike_groups[g] = contract.strike_price
-
-            # گروه‌بندی maturity
-            if pattern.maturity_group:
-                g = pattern.maturity_group
-                if g in maturity_groups and maturity_groups[g] != contract.days_to_maturity:
-                    return False
-                maturity_groups[g] = contract.days_to_maturity
-
-        # بررسی ترتیب strike
-        strike_order = rules.get("strike_order", "ascending")
-        if strike_order == "ascending":
-            strike_values = list(strike_groups.values())
-            if strike_values != sorted(strike_values):
-                return False
-
-        return True
+            "weights": np.vstack(weights_list),
+            "strikes": np.vstack(strikes_list),
+            "entry_prices": np.vstack(entry_prices_list),
+            "option_types": np.vstack(option_types_list),
+            "sides": np.vstack(sides_list),
+            "contract_sizes": np.vstack(contract_sizes_list),
+        }

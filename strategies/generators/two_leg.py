@@ -2,26 +2,15 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
-
 import logging
-from itertools import combinations
-from typing import List, Dict, Any, Set, Tuple, Iterator
+from typing import Dict, Any, Iterator, List
 
-from core.models import (
-    OptionContract,
-    UnderlyingAsset,
-    Opportunity,
-    LegDefinition,
-)
-
-from strategies.base import (
-    StrategyDefinition,
-    GeneratorType,
-)
-
+from core.models import OptionContract, UnderlyingAsset, Opportunity, LegDefinition
+from core.enums import OptionType, GeneratorType
+from strategies.base import StrategyDefinition
 from strategies.generators.base import BaseGenerator
+from strategies.matching.contract_index import ContractIndex
 from strategies.matching.pattern_matcher import PatternMatcher
-from strategies.matching.fast_filter import build_required_type_counts, can_match
 from engine.opportunity_builder import OpportunityBuilder
 
 logger = logging.getLogger("OptionScanner.Strategies.Generators.TwoLeg")
@@ -29,164 +18,110 @@ logger = logging.getLogger("OptionScanner.Strategies.Generators.TwoLeg")
 
 class TwoLegGenerator(BaseGenerator):
     """
-    تولیدکننده جریانی استراتژی‌های دو لگی بر اساس ساختار اصلی پروژه
+    تولیدکننده نهایی، صنعتی و ۱۰۰٪ بدون وضعیت (Stateless) استراتژی‌های ۲ لگی.
+    پایبند به اصول لایه‌بندی خالص و هدایت جریانی داده‌ها بدون اورهد پردازشی در لوپ داغ.
     """
+
+    __slots__ = ('_maturity_mode', '_include_stock')
 
     def __init__(self, strategy_def: StrategyDefinition):
         super().__init__(strategy_def)
 
         if strategy_def.generator_type != GeneratorType.TWO_LEG:
-            raise ValueError(
-                f"{strategy_def.name} is not compatible with TwoLegGenerator")
+            raise ValueError(f"{strategy_def.name} با TwoLegGenerator سازگار نیست.")
 
         if strategy_def.legs_count != 2:
-            raise ValueError("TwoLegGenerator requires exactly 2 legs")
+            raise ValueError("TwoLegGenerator نیازمند دقیقاً ۲ لگ معاملاتی است.")
 
-        self._required_types = build_required_type_counts(
-            strategy_def.patterns)
-        self._maturity_mode = (strategy_def.rules or {}).get(
-            "maturity_order", "same")
+        rules = strategy_def.rules or {}
+        self._maturity_mode = rules.get("maturity_order", "same")
+        self._include_stock = getattr(strategy_def, 'include_stock', False)
 
     def generate(
         self,
         underlying: UnderlyingAsset,
-        contracts: List[OptionContract],
+        index: ContractIndex,  # کانتراکت ایندکس بهینه شده و تزریقی از بیرون
         contract_scores: Dict[str, float],
     ) -> Iterator[Opportunity]:
-        """
-        تولید و yield فرصت‌ها به صورت جریانی برای جلوگیری از گلوگاه حافظه
-        """
-        if len(contracts) < 2:
+        """اسکن ۱۰۰٪ جریانی، بدون تخصیص حافظه محلی و کاملاً Stateless"""
+        
+        base_price = self._get_S0_stock(underlying)
+        if base_price <= 0:
             return
 
-        patterns = self.strategy_def.patterns
         rules = self.strategy_def.rules or {}
-        seen_keys: Set[Tuple] = set()
-        maturity_mode = self._maturity_mode
+        patterns = self.strategy_def.patterns
 
-        # =====================================================
-        # تعیین دامنه سررسیدها
-        # =====================================================
-        if maturity_mode == "same":
-            maturity_groups: Dict[int, List[OptionContract]] = {}
-            for contract in contracts:
-                maturity_groups.setdefault(
-                    contract.days_to_maturity, []).append(contract)
-            candidate_iterables = []
-            for group in maturity_groups.values():
-                if len(group) >= 2:
-                    candidate_iterables.extend(combinations(group, 2))
-        else:
-            candidate_iterables = combinations(contracts, 2)
+        # بررسی O(1) نقدینگی و زنده بودن زنجیره جهت Early Abort سریع
+        if index.is_empty:
+            return
 
-        # =====================================================
-        # پردازش و ارسال جریانی کاندیداها
-        # =====================================================
-        for candidate in candidate_iterables:
-            candidate_contracts = list(candidate)
+        # فراخوانی جریانی مچر با واگذاری کامل فرآیند Dedup به لایه بومی برای حداکثر سرعت
+        matched_sets = PatternMatcher.match_all(
+            index=index,
+            patterns=patterns,
+            strategy_rules=rules,
+            contract_scores=contract_scores,
+            dedup=True  # اعمال بهینه ددات در مبدا تولید الگوها
+        )
 
-            if not can_match(candidate_contracts, self._required_types, maturity_mode):
+        for matched_legs in matched_sets:
+            # ۱. اعتبارسنجی درجا و فوق‌سریع فواصل ریاضی استرایک‌ها
+            if not self._validate_strike_gaps(matched_legs, rules):
                 continue
 
-            matched_sets = PatternMatcher.match_all(
-                contracts=candidate_contracts,
-                patterns=patterns,
-                strategy_rules=rules,
+            # ۲. استخراج زمان سررسید موقعیت ترکیبی با گارد دارایی پایه (Stock-Safe Guard)
+            days_to_maturity = 0
+            for leg in matched_legs:
+                if leg.contract and leg.contract.option_type != OptionType.STOCK:
+                    days_to_maturity = leg.contract.days_to_maturity
+                    break
+
+            # ۳. تحویل جفت لگ نهایی به کارخانه بیلدر جهت ساخت شیء مالتی‌ترید اپورچونیتی
+            opp = OpportunityBuilder.create_2leg_opportunity(
+                strategy_def=self.strategy_def,
+                underlying=underlying,
+                legs=matched_legs,
+                days_to_maturity=days_to_maturity,
+                contract_scores=contract_scores,
+                include_stock=self._include_stock
             )
 
-            for matched_legs in matched_sets:
-                if not self._validate_strike_gap(matched_legs, rules):
-                    continue
-
-                unique_key = self._build_unique_key(matched_legs)
-                if unique_key in seen_keys:
-                    continue
-
-                seen_keys.add(unique_key)
+            if opp is not None:
                 self.increment_generated()
+                yield opp
 
-                metadata = self._build_metadata(matched_legs, contract_scores)
-                base_metadata = self._build_base_metadata(metadata)
+    # ============================================================
+    # HIGH-PERFORMANCE STATIC HELPERS (NO ALLOCATION)
+    # ============================================================
 
-                dte = max(
-                    leg.contract.days_to_maturity
-                    for leg in matched_legs
-                    if leg.contract
-                )
-
-                opp = OpportunityBuilder.create_opportunity(
-                    strategy_name=self.strategy_def.name,
-                    ticker=underlying.ticker,
-                    legs=matched_legs,
-                    metrics=base_metadata,
-                    days_to_maturity=dte,
-                    underlying_price=underlying.close_price,
-                )
-
-                if opp is not None:
-                    yield opp
-
-    # ---------------------------------------------------------
-    # VALIDATION
-    # ---------------------------------------------------------
-
-    def _validate_strike_gap(self, legs: List[LegDefinition], rules: Dict[str, Any]) -> bool:
-        if len(legs) != 2:
+    def _validate_strike_gaps(self, legs: List[LegDefinition], rules: Dict[str, Any]) -> bool:
+        """اعتبارسنجی فرکانس بالا و ریاضی فواصل استرایک‌ها بدون کپی حافظه یا چرخاندن لوپ اضافی"""
+        if len(legs) != 2 or not legs[0].contract or not legs[1].contract:
             return False
 
-        strike1 = legs[0].contract.strike_price
-        strike2 = legs[1].contract.strike_price
+        c1, c2 = legs[0].contract, legs[1].contract
+        # در صورت تزریق لگ فیزیکی سهام، کنترل فواصل استرایک گزینه‌ای اختیاری/متروک است
+        if c1.option_type == OptionType.STOCK or c2.option_type == OptionType.STOCK:
+            return True
 
-        strike_equal = rules.get("strike_equal", False)
-        tolerance_pct = rules.get("strike_equal_tolerance_pct", 0.005)
+        strike1 = c1.strike_price
+        strike2 = c2.strike_price
+        
+        # گارد ریاضی مطلق جهت جلوگیری از خطای تقسیم بر صفر ناشی از دیتای خراب بازار
+        base = float(strike1 if strike1 < strike2 else strike2)
+        if base <= 0.0:
+            base = 1.0
 
-        if strike_equal:
-            base = max(min(strike1, strike2), 1.0)
-            diff_pct = abs(strike1 - strike2) / base
-            if diff_pct > tolerance_pct:
+        # الف) کنترل شرط هم‌استرایک بودن پوزیشن‌ها (مانند استرادل‌ها)
+        if rules.get("strike_equal", False):
+            tolerance_pct = rules.get("strike_equal_tolerance_pct", 0.005)
+            if (abs(strike1 - strike2) / base) > tolerance_pct:
                 return False
 
+        # ب) کنترل دقیق کران‌های حداقل و حداکثر فواصل مجاز درصدی استرایک‌ها از یکدیگر
         min_gap_pct = rules.get("min_strike_gap_pct", 0.0)
         max_gap_pct = rules.get("max_strike_gap_pct", 999.0)
-
-        base = max(min(strike1, strike2), 1.0)
         gap_pct = abs(strike2 - strike1) / base
 
         return min_gap_pct <= gap_pct <= max_gap_pct
-
-    # ---------------------------------------------------------
-    # HELPERS
-    # ---------------------------------------------------------
-
-    @staticmethod
-    def _build_unique_key(legs: List[LegDefinition]) -> Tuple:
-        return tuple(
-            sorted(
-                (leg.contract.ticker, leg.side.value, leg.ratio)
-                for leg in legs
-                if leg.contract
-            )
-        )
-
-    @staticmethod
-    def _build_metadata(legs: List[LegDefinition], contract_scores: Dict[str, float]) -> Dict[str, Any]:
-        metadata: Dict[str, Any] = {}
-        if len(legs) != 2 or not legs[0].contract or not legs[1].contract:
-            return metadata
-
-        c1, c2 = legs[0].contract, legs[1].contract
-
-        metadata["l1_ticker"] = c1.ticker
-        metadata["l2_ticker"] = c2.ticker
-        metadata["l1_score"] = contract_scores.get(c1.ticker, 0.0)
-        metadata["l2_score"] = contract_scores.get(c2.ticker, 0.0)
-        metadata["l1_strike"] = c1.strike_price
-        metadata["l2_strike"] = c2.strike_price
-
-        base = min(c1.strike_price, c2.strike_price)
-        metadata["strike_distance_pct"] = (
-            abs(c1.strike_price - c2.strike_price) / base) if base > 0 else 0.0
-        metadata["avg_contract_score"] = (
-            metadata["l1_score"] + metadata["l2_score"]) / 2.0
-
-        return metadata

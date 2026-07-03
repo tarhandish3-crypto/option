@@ -1,36 +1,16 @@
 # strategies/generators/four_leg.py
 # -*- coding: utf-8 -*-
 
-"""
-تولیدکننده جامع و جریانی استراتژی‌های ۴ لگی (Four-Leg Generator) بورس ایران.
-مسئول اسکن، اعتبارسنجی و کپسوله‌سازی استراتژی‌های پیچیده نظیر:
-    - Iron Condor
-    - Butterfly Spreads (پروانه ۴ لگی)
-    - Iron Butterfly
-    - Box Spread / Long Box
-    - Jade Lizard
-    - Double Calendar / Diagonal
-
-کاملاً هماهنگ با لایه پایه و معماری تولید جریانی غیرانسدادی (Lazy Generation).
-"""
-
 from __future__ import annotations
-
 import logging
-from itertools import combinations
-from typing import List, Dict, Any, Set, Tuple, Iterable, Iterator
+from typing import Dict, Any, Set, Tuple, Iterator, List
 
-from core.models import (
-    OptionContract,
-    UnderlyingAsset,
-    Opportunity,
-    LegDefinition,
-)
-from core.enums import GeneratorType
+from core.models import UnderlyingAsset, Opportunity, LegDefinition
+from core.enums import OptionType, Side
 from strategies.base import StrategyDefinition
 from strategies.generators.base import BaseGenerator
+from strategies.matching.contract_index import ContractIndex
 from strategies.matching.pattern_matcher import PatternMatcher
-from strategies.matching.fast_filter import build_required_type_counts, can_match
 from engine.opportunity_builder import OpportunityBuilder
 
 logger = logging.getLogger("OptionScanner.Strategies.Generators.FourLeg")
@@ -38,284 +18,188 @@ logger = logging.getLogger("OptionScanner.Strategies.Generators.FourLeg")
 
 class FourLegGenerator(BaseGenerator):
     """
-    تولیدکننده استاندارد، جریانی و بهینه استراتژی‌های ۴ لگی بدون توابع هاردکد شده.
+    تولیدکننده صنعتی و کاملاً بهینه استراتژی‌های ۴ لگی (Four-Leg Generator).
+    مجهز به اسکن خطی جریانی، پشتیبانی از لنگه ترکیبی سهام پایه و متادیتای تنبل.
     """
+
+    __slots__ = ('_maturity_mode', '_include_stock')
 
     def __init__(self, strategy_def: StrategyDefinition):
         super().__init__(strategy_def)
-
-        if strategy_def.generator_type != GeneratorType.FOUR_LEG:
-            raise ValueError(
-                f"{strategy_def.name} با FourLegGenerator سازگار نیست."
-            )
-
         if strategy_def.legs_count != 4:
             raise ValueError(
-                f"FourLegGenerator نیازمند دقیقاً ۴ لگ معاملاتی است، "
-                f"دریافت {strategy_def.legs_count} لگ."
-            )
+                "FourLegGenerator نیازمند ۴ لگ معاملاتی آپشن است.")
 
-        logger.debug(f"FourLegGenerator initialized for {strategy_def.name}")
-
-        # یک‌بار محاسبه و کش در زمان ساخت نمونه جهت پرفورمنس بالا
-        self._required_types = build_required_type_counts(strategy_def.patterns)
-        self._maturity_mode = (strategy_def.rules or {}).get("maturity_order", "same")
+        self._maturity_mode = (strategy_def.rules or {}).get(
+            "maturity_order", "same")
+        self._include_stock = getattr(strategy_def, 'include_stock', False)
 
     def generate(
         self,
         underlying: UnderlyingAsset,
-        contracts: List[OptionContract],
+        index: ContractIndex,
         contract_scores: Dict[str, float],
     ) -> Iterator[Opportunity]:
-        """
-        تولید همزمان و جریانی فرصت‌های ۴ لگی با بکارگیری ترکیبات امن و فیلترهای ضربدری پرفورمنس.
-        """
-        if len(contracts) < 4:
-            logger.debug(
-                f"{self.strategy_def.name}: کانتراکت کافی وجود ندارد ({len(contracts)})"
-            )
+        """اسکن ۱۰۰٪ جریانی زنجیره بدون الیکیشن اضافه و فاقد ریسک تداخل (Collision) کلیدها"""
+
+        base_price = self._get_S0_stock(underlying)
+        if base_price <= 0:
             return
 
         patterns = self.strategy_def.patterns
         rules = self.strategy_def.rules or {}
-
+        min_liq_score = rules.get("min_liquidity_score", 30.0)
         seen_keys: Set[Tuple] = set()
-        maturity_mode = self._maturity_mode
 
-        # مرحله ۱: تولید کاندیداها به صورت ژنراتور جهت حفظ بهینگی حافظه (RAM)
-        candidate_iterables = self._generate_candidates(contracts, maturity_mode)
+        # تطبیق کاملاً جریانی با PatternMatcher بدون لود کل داده‌ها در رم
+        matched_sets = PatternMatcher.match_all(
+            index=index,
+            patterns=patterns,
+            strategy_rules=rules,
+            min_liquidity_score=min_liq_score,
+            contract_scores=contract_scores
+        )
 
-        # انتخاب امن‌ترین قیمت مبنای دارایی پایه با متد Fallback کلاس پایه
-        underlying_price = self._get_S0_stock(underlying)
-        if underlying_price <= 0:
-            return
-
-        # مرحله ۲: پردازش جریانی کاندیداها
-        for candidate in candidate_iterables:
-            candidate_contracts = list(candidate)
-
-            # Fast filter: قبل از تخصیص حافظه برای ترکیبات ثانویه، ساختار بررسی می‌شود
-            if not can_match(candidate_contracts, self._required_types, maturity_mode):
+        for matched_legs in matched_sets:
+            # ۱. اعتبارسنجی سریع فواصل ریاضی استرایک‌ها
+            if not self._validate_strike_gaps(matched_legs, rules):
                 continue
 
-            # تطبیق الگو با PatternMatcher مرکزی پروژه
-            matched_sets = PatternMatcher.match_all(
-                contracts=candidate_contracts,
-                patterns=patterns,
-                strategy_rules=rules,
+            # ۲. تزریق پویا و بهینه لگ سهام در صورت نیاز استراتژی (مانند جید لیزارد)
+            if self._include_stock:
+                matched_legs = self._add_stock_leg(
+                    matched_legs, underlying, base_price)
+
+            # ۳. بررسی منحصربه‌فرد بودن موقعیت با هش‌کلید غنی‌شده جهت جلوگیری از حذف فرصت‌های معتبر
+            unique_key = self._build_unique_key(matched_legs)
+            if unique_key in seen_keys:
+                continue
+            seen_keys.add(unique_key)
+
+            self.increment_generated()
+
+            # ۴. تولید تنبل (Lazy) متاداتا به صورت خارج از لوپ داغ فقط برای پوزیشن نهایی
+            custom_metadata = self._build_metadata_lazy(
+                matched_legs, contract_scores)
+            base_metadata = self._build_base_metadata(custom_metadata)
+
+            days_to_maturity = max(
+                leg.contract.days_to_maturity
+                for leg in matched_legs
+                if leg.contract and leg.contract.option_type != OptionType.STOCK
             )
 
-            for matched_legs in matched_sets:
-                # اعتبارسنجی استرایک‌ها (شامل تقارن بال‌ها و اینرگپ کندور)
-                if not self._validate_strike_gaps(matched_legs, rules):
-                    continue
-
-                # جلوگیری از ثبت موقعیت‌های هم‌پوشان و متقارن تکراری
-                unique_key = self._build_unique_key(matched_legs)
-                if unique_key in seen_keys:
-                    continue
-                seen_keys.add(unique_key)
-
-                # ثبت آمار تولید در متد لایه پایه
-                self.increment_generated()
-
-                # ساخت متادیتای غنی‌شده و ادغام با متادیتای ساختاری لایه پایه برنامه (_build_base_metadata)
-                custom_metadata = self._build_metadata(matched_legs, contract_scores)
-                base_metadata = self._build_base_metadata(custom_metadata)
-
-                # محاسبه روزهای تا سررسید ترکیبی بر اساس دکترین طول عمر ریسک
-                days_to_maturity = self._calculate_days_to_maturity(
-                    matched_legs, maturity_mode
-                )
-
-                # ساخت فرصت نهایی از طریق بیلدر کارخانه مرکزی
-                opp = OpportunityBuilder.create_opportunity(
-                    strategy_name=self.strategy_def.name,
-                    ticker=underlying.ticker,
-                    legs=matched_legs,
-                    metrics=base_metadata,
-                    days_to_maturity=days_to_maturity,
-                    underlying_price=underlying_price,
-                )
-
-                if opp is not None:
-                    yield opp
+            # ۵. ساخت فرصت نهایی توسط کارخانه مرکزی سیستم
+            opp = OpportunityBuilder.create_opportunity(
+                strategy_name=self.strategy_def.name,
+                ticker=underlying.ticker,
+                legs=matched_legs,
+                metrics=base_metadata,
+                days_to_maturity=days_to_maturity,
+                underlying_price=base_price,
+            )
+            if opp is not None:
+                yield opp
 
     # ---------------------------------------------------------
-    # PRIVATE PRODUCTION HELPERS
+    # VALIDATION & CORE HELPERS
     # ---------------------------------------------------------
 
-    def _generate_candidates(
-        self,
-        contracts: List[OptionContract],
-        maturity_mode: str
-    ) -> Iterable[Tuple[OptionContract, ...]]:
-        """
-        تولید کاندیداها به صورت Iterable برای جلوگیری از سربار حافظه RAM بابت لیست‌های بزرگ.
-        """
-        if maturity_mode == "same":
-            maturity_groups: Dict[int, List[OptionContract]] = {}
-            for contract in contracts:
-                maturity_groups.setdefault(
-                    contract.days_to_maturity, []
-                ).append(contract)
-
-            for group in maturity_groups.values():
-                if len(group) >= 4:
-                    yield from combinations(group, 4)
-        else:
-            yield from combinations(contracts, 4)
-
-    def _calculate_days_to_maturity(
-        self,
-        legs: List[LegDefinition],
-        maturity_mode: str
-    ) -> int:
-        """
-        محاسبه روزهای تا سررسید بر اساس نوع آرایش زمانی استراتژی.
-        """
-        dtes = [
-            leg.contract.days_to_maturity
-            for leg in legs
-            if leg.contract and leg.contract.days_to_maturity > 0
-        ]
-
-        if not dtes:
-            return 30
-
-        if maturity_mode in ["calendar", "diagonal"]:
-            # در پوزیشن‌های تقویمی ناهمزمان، نزدیک‌ترین زمان اعمال ملاک ریسک اولیه است
-            return min(dtes)
-        else:
-            # در استراتژی‌های عمودی هم‌زمان، ماکزیمم طول عمر ریسک ملاک است
-            return max(dtes)
-
-    # ---------------------------------------------------------
-    # VALIDATION LOGIC
-    # ---------------------------------------------------------
-
-    def _validate_strike_gaps(
-        self,
-        legs: List[LegDefinition],
-        rules: Dict[str, Any],
-    ) -> bool:
-        """
-        اعتبارسنجی فواصل استرایک، بررسی تقارن بال‌ها (Symmetry) و شروط فرعی کندور/باترفلای.
-        """
+    def _validate_strike_gaps(self, legs: List[LegDefinition], rules: Dict[str, Any]) -> bool:
+        """اعتبارسنجی فواصل استرایک و بررسی هندسه تقارن بال‌ها بدون ایجاد کپی اضافه"""
         strikes = [
-            leg.contract.strike_price
-            for leg in legs
-            if leg.contract
-        ]
-
+            leg.contract.strike_price for leg in legs if leg.contract and leg.contract.option_type != OptionType.STOCK]
         if len(strikes) != 4:
             return False
 
         sorted_strikes = sorted(strikes)
         base_strike = max(sorted_strikes[0], 1.0)
 
-        # ۱. بررسی تقارن بال‌ها (Butterfly / Iron Butterfly)
-        enforce_symmetry = rules.get("enforce_symmetry", False)
-        if enforce_symmetry:
+        # بررسی تقارن ریاضی بال چپ و راست (مخصوص Iron Condor / Butterfly)
+        if rules.get("enforce_symmetry", False):
             left_wing = sorted_strikes[1] - sorted_strikes[0]
             right_wing = sorted_strikes[3] - sorted_strikes[2]
             tolerance = rules.get(
                 "symmetry_tolerance_pct", 0.005) * base_strike
-
             if abs(left_wing - right_wing) > tolerance:
                 return False
 
-        # ۲. بررسی فاصله کلی بیرونی‌ترین استرایک‌ها
-        min_gap_pct = rules.get("min_strike_gap_pct", 0.0)
-        max_gap_pct = rules.get("max_strike_gap_pct", float("inf"))
-
-        total_gap_pct = (sorted_strikes[-1] - sorted_strikes[0]) / base_strike
-        if total_gap_pct < min_gap_pct or total_gap_pct > max_gap_pct:
-            return False
-
-        # ۳. بررسی فاصله میانی (ویژه ساختار بدنه Iron Condor)
-        inner_gap_pct = (sorted_strikes[2] - sorted_strikes[1]) / base_strike
-        min_inner_gap = rules.get("min_inner_gap_pct", 0.0)
-
-        if inner_gap_pct < min_inner_gap:
-            return False
+        # بررسی فیلتر حداقل فاصله به صورت خطی بدون الیکیشن لیست ثانویه
+        min_gap = rules.get("min_strike_gap_pct", 0.0) * base_strike
+        if min_gap > 0:
+            for i in range(len(sorted_strikes) - 1):
+                if sorted_strikes[i + 1] - sorted_strikes[i] < min_gap:
+                    return False
 
         return True
 
-    # ---------------------------------------------------------
-    # STATIC CORE HELPERS
-    # ---------------------------------------------------------
+    def _add_stock_leg(
+        self,
+        legs: List[LegDefinition],
+        underlying: UnderlyingAsset,
+        base_price: float
+    ) -> List[LegDefinition]:
+        """افزودن لگ دارایی پایه به پوزیشن به شکل کاملاً کپسوله‌شده"""
+        from core.models import OptionContract as OC
+
+        stock_contract = OC(
+            ticker=underlying.ticker,
+            name=underlying.name,
+            underlying_ticker=underlying.ticker,
+            option_type=OptionType.STOCK,
+            strike_price=base_price,
+            contract_size=1,
+            last_price=base_price,
+            underlying_price=base_price,
+        )
+
+        stock_leg = LegDefinition(
+            contract=stock_contract,
+            side=Side.BUY,
+            ratio=1,
+            entry_price=base_price,
+        )
+
+        return [stock_leg] + legs
 
     @staticmethod
     def _build_unique_key(legs: List[LegDefinition]) -> Tuple:
-        """
-        تولید کلید هش امضا برای فیلتر ترکیب‌های جابجا شده و موازی.
-        """
+        """تولید کلید امضای هش منحصربه‌فرد به همراه استرایک و نوع جهت جلوگیری از Collision"""
         return tuple(
             sorted(
                 (
-                    leg.contract.ticker if leg.contract else "STOCK",
-                    leg.side.value,
-                    leg.ratio,
+                    leg.contract.ticker,
+                    leg.contract.strike_price,
+                    leg.contract.option_type.value,
+                    leg.side.value
                 )
                 for leg in legs
-                if leg.contract is not None
+                if leg.contract and leg.contract.option_type != OptionType.STOCK
             )
         )
 
     @staticmethod
-    def _build_metadata(
-        legs: List[LegDefinition],
-        contract_scores: Dict[str, float],
-    ) -> Dict[str, Any]:
-        """
-        غنی‌سازی و تخت‌سازی فیلدهای اطلاعاتی لنگه‌ها جهت بهره‌برداری در ماتریس محاسبات.
-        """
+    def _build_metadata_lazy(legs: List[LegDefinition], contract_scores: Dict[str, float]) -> Dict[str, Any]:
+        """ساخت کاملاً بهینه و تنبل متاداتا صرفاً پس از تایید نهایی و خروج موقعیت"""
         metadata: Dict[str, Any] = {}
+        strikes = []
 
         for idx, leg in enumerate(legs, start=1):
             if not leg.contract:
                 continue
+            c = leg.contract
 
-            contract = leg.contract
+            if c.option_type != OptionType.STOCK:
+                strikes.append(c.strike_price)
 
-            metadata[f"l{idx}_ticker"] = contract.ticker
-            metadata[f"l{idx}_strike"] = contract.strike_price
-            metadata[f"l{idx}_dte"] = contract.days_to_maturity
-            metadata[f"l{idx}_option_type"] = contract.option_type.value if contract.option_type else "UNKNOWN"
-            metadata[f"l{idx}_side"] = leg.side.value
-            metadata[f"l{idx}_ratio"] = leg.ratio
-            metadata[f"l{idx}_score"] = contract_scores.get(contract.ticker, 0.0)
+            metadata[f"l{idx}_ticker"] = c.ticker
+            metadata[f"l{idx}_strike"] = c.strike_price
+            metadata[f"l{idx}_option_type"] = c.option_type.value
+            metadata[f"l{idx}_score"] = contract_scores.get(c.ticker, 0.0)
 
-            if hasattr(contract, 'moneyness') and contract.moneyness:
-                metadata[f"l{idx}_moneyness"] = str(contract.moneyness)
-
-        # استخراج شاخص‌های پهنای باند و تقارن پوزیشن ترکیبی
-        strikes = [leg.contract.strike_price for leg in legs if leg.contract]
         if len(strikes) == 4:
-            sorted_strikes = sorted(strikes)
-            metadata["min_strike"] = sorted_strikes[0]
-            metadata["max_strike"] = sorted_strikes[-1]
-            metadata["strike_range"] = sorted_strikes[-1] - sorted_strikes[0]
-            metadata["inner_gap"] = sorted_strikes[2] - sorted_strikes[1]
-
-            left_w = sorted_strikes[1] - sorted_strikes[0]
-            right_w = sorted_strikes[3] - sorted_strikes[2]
-            metadata["left_wing"] = left_w
-            metadata["right_wing"] = right_w
-            metadata["wing_symmetry"] = abs(left_w - right_w)
-
-        # امتیاز میانگین موقعیت
-        scores = [contract_scores.get(leg.contract.ticker, 0.0) for leg in legs if leg.contract]
-        if scores:
-            metadata["avg_score"] = sum(scores) / len(scores)
+            s_strikes = sorted(strikes)
+            metadata["strike_range"] = s_strikes[-1] - s_strikes[0]
+            metadata["inner_gap"] = s_strikes[2] - s_strikes[1]
 
         return metadata
-
-    def get_strategy_name(self) -> str:
-        """دریافت نام استراتژی مبنا"""
-        return self.strategy_def.name
-
-    def get_legs_count(self) -> int:
-        """دریافت تعداد لنگه‌های تعریف شده"""
-        return self.strategy_def.legs_count

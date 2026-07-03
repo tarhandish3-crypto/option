@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-ماژول اصلی سیستم اسکنر (Main Executive Module) - نسخه ارتقایافته تصمیم‌یار (DSS)
-اصلاحات V4: یکپارچه‌سازی با هسته پردازش جریانی و موازی و ایمن‌سازی متغیرهای محیطی
+ماژول اصلی سیستم اسکنر (Main Executive Module) - نسخه نهایی V5
+هماهنگ با هسته پردازش جریانی و بهینه‌شده برای پایداری در محیط تولید (Production)
 """
 
 import time
@@ -30,7 +30,6 @@ logger = logging.getLogger("OptionScanner.Main")
 # =====================================================
 # تنظیمات لاگینگ متمرکز
 # =====================================================
-
 
 def setup_logging() -> None:
     """تنظیمات لاگینگ متمرکز پروژه"""
@@ -59,6 +58,14 @@ def setup_logging() -> None:
 # =====================================================
 
 class OptionScanner:
+    """کلاس اصلی اسکنر با پشتیبانی از معماری V5 و بهینه‌سازی حافظه"""
+
+    __slots__ = (
+        'interval_minutes', 'parallel', 'max_workers', 'max_cycles',
+        'is_running', 'cycle_count', 'data_manager', 'ranker',
+        'excel_exporter', 'chart_plotter'
+    )
+
     def __init__(
             self,
             interval_minutes: Optional[int] = None,
@@ -68,13 +75,10 @@ class OptionScanner:
 
         sys_config = config.get_system_config()
 
-        self.interval_minutes = interval_minutes or sys_config.get(
-            "scan_interval_minutes", 3)
-        self.parallel = parallel if parallel is not None else sys_config.get(
-            "parallel_enabled", True)
+        self.interval_minutes = interval_minutes or sys_config.get("scan_interval_minutes", 3)
+        self.parallel = parallel if parallel is not None else sys_config.get("parallel_enabled", True)
         self.max_workers = max_workers or sys_config.get("max_workers", 1)
 
-        # فالبک امن برای تعداد چرخه: 0 یعنی اجرای بی‌نهایت و مداوم سیستم تصمیم‌یار
         cfg_max = sys_config.get("max_cycles", 0) or 0
         self.max_cycles = max_cycles if max_cycles is not None else cfg_max
 
@@ -104,15 +108,13 @@ class OptionScanner:
         self.excel_exporter = ExcelExporter(output_dir=str(config.OUTPUT_DIR))
         self.chart_plotter = ChartPlotter(output_dir=str(config.CHARTS_DIR))
 
-        # مدیریت سیگنال‌های سیستم‌عامل برای خروج امن بدون آسیب به بافر گزارش‌ها
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
     def _signal_handler(self, signum, frame) -> None:
-        """مدیریت سیگنال‌های خروج با حفظ امنیت داده‌ها"""
+        """مدیریت ایمن سیگنال‌های خروج"""
         signal_name = "SIGINT" if signum == signal.SIGINT else "SIGTERM"
-        logger.info(
-            f"Received {signal_name} signal. Initiating graceful shutdown...")
+        logger.info(f"Received {signal_name}. Graceful shutdown sequence initiated...")
         self.is_running = False
 
     # =====================================================
@@ -120,209 +122,125 @@ class OptionScanner:
     # =====================================================
 
     def run_cycle(self) -> bool:
+        """اجرای یک چرخه کامل اسکن بازار"""
         cycle_start = time.time()
         self.cycle_count += 1
 
         logger.info("=" * 60)
-        logger.info(
-            f"Cycle #{self.cycle_count} started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"Cycle #{self.cycle_count} started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
 
         try:
             logger.info("Fetching market snapshot...")
             calc_advanced = config.FEATURE_FLAGS.get("calculate_greeks", True)
-            snapshot = self.data_manager.get_market_snapshot(
-                force_refresh=False, calc_advanced=calc_advanced)
+            snapshot = self.data_manager.get_market_snapshot(force_refresh=False, calc_advanced=calc_advanced)
 
             if not snapshot or not snapshot.option_contracts:
-                logger.warning(
-                    "MarketSnapshot is empty or unavailable. Skipping cycle.")
+                logger.warning("MarketSnapshot empty. Skipping cycle.")
                 return False
 
-            logger.info(f"MarketSnapshot loaded: {len(snapshot.option_contracts)} contracts, "
-                        f"{len(snapshot.underlying_assets)} underlyings.")
+            logger.info(f"MarketSnapshot: {len(snapshot.option_contracts)} contracts loaded.")
 
-            logger.info("Invoking V4 Parallel ScannerEngine...")
+            # ارکستراسیون اسکن
             engine = ScannerEngine(snapshot=snapshot)
             scan_result = engine.execute_full_scan()
 
             if not scan_result.opportunities:
-                logger.warning(
-                    "No opportunities discovered in this market state.")
+                logger.warning("No opportunities discovered.")
                 return False
 
-            logger.info(
-                f"Discovered {len(scan_result.opportunities)} valid raw combinations.")
-
-            # =====================================================
-            # فیلتر پویا بر اساس قوانین استراتژی‌ها
-            # =====================================================
-            logger.info("Applying dynamic strategy filters...")
+            # فیلتر پویا
             filtered_opportunities = [
                 opp for opp in scan_result.opportunities
                 if opp is not None and apply_strategy_filter(opp)
             ]
 
-            logger.info(
-                f"After dynamic filter: {len(filtered_opportunities)} opportunities remained.")
-
             if not filtered_opportunities:
-                logger.warning(
-                    "No opportunities passed the dynamic filter criteria.")
+                logger.warning("No opportunities passed the dynamic filters.")
                 return False
 
-            # =====================================================
-            # Risk + Ranking + Classification Layers
-            # =====================================================
-            logger.info("Calculating risk metrics via RiskEngine...")
+            # تحلیل ریسک و رتبه‌بندی
+            logger.info("Processing Risk & Ranking layers...")
             enriched_opportunities = []
-            risk_success_count = 0
-            risk_fail_count = 0
-
             for opp in filtered_opportunities:
                 try:
-                    enriched_opp = RiskEngine.evaluate_opportunity(opp)
-                    enriched_opportunities.append(enriched_opp)
-                    risk_success_count += 1
+                    enriched_opportunities.append(RiskEngine.evaluate_opportunity(opp))
                 except Exception as risk_err:
-                    risk_fail_count += 1
-                    logger.warning(
-                        f"Risk evaluation failed for {opp.strategy_name} on {opp.underlying_ticker}: {risk_err}"
-                    )
+                    logger.debug(f"Risk eval error for {opp.strategy_name}: {risk_err}")
                     enriched_opportunities.append(opp)
 
-            logger.info(
-                f"Risk metrics processed: {risk_success_count} successful, {risk_fail_count} failed")
-
-            logger.info("Ranking & Classifying opportunities...")
             ranked = self.ranker.rank_opportunities(enriched_opportunities)
-
-            # طبقه‌بندی پس از رتبه‌بندی انجام می‌شود تا شاخص‌های نمایه امتیازدهی پر شده باشند
             StrategyClassifier.batch_classify(ranked)
 
             top_n_limit = config.OUTPUT_CONFIG.get("top_n", 50)
             top_opportunities = self.ranker.get_top_n(ranked, n=top_n_limit)
 
-            if not top_opportunities:
-                logger.warning(
-                    "No opportunities passed the scoring and ranking layer.")
-                return False
-
-            logger.info(
-                f"Selected Top {len(top_opportunities)} opportunities for data-dense report generation.")
-
-            # =====================================================
-            # تولید و ذخیره‌سازی خروجی‌ها
-            # =====================================================
+            # خروجی‌گیری
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"opportunities_cycle_{self.cycle_count}_{timestamp}.xlsx"
-
-            report_path = self.excel_exporter.export(
-                opportunities=top_opportunities, filename=filename)
-            logger.info(
-                f"Multi-sheet Excel report exported successfully: {report_path}")
-
+            self.excel_exporter.export(opportunities=top_opportunities, filename=filename)
+            
+            # نمودارها
             try:
-                colors = ['#1f77b4', '#ff7f0e',
-                          '#2ca02c', '#d62728', '#9467bd']
-                chart_data = [
-                    (opp.strategy_name, opp, colors[i % len(colors)])
-                    for i, opp in enumerate(top_opportunities[:5])
-                ]
-
-                self.chart_plotter.plot_comparison(
-                    data=chart_data, ticker="Market")
-                logger.info("Analytical charts generated successfully.")
+                chart_data = [(opp.strategy_name, opp, '#1f77b4') for opp in top_opportunities[:5]]
+                self.chart_plotter.plot_comparison(data=chart_data, ticker="Market")
             except Exception as chart_err:
-                logger.warning(
-                    f"Chart plotting generation skipped: {chart_err}")
+                logger.warning(f"Chart plotting skipped: {chart_err}")
 
             elapsed = time.time() - cycle_start
-            logger.info(
-                f"Cycle #{self.cycle_count} completed efficiently in {elapsed:.2f}s")
+            logger.info(f"Cycle #{self.cycle_count} completed successfully in {elapsed:.2f}s")
             return True
 
         except Exception as e:
-            logger.error(
-                f"Cycle #{self.cycle_count} failed critical execution: {e}", exc_info=True)
+            logger.error(f"Cycle #{self.cycle_count} critical failure: {e}", exc_info=True)
             return False
 
         finally:
-            # پاکسازی حتمی پشته حافظه جهت پیشگیری از نشت حافظه (Memory Leak) در اسکن طولانی‌مدت
-            try:
-                if 'scan_result' in locals():
-                    del scan_result
-                if 'enriched_opportunities' in locals():
-                    del enriched_opportunities
-                if 'top_opportunities' in locals():
-                    del top_opportunities
-                if 'snapshot' in locals():
-                    del snapshot
-                if 'engine' in locals():
-                    del engine
-                gc.collect()
-                logger.debug(
-                    f"Memory cleanup completed for cycle #{self.cycle_count}")
-            except Exception as cleanup_err:
-                logger.debug(f"Memory cleanup warning: {cleanup_err}")
+            # پاکسازی حتمی حافظه پس از هر چرخه
+            gc.collect()
 
     # =====================================================
-    # حلقه استمرار اسکن بازار
+    # حلقه اصلی (Main Loop)
     # =====================================================
 
     def run_forever(self) -> None:
-        """حلقه اصلی اجرا — محدود به max_cycles چرخه یا بی‌نهایت اگر max_cycles == 0"""
+        """حلقه اصلی اجرا با قابلیت زمان‌بندی"""
         if self.max_cycles > 0:
-            logger.info(
-                f"Scheduled Scan Mode Engaged: {self.max_cycles} cycles, {self.interval_minutes} min apart.")
+            logger.info(f"Scheduled Mode: {self.max_cycles} cycles, {self.interval_minutes} min interval.")
         else:
-            logger.info(
-                "Continuous Decision Support System (DSS) Scan Mode Engaged (Infinite Loops).")
+            logger.info("Continuous DSS Scan Mode Engaged.")
 
         while self.is_running:
-            # بررسی شرط پایان چرخه‌های زمان‌بندی‌شده
             if self.max_cycles > 0 and self.cycle_count >= self.max_cycles:
-                logger.info(
-                    f"All {self.max_cycles} scheduled cycles completed. Shutting down engine gracefully.")
-                self.is_running = False
+                logger.info("Target cycle count reached. Shutting down.")
                 break
 
             try:
                 self.run_cycle()
-                gc.collect()
-
-                if self.max_cycles > 0 and self.cycle_count >= self.max_cycles:
-                    continue
-
+                
+                # بررسی وقفه (Sleep) برای پاسخگویی سریع به سیگنال‌های خروج
                 sleep_seconds = int(self.interval_minutes * 60)
-                logger.info(f"Waiting {self.interval_minutes} minutes for next cycle " +
-                            (f"({self.cycle_count}/{self.max_cycles})..." if self.max_cycles > 0 else "..."))
-
-                # بررسی گام‌به‌گام پرچم اجرای سیستم جهت پاسخگویی سریع به سیگنال خروج (SIGINT/SIGTERM)
-                check_step = 5
-                for spent in range(0, sleep_seconds, check_step):
+                for _ in range(sleep_seconds):
                     if not self.is_running:
                         break
-                    remaining = sleep_seconds - spent
-                    time.sleep(min(check_step, remaining))
+                    time.sleep(1)
 
             except Exception as e:
-                logger.error(
-                    f"Main loop critical error: {e}. Re-engaging engine components in 10s...")
+                logger.error(f"Main loop error: {e}. Retrying in 10s...")
                 time.sleep(10)
 
-        logger.info("OptionScanner engine shutdown successfully.")
+        logger.info("OptionScanner engine shutdown complete.")
 
 
 # =====================================================
-# نقطه ورود اصلی سیستم
+# نقطه ورود اصلی
 # =====================================================
 
 def main():
     setup_logging()
 
     logger.info("=" * 60)
-    logger.info("OPTION STRATEGY SCANNER v4.0 [DSS CORE ARCHITECTURE]")
+    logger.info("OPTION STRATEGY SCANNER v5.0 [STABLE PRODUCTION]")
     logger.info(f"Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
 
@@ -331,8 +249,7 @@ def main():
     try:
         scanner.run_forever()
     except Exception as e:
-        logger.error(
-            f"Fatal crash inside executive main entry: {e}", exc_info=True)
+        logger.error(f"Fatal error in main entry: {e}", exc_info=True)
         sys.exit(1)
 
     logger.info("Application terminated normally.")

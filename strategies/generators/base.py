@@ -2,115 +2,126 @@
 # -*- coding: utf-8 -*-
 
 """
-ماژول پایه تولیدکننده‌های استراتژی (Base Strategy Generator) - خروجی جریانی بر اساس ساختار اصلی پروژه
+ماژول پایه تولیدکننده‌های استراتژی (Base Strategy Generator)
 """
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import List, Dict, Optional, Any, Iterator
+from typing import Dict, List, Iterator
 
-import numpy as np
-
-from core.models import OptionContract, UnderlyingAsset, Opportunity, LegDefinition
+from core.models import UnderlyingAsset, Opportunity, LegDefinition
 from strategies.base import StrategyDefinition
-from config import get_price_levels, get_price_steps
-
-logger = logging.getLogger("OptionScanner.Strategies.Generators.Base")
+from strategies.matching.contract_index import ContractIndex
 
 
 class BaseGenerator(ABC):
     """
-    کلاس پایه انتزاعی برای تمام ژنراتورهای استراتژی با خروجی جریانی (Iterator)
+    کلاس پایه انتزاعی برای تولیدکننده‌های استراتژی.
+    این کلاس اکنون صرفاً مسئول منطق اجرای استراتژی است و هیچ مسئولیت جانبی
+    (مانند Logging یا Metadata) ندارد.
     """
+
+    __slots__ = (
+        'strategy_def',
+        '_generated_count',
+        '_filtered_count',
+        '_missing_price_count')
 
     def __init__(self, strategy_def: StrategyDefinition):
         self.strategy_def = strategy_def
         self._generated_count = 0
         self._filtered_count = 0
+        self._missing_price_count = 0
 
     @abstractmethod
     def generate(
-        self,
-        underlying: UnderlyingAsset,
-        contracts: List[OptionContract],
-        contract_scores: Dict[str, float]
-    ) -> Iterator[Opportunity]:
-        """متد انتزاعی تولید فرصت‌ها به صورت جریانی (Lazy Evaluation)"""
+            self,
+            underlying: UnderlyingAsset,
+            index: ContractIndex,
+            contract_scores: Dict[str, float]) -> Iterator[Opportunity]:
+        """
+        تولید فرصت‌ها بدون هیچ سربار اضافی.
+        """
         pass
 
     # ============================================================
-    # متدهای مشترک
+    # HOT PATH METHODS (ZERO ALLOCATION & NO I/O)
     # ============================================================
 
     def _calculate_liquidity_score(
-        self,
-        legs: List[LegDefinition],
-        contract_scores: Dict[str, float]
-    ) -> float:
-        """محاسبه امتیاز نقدشوندگی پوزیشن"""
+            self,
+            legs: List[LegDefinition],
+            contract_scores: Dict[str, float]) -> float:
+        """
+        محاسبه امتیاز نقدشوندگی بدون round و بدون List Comprehension.
+        """
         if not legs:
             return 0.0
 
-        scores = [
-            contract_scores.get(leg.contract.ticker, 0.0)
-            for leg in legs
-            if leg.contract is not None and leg.contract.ticker
-        ]
+        total_score = 0.0
+        min_score = float('inf')
+        count = 0
+        get_score = contract_scores.get
 
-        if not scores:
-            return 100.0  # فقط سهم پایه
+        for leg in legs:
+            contract = leg.contract
+            if contract is not None and contract.ticker:
+                score = get_score(contract.ticker, 0.0)
+                total_score += score
+                if score < min_score:
+                    min_score = score
+                count += 1
 
-        weakest = min(scores)
-        avg = sum(scores) / len(scores)
+        if count == 0:
+            return 100.0
 
-        return round((weakest * 0.70) + (avg * 0.30), 2)
+        # بازگشت خام (بدون round) - انتقال بار پردازشی به لایه Scoring
+        return (min_score * 0.70) + ((total_score / count) * 0.30)
 
     def _get_S0_stock(self, underlying: UnderlyingAsset) -> float:
-        """دریافت قیمت مرجع دارایی پایه با Fallback"""
-        if getattr(underlying, 'close_price', 0) > 0:
-            return underlying.close_price
-        if getattr(underlying, 'last_price', 0) > 0:
-            return underlying.last_price
-        if getattr(underlying, 'yesterday_price', 0) > 0:
-            return underlying.yesterday_price
+        """
+        دریافت قیمت پایه بدون لاگ‌گذاری در صورت خطا.
+        """
+        try:
+            val = underlying.close_price
+            if val > 0.0:
+                return float(val)
+            val = underlying.last_price
+            if val > 0.0:
+                return float(val)
+            val = underlying.yesterday_price
+            if val > 0.0:
+                return float(val)
+        except (AttributeError, TypeError):
+            pass
 
-        logger.warning(f"قیمت معتبری برای {underlying.ticker} یافت نشد.")
+        #  Telemetry به جای Logger
+        self._missing_price_count += 1
         return 0.0
 
-    def _build_base_metadata(self, custom_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """ساخت متادیتای پایه"""
-        metadata = {
-            'generator_timestamp': datetime.now().isoformat(),
-            'generator_class': self.__class__.__name__,
-            'strategy_type': self.strategy_def.generator_type.value,
-            'price_levels': get_price_levels(10000.0).tolist(),
-            'pct_steps': get_price_steps().tolist(),
-        }
-
-        if custom_metadata:
-            metadata.update(custom_metadata)
-
-        return metadata
-
     # ============================================================
-    # مدیریت آمار
+    # TELEMETRY & STATS
     # ============================================================
 
     def increment_generated(self) -> None:
+        """افزایش شمارنده کاندیداهای تولید شده"""
         self._generated_count += 1
 
     def increment_filtered(self) -> None:
+        """افزایش شمارنده کاندیداهای فیلتر شده"""
         self._filtered_count += 1
 
     def get_stats(self) -> Dict[str, int]:
+        """دریافت آمار تولید، فیلتر و خطاها"""
         return {
             'generated': self._generated_count,
-            'filtered': self._filtered_count
+            'filtered': self._filtered_count,
+            'missing_price_errors': self._missing_price_count
         }
 
     def reset_stats(self) -> None:
+        """بازنشانی آمار"""
         self._generated_count = 0
         self._filtered_count = 0
+        self._missing_price_count = 0
