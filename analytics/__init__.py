@@ -16,7 +16,6 @@ from analytics.probabilities_calculator import (
 
 from analytics.payoff_calculator import (
     IranMarketPayoffCalculator,
-    enrich_opportunity_with_pnl,
 )
 
 from analytics.risk_engine import (
@@ -52,7 +51,6 @@ __all__ = [
 
     # P&L
     'IranMarketPayoffCalculator',
-    'enrich_opportunity_with_pnl',
 
     # ریسک
     'RiskEngine',

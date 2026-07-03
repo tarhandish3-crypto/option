@@ -153,6 +153,20 @@ class LegDefinition:
             raise ValueError("قیمت ورود نمی‌تواند منفی باشد.")
 
     @property
+    def option_type(self) -> Optional[OptionType]:
+        """دریافت نوع اختیار از قرارداد متصل"""
+        if self.contract is None:
+            return None
+        return self.contract.option_type
+
+    @property
+    def is_stock_leg(self) -> bool:
+        """تشخیص خودکار سهم پایه بدون نیاز به فلگ صلب فیلدها"""
+        if self.contract is None:
+            return False
+        return self.contract.option_type == OptionType.STOCK
+
+    @property
     def weight(self) -> float:
         return float(self.ratio if self.side == Side.BUY else -self.ratio)
 
@@ -160,6 +174,8 @@ class LegDefinition:
         return {
             'side': self.side.value if isinstance(self.side, Enum) else self.side,
             'ratio': self.ratio,
+            'is_stock_leg': self.is_stock_leg,
+            'option_type': self.option_type.value if self.option_type else None,
             'contract': self.contract.to_dict() if self.contract else None,
             'entry_price': self.entry_price
         }
@@ -521,3 +537,19 @@ class MarketSnapshot:
 
     def get_underlying(self, ticker: str) -> Optional[UnderlyingAsset]:
         return self.underlying_assets.get(ticker)
+
+
+@dataclass(slots=True)
+class StrategyLegPattern:
+    """
+    نماینده الگوی تئوریک یک لگ در تعریف استراتژی (Strategy Template)
+    """
+    option_type: OptionType  # CALL, PUT, STOCK
+    side: Side = Side.BUY
+    ratio: int = 1
+    strike_group: Optional[str] = None     # "K1", "K2", ...
+    maturity_group: Optional[str] = None   # "M1", "M2", ...
+
+    @property
+    def weight(self) -> float:
+        return float(self.ratio if self.side == Side.BUY else -self.ratio)

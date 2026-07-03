@@ -38,8 +38,7 @@ class ThreeLegGenerator(BaseGenerator):
         self,
         underlying: UnderlyingAsset,
         contracts: List[OptionContract],
-        contract_scores: Dict[str, float]
-    ) -> Iterator[Opportunity]:
+        contract_scores: Dict[str, float]) -> Iterator[Opportunity]:
         """
         تولید و انتشار فرصت‌های ۳ لگی به صورت تنبل (Lazy) جهت مدیریت بهینه خط لوله و حافظه.
         """
@@ -130,8 +129,7 @@ class ThreeLegGenerator(BaseGenerator):
     def _build_legs_dynamically(
         self,
         current_contracts: List[OptionContract],
-        leg_defs: list
-    ) -> Optional[List[LegDefinition]]:
+        leg_defs: list) -> Optional[List[LegDefinition]]:
         """ساخت داینامیک لگ‌ها بر اساس مطابقت نوع Enum بدون وابستگی به ترتیب"""
         matched_legs = []
         remaining_contracts = list(current_contracts)

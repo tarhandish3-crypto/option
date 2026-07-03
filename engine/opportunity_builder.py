@@ -41,8 +41,7 @@ class OpportunityBuilder:
         total_premium = OpportunityBuilder._calculate_total_premium(legs)
 
         # ۲. محاسبه وجه تضمین کل (پاس دادن کل لنگه‌ها برای استراتژی‌های اسپرد)
-        required_margin = OpportunityBuilder._calculate_required_margin(
-            legs, underlying_price)
+        required_margin = OpportunityBuilder._calculate_required_margin(legs, underlying_price)
 
         # ۳. محاسبه امتیاز نقدشوندگی
         liquidity_score = OpportunityBuilder._calculate_liquidity_score(legs)

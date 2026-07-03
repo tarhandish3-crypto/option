@@ -9,7 +9,7 @@ DEFINITION = StrategyDefinition(
     name="collar",
     generator_type=GeneratorType.STOCK_OPTION,   # چون ۱ لگ سهم + ۲ لگ آپشن
     include_stock=True,
-    
+
     patterns=(
         StrategyLegPattern(
             option_type=OptionType.PUT,
@@ -26,7 +26,7 @@ DEFINITION = StrategyDefinition(
             maturity_group="M1",
         ),
     ),
-    
+
     description="Collar Strategy - Long Stock + Long Put + Short Call (Zero-Cost or Low-Cost Hedge)",
     rules={
         "strike_order": "ascending",   # K1 (Put) < K2 (Call)

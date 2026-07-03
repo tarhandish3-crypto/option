@@ -14,7 +14,6 @@ DEFINITION = StrategyDefinition(
     name="Covered Call",
     generator_type=GeneratorType.STOCK_OPTION,
     include_stock=True,
-    legs_count=2,  # پوزیشن نهایی شامل ۲ لگ است (۱ سهم + ۱ اختیار معامله)
 
     patterns=(
         # لنگه اختیار معامله: فروش Call جهت کسب پرمیوم

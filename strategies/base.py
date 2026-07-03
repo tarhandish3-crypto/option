@@ -1,18 +1,20 @@
-# strategies/base.py
+# strategies/definitions/base.py
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
 from dataclasses import dataclass, field
+import logging
 from typing import Tuple, Dict, Any, Optional, List
 
 from core.enums import GeneratorType, OptionType, Side
 from core.models import StrategyLegPattern
 
+logger = logging.getLogger("OptionScanner.Strategies.Base")
 
 @dataclass(slots=True)
 class StrategyDefinition:
     """
-    تعریف کامل یک استراتژی اختیار معامله (تئوریک)
+    تعریف کامل و خودکار یک استراتژی اختیار معامله
     """
     name: str
     generator_type: GeneratorType
@@ -22,17 +24,17 @@ class StrategyDefinition:
     rules: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        """اعتبارسنجی بعد از ساخت"""
+        """اعتبارسنجی خودکار و ثبت آمار لگ‌ها"""
         if not self.patterns:
-            raise ValueError(
-                f"استراتژی {self.name} باید حداقل یک الگو داشته باشد.")
-        if len(self.patterns) > 4:
-            logger.warning(
-                f"استراتژی {self.name} دارای {len(self.patterns)} لگ است (بیش از حد معمول).")
+            raise ValueError(f"استراتژی {self.name} باید حداقل یک الگو داشته باشد.")
+        
+        # لاگ برای استراتژی‌های بسیار پیچیده جهت دیباگ سریع
+        if self.legs_count > 4:
+            logger.warning(f"استراتژی {self.name} دارای {self.legs_count} لگ است.")
 
     @property
     def legs_count(self) -> int:
-        """تعداد لگ‌های استراتژی"""
+        """محاسبه خودکار تعداد لگ‌ها بر اساس پترن‌های تعریف شده"""
         return len(self.patterns)
 
     @classmethod
@@ -46,44 +48,31 @@ class StrategyDefinition:
         description: str = "",
         rules: Optional[Dict[str, Any]] = None,
     ) -> "StrategyDefinition":
-        """
-        سازنده ساده و امن برای تعریف استراتژی
-        """
+        """سازنده ساده برای تبدیل دیکشنری‌های خام به ساختار شیءگرا"""
         leg_patterns: List[StrategyLegPattern] = []
 
         for leg in patterns:
-            # Option Type
+            # مدیریت هوشمند OptionType
             opt = leg["option_type"]
             if isinstance(opt, str):
                 opt = opt.upper()
-                if opt == "CALL":
-                    option_type = OptionType.CALL
-                elif opt == "PUT":
-                    option_type = OptionType.PUT
-                elif opt in ["STOCK", "S"]:
-                    option_type = OptionType.STOCK
-                else:
+                mapping = {"CALL": OptionType.CALL, "PUT": OptionType.PUT, "STOCK": OptionType.STOCK, "S": OptionType.STOCK}
+                option_type = mapping.get(opt)
+                if not option_type:
                     raise ValueError(f"Unknown option_type: {opt}")
             else:
                 option_type = opt
 
-            # Side
-            side = leg.get("side", Side.BUY)
-            if isinstance(side, str):
-                side = side.upper()
-                side = Side.BUY if side == "BUY" else Side.SELL
-
-            # Ratio
-            ratio = int(leg.get("ratio", 1))
-            if ratio <= 0:
-                raise ValueError("Ratio must be positive.")
+            # مدیریت هوشمند Side
+            side_raw = str(leg.get("side", "BUY")).upper()
+            side = Side.BUY if side_raw == "BUY" else Side.SELL
 
             leg_patterns.append(
                 StrategyLegPattern(
                     option_type=option_type,
                     side=side,
-                    ratio=ratio,
-                    strike_group=leg.get("strike_group"),
+                    ratio=int(leg.get("ratio", 1)),
+                    strike_group=leg.get("strike_group"), # در صورت عدم وجود سهم، None می‌ماند
                     maturity_group=leg.get("maturity_group"),
                 )
             )
@@ -98,17 +87,18 @@ class StrategyDefinition:
         )
 
     def to_dict(self) -> Dict[str, Any]:
+        """تبدیل به دیکشنری جهت خروجی‌های سیستم یا گزارش‌گیری"""
         return {
             "name": self.name,
             "generator_type": self.generator_type.value,
-            "legs_count": self.legs_count,
+            "legs_count": self.legs_count, # استفاده از property
             "include_stock": self.include_stock,
             "description": self.description,
             "rules": self.rules,
             "patterns": [
                 {
-                    "option_type": p.option_type.value if hasattr(p.option_type, 'value') else str(p.option_type),
-                    "side": p.side.value if hasattr(p.side, 'value') else str(p.side),
+                    "option_type": p.option_type.value,
+                    "side": p.side.value,
                     "ratio": p.ratio,
                     "strike_group": p.strike_group,
                     "maturity_group": p.maturity_group,
@@ -118,4 +108,4 @@ class StrategyDefinition:
         }
 
     def __str__(self) -> str:
-        return f"StrategyDefinition(name={self.name}, legs={self.legs_count}, generator={self.generator_type.value})"
+        return f"StrategyDefinition(name={self.name}, legs={self.legs_count}, type={self.generator_type.value})"

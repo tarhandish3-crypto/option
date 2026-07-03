@@ -23,7 +23,15 @@ DEFINITION = StrategyDefinition(
         StrategyLegPattern(
             option_type=OptionType.PUT,
             side=Side.BUY,
-            ratio=2,          # مهم: نسبت ۲
+            ratio=1,          # مهم: نسبت ۲
+            strike_group="K1",
+            maturity_group="M1",
+        ),
+        # لگ ۳: خرید Put (دومین سهم از ۲ عدد)
+        StrategyLegPattern(
+            option_type=OptionType.PUT,
+            side=Side.BUY,
+            ratio=1,
             strike_group="K1",
             maturity_group="M1",
         ),

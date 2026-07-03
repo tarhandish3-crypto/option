@@ -36,8 +36,7 @@ class Scanner:
     def scan_ticker_with_strategies(
         self,
         ticker: str,
-        all_strategies: Dict[str, Any]
-    ) -> List[Opportunity]:
+        all_strategies: Dict[str, Any]) -> List[Opportunity]:
         """
         نسخه بهینه‌شده: استراتژی‌ها از بیرون پاس می‌شوند تا از re-copy در هر ticker جلوگیری شود
         """

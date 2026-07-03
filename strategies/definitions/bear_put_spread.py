@@ -14,7 +14,6 @@ DEFINITION = StrategyDefinition(
     name="Bear Put Spread",
     generator_type=GeneratorType.TWO_LEG,
     include_stock=False,
-    legs_count=2,  # صراحتاً برای هماهنگی با فیلتر ابعاد پوزیشن جنریتور اضافه شد
 
     patterns=(
         # لگ ۱: خرید PUT با استرایک بالاتر (K2) - موتور اصلی سود در حرکت نزولی

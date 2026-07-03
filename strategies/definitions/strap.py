@@ -27,6 +27,14 @@ DEFINITION = StrategyDefinition(
             strike_group="K1",
             maturity_group="M1",
         ),
+        # لگ ۳: خرید Call (دومین سهم از ۲ عدد)
+        StrategyLegPattern(
+            option_type=OptionType.CALL,
+            side=Side.BUY,
+            ratio=1,
+            strike_group="K1",
+            maturity_group="M1",
+        ),
     ),
     
     description="Strap - Long 1 Put + Long 2 Calls (Bullish Volatility Strategy)",

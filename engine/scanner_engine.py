@@ -14,7 +14,7 @@ import pandas as pd
 import config
 from core.models import MarketSnapshot, ScanResult, Opportunity
 from engine.scanner import Scanner
-from analytics.payoff_calculator import enrich_opportunity_with_pnl
+from analytics.payoff_calculator import IranMarketPayoffCalculator
 from analytics.probabilities_calculator import calculate_strategy_greeks
 from strategies.core import get_all_strategies
 
@@ -237,10 +237,18 @@ class ScannerEngine:
                     opp.S0_stock = s0_stock
 
                 # ۱. غنی‌سازی ماتریس سود و زیان (PnL Analytics)
-                try:
-                    opp = enrich_opportunity_with_pnl(opp)
-                except Exception as enrich_err:
-                    logger.warning(f"Failed to enrich {opp.strategy_name} on {ticker}: {enrich_err}")
+                analysis = IranMarketPayoffCalculator.calculate_payoff(
+                    legs=list(opp.legs),
+                    spot_price=s0_stock,
+                    price_levels=self.snapshot.price_levels # استفاده از price_levelsِ کش شده در snapshot
+                    )
+
+                
+                opp.net_premium = analysis.net_premium
+                opp.max_profit = analysis.max_profit
+                opp.max_loss = analysis.max_loss
+                opp.break_even_points = analysis.break_even_points
+                opp.returns_monthly_pct = analysis.returns_pct
 
                 # ۲. محاسبه و تزریق شاخص‌های ریسک (Greeks)
                 if calculate_greeks_flag:
