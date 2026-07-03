@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-تولیدکننده جامع استراتژی‌های ۴ لگی (Four-Leg Generator) بورس ایران.
+تولیدکننده جامع و جریانی استراتژی‌های ۴ لگی (Four-Leg Generator) بورس ایران.
 مسئول اسکن، اعتبارسنجی و کپسوله‌سازی استراتژی‌های پیچیده نظیر:
     - Iron Condor
     - Butterfly Spreads (پروانه ۴ لگی)
@@ -11,14 +11,14 @@
     - Jade Lizard
     - Double Calendar / Diagonal
 
-کاملاً هماهنگ با معماری V4 و استفاده از PatternMatcher
+کاملاً هماهنگ با لایه پایه و معماری تولید جریانی غیرانسدادی (Lazy Generation).
 """
 
 from __future__ import annotations
 
 import logging
 from itertools import combinations
-from typing import List, Dict, Any, Set, Tuple, Iterable
+from typing import List, Dict, Any, Set, Tuple, Iterable, Iterator
 
 from core.models import (
     OptionContract,
@@ -38,7 +38,7 @@ logger = logging.getLogger("OptionScanner.Strategies.Generators.FourLeg")
 
 class FourLegGenerator(BaseGenerator):
     """
-    تولیدکننده استاندارد و بهینه استراتژی‌های ۴ لگی بدون توابع هاردکد شده.
+    تولیدکننده استاندارد، جریانی و بهینه استراتژی‌های ۴ لگی بدون توابع هاردکد شده.
     """
 
     def __init__(self, strategy_def: StrategyDefinition):
@@ -57,7 +57,7 @@ class FourLegGenerator(BaseGenerator):
 
         logger.debug(f"FourLegGenerator initialized for {strategy_def.name}")
 
-        # ✅ یک‌بار محاسبه و کش — در هر ترکیب بدون re-compute
+        # یک‌بار محاسبه و کش در زمان ساخت نمونه جهت پرفورمنس بالا
         self._required_types = build_required_type_counts(strategy_def.patterns)
         self._maturity_mode = (strategy_def.rules or {}).get("maturity_order", "same")
 
@@ -66,17 +66,15 @@ class FourLegGenerator(BaseGenerator):
         underlying: UnderlyingAsset,
         contracts: List[OptionContract],
         contract_scores: Dict[str, float],
-    ) -> List[Opportunity]:
+    ) -> Iterator[Opportunity]:
         """
-        تولید همزمان فرصت‌های ۴ لگی با بکارگیری ترکیبات امن و فیلترهای ضربدری پرفورمنس.
+        تولید همزمان و جریانی فرصت‌های ۴ لگی با بکارگیری ترکیبات امن و فیلترهای ضربدری پرفورمنس.
         """
-        opportunities: List[Opportunity] = []
-
         if len(contracts) < 4:
             logger.debug(
-                f"{self.strategy_def.name}: Not enough contracts ({len(contracts)})"
+                f"{self.strategy_def.name}: کانتراکت کافی وجود ندارد ({len(contracts)})"
             )
-            return opportunities
+            return
 
         patterns = self.strategy_def.patterns
         rules = self.strategy_def.rules or {}
@@ -85,22 +83,22 @@ class FourLegGenerator(BaseGenerator):
         maturity_mode = self._maturity_mode
 
         # مرحله ۱: تولید کاندیداها به صورت ژنراتور جهت حفظ بهینگی حافظه (RAM)
-        candidate_iterables = self._generate_candidates(
-            contracts, maturity_mode)
+        candidate_iterables = self._generate_candidates(contracts, maturity_mode)
 
-        # انتخاب امن‌ترین قیمت مبنای دارایی پایه
-        underlying_price = underlying.close_price or underlying.last_price or 0.0
+        # انتخاب امن‌ترین قیمت مبنای دارایی پایه با متد Fallback کلاس پایه
+        underlying_price = self._get_S0_stock(underlying)
+        if underlying_price <= 0:
+            return
 
-        # مرحله ۲: پردازش کاندیداها
+        # مرحله ۲: پردازش جریانی کاندیداها
         for candidate in candidate_iterables:
             candidate_contracts = list(candidate)
 
-            # ✅ Fast filter: قبل از permutation بررسی کن آیا این ۴ قرارداد
-            # اصلاً ساختار type/maturity لازم را دارند — O(4) بدون allocation
+            # Fast filter: قبل از تخصیص حافظه برای ترکیبات ثانویه، ساختار بررسی می‌شود
             if not can_match(candidate_contracts, self._required_types, maturity_mode):
                 continue
 
-            # تطبیق الگو با PatternMatcher مرکزی V4
+            # تطبیق الگو با PatternMatcher مرکزی پروژه
             matched_sets = PatternMatcher.match_all(
                 contracts=candidate_contracts,
                 patterns=patterns,
@@ -118,8 +116,12 @@ class FourLegGenerator(BaseGenerator):
                     continue
                 seen_keys.add(unique_key)
 
-                # ساخت متادیتای غنی‌شده
-                metadata = self._build_metadata(matched_legs, contract_scores)
+                # ثبت آمار تولید در متد لایه پایه
+                self.increment_generated()
+
+                # ساخت متادیتای غنی‌شده و ادغام با متادیتای ساختاری لایه پایه برنامه (_build_base_metadata)
+                custom_metadata = self._build_metadata(matched_legs, contract_scores)
+                base_metadata = self._build_base_metadata(custom_metadata)
 
                 # محاسبه روزهای تا سررسید ترکیبی بر اساس دکترین طول عمر ریسک
                 days_to_maturity = self._calculate_days_to_maturity(
@@ -131,21 +133,13 @@ class FourLegGenerator(BaseGenerator):
                     strategy_name=self.strategy_def.name,
                     ticker=underlying.ticker,
                     legs=matched_legs,
-                    metrics=metadata,
+                    metrics=base_metadata,
                     days_to_maturity=days_to_maturity,
                     underlying_price=underlying_price,
                 )
 
                 if opp is not None:
-                    opportunities.append(opp)
-
-        logger.info(
-            "%s: %d four-leg opportunities generated",
-            self.strategy_def.name,
-            len(opportunities),
-        )
-
-        return opportunities
+                    yield opp
 
     # ---------------------------------------------------------
     # PRIVATE PRODUCTION HELPERS
@@ -170,7 +164,6 @@ class FourLegGenerator(BaseGenerator):
                 if len(group) >= 4:
                     yield from combinations(group, 4)
         else:
-            # استفاده از ساختار نمایشی مستقیم کامبینیشن بدون کست کردن به لیست
             yield from combinations(contracts, 4)
 
     def _calculate_days_to_maturity(
@@ -191,7 +184,7 @@ class FourLegGenerator(BaseGenerator):
             return 30
 
         if maturity_mode in ["calendar", "diagonal"]:
-            # در پوزیشن‌های تقویمی ناهمزمان، نزدیک‌ترین زمان اعمال ملاک چرخه نقدینگی اولیه است
+            # در پوزیشن‌های تقویمی ناهمزمان، نزدیک‌ترین زمان اعمال ملاک ریسک اولیه است
             return min(dtes)
         else:
             # در استراتژی‌های عمودی هم‌زمان، ماکزیمم طول عمر ریسک ملاک است
@@ -256,7 +249,7 @@ class FourLegGenerator(BaseGenerator):
     @staticmethod
     def _build_unique_key(legs: List[LegDefinition]) -> Tuple:
         """
-        تولید کلید هش امضا برای فیلتر ترکیب‌های جابجا شده.
+        تولید کلید هش امضا برای فیلتر ترکیب‌های جابجا شده و موازی.
         """
         return tuple(
             sorted(
@@ -276,7 +269,7 @@ class FourLegGenerator(BaseGenerator):
         contract_scores: Dict[str, float],
     ) -> Dict[str, Any]:
         """
-        غنی‌سازی و تخت‌سازی فیلدهای اطلاعاتی لنگه‌ها جهت بهره‌برداری در ماتریس تحلیل سود و زیان.
+        غنی‌سازی و تخت‌سازی فیلدهای اطلاعاتی لنگه‌ها جهت بهره‌برداری در ماتریس محاسبات.
         """
         metadata: Dict[str, Any] = {}
 
@@ -292,10 +285,8 @@ class FourLegGenerator(BaseGenerator):
             metadata[f"l{idx}_option_type"] = contract.option_type.value if contract.option_type else "UNKNOWN"
             metadata[f"l{idx}_side"] = leg.side.value
             metadata[f"l{idx}_ratio"] = leg.ratio
-            metadata[f"l{idx}_score"] = contract_scores.get(
-                contract.ticker, 0.0)
+            metadata[f"l{idx}_score"] = contract_scores.get(contract.ticker, 0.0)
 
-            # اصلاح فیلد سوددهی بر اساس دکترین صحیح دیتامدل آپشن کانتراکت
             if hasattr(contract, 'moneyness') and contract.moneyness:
                 metadata[f"l{idx}_moneyness"] = str(contract.moneyness)
 
@@ -315,8 +306,7 @@ class FourLegGenerator(BaseGenerator):
             metadata["wing_symmetry"] = abs(left_w - right_w)
 
         # امتیاز میانگین موقعیت
-        scores = [contract_scores.get(leg.contract.ticker, 0.0)
-                  for leg in legs if leg.contract]
+        scores = [contract_scores.get(leg.contract.ticker, 0.0) for leg in legs if leg.contract]
         if scores:
             metadata["avg_score"] = sum(scores) / len(scores)
 

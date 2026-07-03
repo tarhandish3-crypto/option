@@ -1,9 +1,8 @@
 # filters/strategy_filters.py
 # -*- coding: utf-8 -*-
 
-
 """
-لایه فیلتر پویا و هوشمند بر اساس درصد بازدهی استراتژی
+لایه فیلتر پویا و هوشمند بر اساس درصد بازدهی استراتژی - نسخه نهایی متناسب با معماری اصلی
 """
 
 import logging
@@ -17,26 +16,23 @@ logger = logging.getLogger("OptionScanner.Filters.StrategyFilters")
 
 def apply_strategy_filter(opp: Opportunity, user_conditions: Dict[str, Any] = None) -> bool:
     """
-    فیلتر اصلی هوشمند بر اساس درصد بازدهی
+    فیلتر اصلی هوشمند بر اساس درصد بازدهی روی شیء Opportunity
     """
     if user_conditions is None:
         user_conditions = {}
 
     name = opp.strategy_name.lower().strip()
-    returns = np.array(opp.metadata.get(
-        'returns_monthly_pct', []), dtype=float)
+    returns = np.array(opp.metadata.get('returns_monthly_pct', []), dtype=float)
 
-    if len(returns) == 0:
+    if returns.size == 0:
         return False
 
     max_ret = float(np.max(returns))
     min_ret = float(np.min(returns))
-    avg_ret = float(np.mean(returns))
 
     # =====================================================
     # فیلترهای اختصاصی استراتژی
     # =====================================================
-
     if "covered_call" in name:
         return max_ret >= 0 and min_ret > -15.0
 
@@ -46,10 +42,7 @@ def apply_strategy_filter(opp: Opportunity, user_conditions: Dict[str, Any] = No
     elif "collar" in name:
         return max_ret > 3.0 and min_ret > -10.0
 
-    elif "bull_call_spread" in name:
-        return max_ret > 8.0 and min_ret > -25.0 and avg_ret > 0
-
-    elif "bear_put_spread" in name:
+    elif "bull_call_spread" in name or "bear_put_spread" in name:
         return max_ret > 8.0 and min_ret > -25.0
 
     elif "long_straddle" in name or "long_strangle" in name:
@@ -62,10 +55,10 @@ def apply_strategy_filter(opp: Opportunity, user_conditions: Dict[str, Any] = No
         return min_ret < -22.0 and max_ret < 32.0
 
     elif "long_box" in name or "conversion" in name:
-        return min_ret > -5.0 and max_ret < 18.0 and avg_ret > 0
+        return min_ret > -5.0 and max_ret < 18.0
 
     elif "iron_condor" in name:
-        mid = returns[len(returns)//4: 3*len(returns)//4]
+        mid = returns[returns.size // 4 : 3 * returns.size // 4]
         return np.mean(mid) > 0 and min_ret > -18.0
 
     # =====================================================
@@ -84,43 +77,47 @@ def apply_strategy_filter(opp: Opportunity, user_conditions: Dict[str, Any] = No
 
 
 def filter_payoff_matrix_vectorized(
-        strategy_names: List[str],
-        returns_matrix: np.ndarray) -> np.ndarray:
+    strategy_names: List[str],
+    returns_matrix: np.ndarray
+) -> np.ndarray:
     """
-    فیلتر برداری سریع روی ماتریس درصد بازدهی
+    فیلتر برداری سریع روی ماتریس درصد بازدهی برای غربالگری دسته‌ای
     """
-    num_strategies = len(strategy_names)
-    keep_mask = np.ones(num_strategies, dtype=bool)
+    num = len(strategy_names)
+    keep = np.ones(num, dtype=bool)
 
-    for i in range(num_strategies):
+    for i in range(num):
         name = strategy_names[i].lower()
         rets = returns_matrix[i]
 
-        if len(rets) == 0:
-            keep_mask[i] = False
+        if rets.size == 0:
+            keep[i] = False
             continue
 
         max_r = float(np.max(rets))
         min_r = float(np.min(rets))
 
         if "covered_call" in name:
-            keep_mask[i] = max_r >= 0 and min_r > -15
+            keep[i] = max_r >= 0 and min_r > -15.0
         elif "collar" in name:
-            keep_mask[i] = max_r > 3 and min_r > -10
+            keep[i] = max_r > 3.0 and min_r > -10.0
         elif "iron_condor" in name:
-            keep_mask[i] = min_r > -18
-        elif max_r < -8:   # فیلتر عمومی
-            keep_mask[i] = False
+            keep[i] = min_r > -18.0
+        elif "strap" in name:
+            keep[i] = max_r > 22.0 and min_r > -28.0
+        elif "strip" in name:
+            keep[i] = min_r < -22.0 and max_r < 32.0
+        elif max_r < -8.0:
+            keep[i] = False
 
-    return keep_mask
+    return keep
 
 
 def create_custom_filter(conditions: Dict[str, Any]) -> Callable[[Opportunity], bool]:
-    """ایجاد فیلتر سفارشی"""
+    """ایجاد فیلتر سفارشی روی Opportunity"""
     def custom_filter(opp: Opportunity) -> bool:
-        returns = np.array(opp.metadata.get(
-            'returns_monthly_pct', []), dtype=float)
-        if len(returns) == 0:
+        returns = np.array(opp.metadata.get('returns_monthly_pct', []), dtype=float)
+        if returns.size == 0:
             return False
 
         if "strategy_contains" in conditions:
@@ -140,7 +137,6 @@ def create_custom_filter(conditions: Dict[str, Any]) -> Callable[[Opportunity], 
     return custom_filter
 
 
-# دیکشنری فیلترهای آماده
 STRATEGY_FILTERS = {
     "covered_call": lambda opp: apply_strategy_filter(opp),
     "collar": lambda opp: apply_strategy_filter(opp),

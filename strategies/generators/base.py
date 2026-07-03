@@ -1,7 +1,8 @@
 # strategies/generators/base.py
 # -*- coding: utf-8 -*-
+
 """
-ماژول پایه تولیدکننده‌های استراتژی (Base Strategy Generator) - معماری V4
+ماژول پایه تولیدکننده‌های استراتژی (Base Strategy Generator) - خروجی جریانی بر اساس ساختار اصلی پروژه
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Iterator
 
 import numpy as np
 
@@ -22,7 +23,7 @@ logger = logging.getLogger("OptionScanner.Strategies.Generators.Base")
 
 class BaseGenerator(ABC):
     """
-    کلاس پایه انتزاعی برای تمام ژنراتورهای استراتژی
+    کلاس پایه انتزاعی برای تمام ژنراتورهای استراتژی با خروجی جریانی (Iterator)
     """
 
     def __init__(self, strategy_def: StrategyDefinition):
@@ -36,8 +37,8 @@ class BaseGenerator(ABC):
         underlying: UnderlyingAsset,
         contracts: List[OptionContract],
         contract_scores: Dict[str, float]
-    ) -> List[Opportunity]:
-        """متد انتزاعی تولید فرصت‌ها"""
+    ) -> Iterator[Opportunity]:
+        """متد انتزاعی تولید فرصت‌ها به صورت جریانی (Lazy Evaluation)"""
         pass
 
     # ============================================================
@@ -85,7 +86,7 @@ class BaseGenerator(ABC):
             'generator_timestamp': datetime.now().isoformat(),
             'generator_class': self.__class__.__name__,
             'strategy_type': self.strategy_def.generator_type.value,
-            'price_levels': get_price_levels(10000.0).tolist(),  # سطوح متمرکز
+            'price_levels': get_price_levels(10000.0).tolist(),
             'pct_steps': get_price_steps().tolist(),
         }
 

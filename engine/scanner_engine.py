@@ -17,7 +17,6 @@ from engine.scanner import Scanner
 from analytics.payoff_calculator import enrich_opportunity_with_pnl
 from analytics.probabilities_calculator import calculate_strategy_greeks
 from strategies.core import get_all_strategies
-import config
 
 logger = logging.getLogger("OptionScanner.Engine.ScannerEngine")
 
@@ -177,7 +176,7 @@ class ScannerEngine:
                 executor.submit(self._scan_single_ticker, ticker, all_strategies): ticker
                 for ticker in tickers}
 
-            # ✅ as_completed: نتایج بلافاصله با تکمیل هر future پردازش می‌شوند
+            # as_completed: نتایج بلافاصله با تکمیل هر future پردازش می‌شوند
             for future in as_completed(future_to_ticker):
                 ticker = future_to_ticker[future]
                 try:
@@ -200,9 +199,7 @@ class ScannerEngine:
 
             # نمونه‌سازی اختصاصی در سطح ترد جهت حذف هم‌پوشانی اشاره‌گرها
             scanner = Scanner(self.snapshot)
-            # استراتژی‌ها از بیرون پاس می‌شوند — بدون re-copy در هر thread
-            raw_opportunities = scanner.scan_ticker_with_strategies(
-                ticker, all_strategies)
+            raw_opportunities = scanner.scan_ticker_with_strategies(ticker, all_strategies)
 
             if not raw_opportunities:
                 return []
@@ -225,42 +222,34 @@ class ScannerEngine:
 
             with self._stats_lock:
                 self.scanned_count += 1
-                self.total_generated_stats += scanner_stats.get(
-                    "generated", len(raw_opportunities))
+                self.total_generated_stats += scanner_stats.get("generated", len(raw_opportunities))
                 self.total_filtered_stats += scanner_stats.get("filtered", 0)
 
-            # S0 را روی همه فرصت‌ها تنظیم کن
-            if s0_stock > 0:
-                for opp in raw_opportunities:
+            # تنظیم قیمت S0 و غنی‌سازی متوالی بهینه (بدون Nested ThreadPool)
+            enriched_opportunities: List[Opportunity] = []
+            calculate_greeks_flag = config.get_feature_flags().get("calculate_greeks", True)
+
+            for opp in raw_opportunities:
+                if opp is None:
+                    continue
+                
+                if s0_stock > 0:
                     opp.S0_stock = s0_stock
 
-            # ✅ enrichment موازی — هر opportunity مستقل است، thread-safe
-            enrich_workers = min(len(raw_opportunities), 4)
-
-            def _enrich(opp: Opportunity) -> Opportunity:
+                # ۱. غنی‌سازی ماتریس سود و زیان (PnL Analytics)
                 try:
                     opp = enrich_opportunity_with_pnl(opp)
                 except Exception as enrich_err:
-                    logger.warning(
-                        f"Failed to enrich {opp.strategy_name} on {ticker}: {enrich_err}")
+                    logger.warning(f"Failed to enrich {opp.strategy_name} on {ticker}: {enrich_err}")
 
-                # ✅ محاسبه یونانی‌های position-level اگر flag فعال باشد
-                try:
-                    if config.get_feature_flags().get("calculate_greeks", True):
+                # ۲. محاسبه و تزریق شاخص‌های ریسک (Greeks)
+                if calculate_greeks_flag:
+                    try:
                         _inject_greeks(opp, s0_stock)
-                except Exception as greek_err:
-                    logger.debug(
-                        f"Greeks calculation skipped for {opp.strategy_name}: {greek_err}")
+                    except Exception as greek_err:
+                        logger.debug(f"Greeks calculation skipped for {opp.strategy_name}: {greek_err}")
 
-                return opp
-
-            if enrich_workers > 1:
-                with ThreadPoolExecutor(max_workers=enrich_workers) as enrich_pool:
-                    enriched_opportunities = list(
-                        enrich_pool.map(_enrich, raw_opportunities))
-            else:
-                enriched_opportunities = [
-                    _enrich(opp) for opp in raw_opportunities]
+                enriched_opportunities.append(opp)
 
             return enriched_opportunities
 

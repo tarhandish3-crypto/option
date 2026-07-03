@@ -1,18 +1,11 @@
 # engine/scanner.py
 # -*- coding: utf-8 -*-
 
-"""
-موتور اسکن لایه نماد (Scanner) - معماری V4
-
-این ماژول وظیفه دریافت قراردادهای یک نماد پایه، محاسبه ماتریس نقدشوندگی (Liquidity Core) 
-و هدایت داده‌ها به سمت ژنراتورهای تخصصی استراتژی را بر عهده دارد.
-اصلاحات V4: سازگاری کامل با سیستم آماری تجمعی ScannerEngine و ایمن‌سازی محاسبات ریاضی اسپرد.
-"""
 
 from __future__ import annotations
 
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Iterator
 from config import MIN_VOLUME
 from core.models import MarketSnapshot, Opportunity, OptionContract
 from strategies.core import get_all_strategies
@@ -25,15 +18,15 @@ class Scanner:
     """
     موتور اسکن متمرکز روی یک نماد پایه و استخراج تمام ترکیب‌های مجاز آن
     """
-    
+
     def __init__(self, snapshot: MarketSnapshot):
         self.snapshot = snapshot
         self._contract_scores: Dict[str, float] = {}
-        
+
         # شمارنده‌های تجمعی سطح اسکنر برای همگام‌سازی با انجین موازی (V4)
         self._generated_count = 0
         self._filtered_count = 0
-    
+
     def scan_ticker(self, ticker: str) -> List[Opportunity]:
         """
         اسکن کامل زنجیره آپشن یک نماد پایه برای تمام استراتژی‌های فعال سیستم
@@ -43,7 +36,8 @@ class Scanner:
     def scan_ticker_with_strategies(
         self,
         ticker: str,
-        all_strategies: Dict[str, Any]) -> List[Opportunity]:
+        all_strategies: Dict[str, Any]
+    ) -> List[Opportunity]:
         """
         نسخه بهینه‌شده: استراتژی‌ها از بیرون پاس می‌شوند تا از re-copy در هر ticker جلوگیری شود
         """
@@ -51,74 +45,90 @@ class Scanner:
 
     def _scan_with_strategies(self, ticker: str, all_strategies: Dict[str, Any]) -> List[Opportunity]:
         """
-        پیاده‌سازی مشترک اسکن — استراتژی‌ها یک‌بار از caller دریافت می‌شوند
+        پیاده‌سازی مشترک اسکن — سازگار با خروجی‌های جریانی (Yield) ژنراتورهای معماری جدید
         """
         opportunities: List[Opportunity] = []
-        
-        # 1. دریافت دارایی پایه
+
+        # ۱. دریافت دارایی پایه
         underlying = self.snapshot.get_underlying(ticker)
         if not underlying:
             logger.debug(f"Ticker {ticker} not found in snapshot")
             return []
-        
+
         if getattr(underlying, 'is_frozen', False):
             logger.debug(f"Skipping ticker {ticker}: Asset is frozen")
             return []
-        
-        # 2. دریافت قراردادها با استفاده از کش مرجع (O(1))
+
+        # ۲. دریافت قراردادها با استفاده از کش مرجع (O(1))
         contracts = self.snapshot.get_options(ticker)
         if not contracts or len(contracts) < 2:
             logger.debug(f"No valid contracts for {ticker}")
             return []
-        
+
         logger.info(f"Scanning {ticker}: {len(contracts)} contracts")
-        
-        # 4. پیش‌محاسبه امتیاز نقدشوندگی زنجیره
+
+        # ۳. پیش‌محاسبه امتیاز نقدشوندگی زنجیره
         self._contract_scores = self._calculate_liquidity_scores(contracts)
 
         for strategy_name, strategy_def in all_strategies.items():
             try:
-                # 5. دریافت Generator تخصصی معادل استراتژی
+                # ۴. دریافت Generator تخصصی معادل استراتژی
                 generator = get_generator(strategy_def)
                 if generator is None:
                     logger.debug(f"No generator for {strategy_name}")
                     continue
-                
-                # 6. تولید ترکیب‌ها با ساختار امتیازدهی
-                generated_opps = generator.generate(
+
+                # ۵. دریافت درایور جریانی (Iterator) از ژنراتور
+                opps_iterator = generator.generate(
                     underlying=underlying,
                     contracts=contracts,
-                    contract_scores=self._contract_scores)
-                
-                # استخراج و انباشت آمارهای فیلترینگ داخلی ژنراتور (V4)
+                    contract_scores=self._contract_scores
+                )
+
+                if not opps_iterator:
+                    continue
+
+                # ۶. مصرف بهینه و جریانی موقعیت‌ها جهت جلوگیری از تداخل با متد len() ژنراتورها
+                strategy_generated_count = 0
+                for opp in opps_iterator:
+                    if opp is not None:
+                        opportunities.append(opp)
+                        strategy_generated_count += 1
+
+                # استخراج و انباشت آمارهای فیلترینگ داخلی ژنراتور بر اساس دکترین V4
                 if hasattr(generator, 'get_stats'):
                     gen_stats = generator.get_stats()
-                    self._generated_count += gen_stats.get("generated", len(generated_opps) if generated_opps else 0)
+                    # اگر سیستم آماری داخلی ژنراتور فعال است از آن استفاده می‌شود، در غیر این‌صورت شمارش محلی
+                    self._generated_count += gen_stats.get(
+                        "generated", strategy_generated_count)
                     self._filtered_count += gen_stats.get("filtered", 0)
                 else:
-                    self._generated_count += len(generated_opps) if generated_opps else 0
-                
-                if generated_opps:
-                    opportunities.extend(generated_opps)
-                    logger.debug(f"  {strategy_name}: {len(generated_opps)} opportunities")
-                    
+                    self._generated_count += strategy_generated_count
+
+                if strategy_generated_count > 0:
+                    logger.debug(
+                        f"  {strategy_name}: {strategy_generated_count} opportunities generated")
+
             except Exception as e:
-                logger.error(f"Error generating {strategy_name} on {ticker}: {e}")
-        
-        logger.info(f"Generated {len(opportunities)} opportunities for {ticker}")
+                logger.error(
+                    f"Error generating {strategy_name} on {ticker}: {e}", exc_info=True)
+
+        logger.info(
+            f"Generated {len(opportunities)} total opportunities for {ticker}")
         return opportunities
-    
+
     def _calculate_liquidity_scores(self, contracts: List[OptionContract]) -> Dict[str, float]:
         """محاسبه ماتریس نقدشوندگی قراردادها با مکانیزم حفاظت از کرش محاسباتی"""
         scores = {}
-        
+
         for contract in contracts:
             # حجم (بازه وزنی 0-30)
-            volume_score = min(contract.volume / MIN_VOLUME, 1.0) * 30 if MIN_VOLUME > 0 else 0
-            
+            volume_score = min(contract.volume / MIN_VOLUME,
+                               1.0) * 30 if MIN_VOLUME > 0 else 0
+
             # موقعیت‌های باز تعهدی - Open Interest (بازه وزنی 0-25)
             oi_score = min(contract.open_interest / 50, 1.0) * 25
-            
+
             # اسپرد قیمت پیشنهادی خرید و فروش (بازه وزنی 0-25) - ایمن‌سازی در برابر ZeroDivision
             if contract.bid > 0 and contract.ask > 0:
                 mid = (contract.bid + contract.ask) / 2
@@ -129,23 +139,26 @@ class Scanner:
                     spread_score = 0
             else:
                 spread_score = 0
-            
+
             # عمق دفاتر سفارشات - Order Book Depth (بازه وزنی 0-20)
             bid_vol = getattr(contract, 'bid_volume', 0) or 0
             ask_vol = getattr(contract, 'ask_volume', 0) or 0
             depth = min(bid_vol, ask_vol)
             depth_score = min(depth / 500, 1.0) * 20
-            
-            scores[contract.ticker] = round(volume_score + oi_score + spread_score + depth_score, 2)
-        
+
+            scores[contract.ticker] = round(
+                volume_score + oi_score + spread_score + depth_score, 2
+            )
+
         return scores
 
     def get_stats(self) -> Dict[str, int]:
         """ارائه آمارهای تجمیعی به موتور ارکستراتور بالادستی (ScannerEngine)"""
         return {
             "generated": self._generated_count,
-            "filtered": self._filtered_count}
-    
+            "filtered": self._filtered_count
+        }
+
     def scan_all_tickers(self) -> List[Opportunity]:
         """اسکن ترتیبی پشتیبان برای تمام نمادهای موجود در مارکت اسنپ‌شات"""
         all_opportunities = []
