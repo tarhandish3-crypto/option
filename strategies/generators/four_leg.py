@@ -81,7 +81,6 @@ class FourLegGenerator(BaseGenerator):
             # ۴. تولید تنبل (Lazy) متاداتا به صورت خارج از لوپ داغ فقط برای پوزیشن نهایی
             custom_metadata = self._build_metadata_lazy(
                 matched_legs, contract_scores)
-            base_metadata = self._build_base_metadata(custom_metadata)
 
             days_to_maturity = max(
                 leg.contract.days_to_maturity
@@ -94,7 +93,7 @@ class FourLegGenerator(BaseGenerator):
                 strategy_name=self.strategy_def.name,
                 ticker=underlying.ticker,
                 legs=matched_legs,
-                metrics=base_metadata,
+                metrics=custom_metadata,
                 days_to_maturity=days_to_maturity,
                 underlying_price=base_price,
             )

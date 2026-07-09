@@ -99,7 +99,11 @@ class MarginCalculator:
                 contract_size=1 if is_stock else getattr(
                     contract, 'contract_size', 1000),
                 last_price=getattr(contract, 'last_price', 0.0),
-                days_to_maturity=getattr(contract, 'days_to_maturity', 30))
+                days_to_maturity=getattr(contract, 'days_to_maturity', 30),
+                bid=getattr(contract, 'bid', 0.0),
+                ask=getattr(contract, 'ask', 0.0),
+                volume=getattr(contract, 'volume', 0.0),
+                open_interest=getattr(contract, 'open_interest', 0.0))
 
             side = Side.BUY
             if hasattr(leg, 'side'):
@@ -132,7 +136,11 @@ class MarginCalculator:
                 contract_size=1 if is_stock else leg.get(
                     'contract_size', 1000),
                 last_price=leg.get('premium', leg.get('last_price', 0.0)),
-                days_to_maturity=leg.get('days_to_maturity', 30))
+                days_to_maturity=leg.get('days_to_maturity', 30),
+                bid=leg.get('bid', 0.0),
+                ask=leg.get('ask', 0.0),
+                volume=leg.get('volume', 0.0),
+                open_interest=leg.get('open_interest', 0.0))
 
             is_buy = leg.get('is_buy', True) if 'is_buy' in leg else (
                 leg.get('side') == Side.BUY or leg.get('weight', 1) > 0)

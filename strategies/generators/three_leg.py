@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, Any, Set, Tuple, Iterator, List
 
-from core.models import OptionContract, UnderlyingAsset, Opportunity, LegDefinition
+from core.models import UnderlyingAsset, Opportunity, LegDefinition
 from core.enums import OptionType, GeneratorType
 from strategies.base import StrategyDefinition
 from strategies.generators.base import BaseGenerator
@@ -39,28 +39,19 @@ class ThreeLegGenerator(BaseGenerator):
     def generate(
         self,
         underlying: UnderlyingAsset,
-        # پایبندی کامل به Pipeline خط لوله زنجیره
-        contracts: List[OptionContract],
+        index: ContractIndex,
         contract_scores: Dict[str, float],
     ) -> Iterator[Opportunity]:
         """اسکن فوق‌سریع و جریانی با تکنیک Candidate Planner مینی‌مال شده بدون ریسک ساخت پرموتیشن‌های هرز"""
 
         base_price = self._get_S0_stock(underlying)
-        if base_price <= 0 or not contracts:
+        if base_price <= 0 or index.is_empty:
             return
 
         rules = self.strategy_def.rules or {}
         min_liq_score = rules.get("min_liquidity_score", 30.0)
 
-        # ⚡ ۱. ساخت یا دریافت لایه ایندکس هدایت‌شده (Index-guided candidate planner)
-        index = ContractIndex(contracts)
-
-        # ⚡ Early Abort در لایه ژنراتور: اگر کانتراکت‌های زنجیره کفاف استراتژی را ندهند، بلافاصله لغو کن
-        if not index.has_minimum_liquidity_pool(min_liq_score):
-            return
-
-        # ⚡ ۲. Push-down Filtering: فیلترهای ساختاری (مانند فواصل استرایک و انقضا) قبل از ترکیب لنگه‌ها اعمال می‌شوند
-        # این کار بار محاسباتی PatternMatcher را تا ۸۵٪ کاهش می‌دهد.
+        # ⚡ Push-down Filtering با PatternMatcher
         patterns = self.strategy_def.patterns
         matched_sets = PatternMatcher.match_all(
             index=index,
@@ -68,7 +59,6 @@ class ThreeLegGenerator(BaseGenerator):
             strategy_rules=rules,
             min_liquidity_score=min_liq_score,
             contract_scores=contract_scores,
-            # پاس دادن قیمت پایانی جهت پیش‌فیلترهای OTM/ITM در لایه مچر
             underlying_price=base_price
         )
 

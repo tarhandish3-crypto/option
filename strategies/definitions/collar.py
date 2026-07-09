@@ -7,22 +7,30 @@ from strategies.base import StrategyDefinition, GeneratorType
 
 DEFINITION = StrategyDefinition(
     name="collar",
-    generator_type=GeneratorType.STOCK_OPTION,   # چون ۱ لگ سهم + ۲ لگ آپشن
+    generator_type=GeneratorType.THREE_LEG,   # سهم پایه + پوت + کال → سه لگ
     include_stock=True,
 
     patterns=(
+        # لگ ۱: خرید سهم پایه (توسط ThreeLegGenerator از طریق include_stock مدیریت می‌شود)
+        StrategyLegPattern(
+            option_type=OptionType.STOCK,
+            side=Side.BUY,
+            ratio=1,
+        ),
+        # لگ ۲: خرید Put — کف حمایتی
         StrategyLegPattern(
             option_type=OptionType.PUT,
             side=Side.BUY,
             ratio=1,
-            strike_group="K1",      # کف قیمت (حمایت)
+            strike_group="K1",
             maturity_group="M1",
         ),
+        # لگ ۳: فروش Call — سقف و تامین هزینه
         StrategyLegPattern(
             option_type=OptionType.CALL,
             side=Side.SELL,
             ratio=1,
-            strike_group="K2",      # سقف قیمت (فروش پوشش)
+            strike_group="K2",
             maturity_group="M1",
         ),
     ),

@@ -11,7 +11,7 @@ from core.models import StrategyLegPattern
 from strategies.base import StrategyDefinition, GeneratorType
 
 DEFINITION = StrategyDefinition(
-    name="Covered Call",
+    name="covered_call",
     generator_type=GeneratorType.STOCK_OPTION,
     include_stock=True,
 

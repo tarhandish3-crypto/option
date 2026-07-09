@@ -9,24 +9,28 @@ DEFINITION = StrategyDefinition.create(
     generator_type=GeneratorType.TWO_LEG,
     patterns=[
         {
-            "option_type": "PUT",
-            "side": "BUY",
-            "ratio": 1,
-            "strike_group": "K2",
-            "maturity_group": "M1",
-        },
-        {
+            # لگ ۱: خرید Call با strike پایین‌تر (K1) — ITM Call
             "option_type": "CALL",
             "side": "BUY",
             "ratio": 1,
             "strike_group": "K1",
             "maturity_group": "M1",
         },
+        {
+            # لگ ۲: خرید Put با strike بالاتر (K2) — ITM Put
+            "option_type": "PUT",
+            "side": "BUY",
+            "ratio": 1,
+            "strike_group": "K2",
+            "maturity_group": "M1",
+        },
     ],
     include_stock=False,
-    description="Long Guts",
+    description="Long Guts - Buy ITM Call (lower strike) + Buy ITM Put (higher strike)",
     rules={
+        # ترتیب صعودی: K1 (Call) < K2 (Put)
         "strike_order": "ascending",
         "maturity_order": "same",
+        "min_strike_gap_pct": 0.01,
     },
 )

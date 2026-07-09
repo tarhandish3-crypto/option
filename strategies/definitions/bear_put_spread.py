@@ -11,20 +11,12 @@ from core.models import StrategyLegPattern
 from strategies.base import StrategyDefinition, GeneratorType
 
 DEFINITION = StrategyDefinition(
-    name="Bear Put Spread",
+    name="bear_put_spread",
     generator_type=GeneratorType.TWO_LEG,
     include_stock=False,
 
     patterns=(
-        # لگ ۱: خرید PUT با استرایک بالاتر (K2) - موتور اصلی سود در حرکت نزولی
-        StrategyLegPattern(
-            option_type=OptionType.PUT,
-            side=Side.BUY,
-            ratio=1,
-            strike_group="K2",
-            maturity_group="M1",
-        ),
-        # لگ ۲: فروش PUT با استرایک پایین‌تر (K1) - جهت کاهش کل هزینه پرمیوم پرداختی
+        # لگ ۱: فروش PUT با استرایک پایین‌تر (K1) - جهت کاهش کل هزینه پرمیوم پرداختی
         StrategyLegPattern(
             option_type=OptionType.PUT,
             side=Side.SELL,
@@ -32,14 +24,21 @@ DEFINITION = StrategyDefinition(
             strike_group="K1",
             maturity_group="M1",
         ),
+        # لگ ۲: خرید PUT با استرایک بالاتر (K2) - موتور اصلی سود در حرکت نزولی
+        StrategyLegPattern(
+            option_type=OptionType.PUT,
+            side=Side.BUY,
+            ratio=1,
+            strike_group="K2",
+            maturity_group="M1",
+        ),
     ),
 
     description="Bear Put Spread - Buy Higher Strike Put / Sell Lower Strike Put (Debit Spread)",
 
     rules={
-        # با توجه به اینکه در تاپل بالا ابتدا K2 (بزرگتر) و سپس K1 (کوچکتر) آمده است،
-        # ترتیب پترن‌ها نزولی (Descending) پردازش می‌شود. (K2 > K1)
-        "strike_order": "descending",
+        # پترن‌ها به ترتیب صعودی (K1 < K2) چیده شده‌اند تا با PatternMatcher سازگار باشند
+        "strike_order": "ascending",
         "maturity_order": "same",
         "min_strike_gap_pct": 0.01,   # حداقل فاصله ۱ درصدی بین دو استرایک در بازار ایران
         # حداکثر فاصله ۱۵ درصدی جهت پرهیز از بی‌اثر شدن پوزیشن فروش

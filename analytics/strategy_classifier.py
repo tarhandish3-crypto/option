@@ -106,8 +106,18 @@ class StrategyClassifier:
         if is_uncapped_loss or opp.max_loss == float('inf') or opp.max_loss < -50000000:
             return RiskLevel.HIGH
 
-        if opp.required_margin > 0:
-            loss_to_margin_ratio = abs(opp.max_loss) / opp.required_margin
+        # استخراج ایمن required_margin — در صورتی که به اشتباه MarginResult باشد، float می‌گیریم
+        required_margin = opp.required_margin
+        if hasattr(required_margin, 'required_margin'):
+            required_margin = float(required_margin.required_margin)
+        else:
+            try:
+                required_margin = float(required_margin)
+            except (TypeError, ValueError):
+                required_margin = 0.0
+
+        if required_margin > 0:
+            loss_to_margin_ratio = abs(opp.max_loss) / required_margin
             if loss_to_margin_ratio > 0.8:
                 return RiskLevel.HIGH
             if loss_to_margin_ratio < 0.2:

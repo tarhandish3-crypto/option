@@ -151,6 +151,15 @@ class ContractIndex:
         bucket = self._maturity_map.get(dte)
         return bucket._sorted_strikes if bucket else []
     
+    def get_contracts_by_type(self, option_type: OptionType) -> List[OptionContract]:
+        """دریافت همه قراردادها بر اساس نوع (CALL/PUT) بدون فیلتر DTE"""
+        if option_type == OptionType.CALL:
+            return self._all_calls
+        elif option_type == OptionType.PUT:
+            return self._all_puts
+        else:
+            return list(self._ticker_map.values())
+
     def get_contract(self, ticker: str) -> Optional[OptionContract]:
         return self._ticker_map.get(ticker)
 

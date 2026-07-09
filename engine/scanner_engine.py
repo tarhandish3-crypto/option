@@ -173,6 +173,8 @@ class ScannerEngine:
                 meta = opp.metadata
                 meta.update({
                     'returns_monthly_pct': analysis.returns_pct.tolist(),
+                    # کلید net_profits_closed برای RiskEngine (سازگاری با evaluate_opportunity)
+                    'net_profits_closed': analysis.returns_pct.tolist(),
                     'max_profit': analysis.max_profit,
                     'max_loss': analysis.max_loss,
                     'break_even_points': analysis.break_even_points,
