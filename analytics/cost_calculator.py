@@ -53,12 +53,12 @@ class IranMarketCostCalculator:
 
     @classmethod
     def calculate_strategy_costs(
-        cls,
-        underlying_symbol: str,
-        legs: List[LegDefinition],
-        spot_price: Optional[float] = None,
-        include_clearing: bool = True,
-        include_exercise_tax: bool = True) -> StrategyCosts:
+            cls,
+            underlying_symbol: str,
+            legs: List[LegDefinition],
+            spot_price: Optional[float] = None,
+            include_clearing: bool = True,
+            include_exercise_tax: bool = True) -> StrategyCosts:
         total_entry = 0.0
         total_exit = 0.0
         total_clearing = 0.0
@@ -71,12 +71,14 @@ class IranMarketCostCalculator:
         # محاسبه حجم و کارمزد ورود/خروج پوزیشن‌های اختیار
         for leg in legs:
             contract = getattr(leg, 'contract', None)
-            if contract is not None:
-                qty = int(abs(getattr(leg, 'weight')))
-                c_size = getattr(contract, 'contract_size')
+            # 🟢 اصلاح: کارمزدها فقط برای لنگه‌های اختیار محاسبه می‌شوند، نه لنگه دارایی پایه مستقیم
+            if contract is not None and contract.option_type != OptionType.STOCK:
+                # 🟢 اصلاح: تغییر فیلد از weight به ratio
+                qty = int(abs(getattr(leg, 'ratio', 1)))
+                c_size = getattr(contract, 'contract_size', 1000) or 1000
                 entry_p = getattr(leg, 'entry_price', None) or getattr(
-                    contract, 'last_price')
-                exit_p = getattr(contract, 'last_price')
+                    contract, 'last_price', 0.0)
+                exit_p = getattr(contract, 'last_price', 0.0)
 
                 entry_val = entry_p * c_size * qty
                 exit_val = exit_p * c_size * qty
@@ -93,18 +95,15 @@ class IranMarketCostCalculator:
                     total_clearing += max(entry_val *
                                           cls.CLEARING_FEE_RATE, cls.CLEARING_FEE_MIN)
 
-        # محاسبه کارمزد سهم پایه برای استراتژی‌های پوششی (به صورت کاملاً داینامیک بر اساس مجموع حجم واقعی لگ‌ها)
-        has_underlying = any(getattr(leg, 'is_stock_leg', False)
-                             for leg in legs)
-        if has_underlying and spot_price is not None and spot_price > 0:
+        # 🟢 اصلاح: تشخیص پوزیشن سهام پایه منطبق بر معماری V5
+        stock_legs = [
+            l for l in legs if l.contract and l.contract.option_type == OptionType.STOCK]
 
-            total_option_qty = sum(int(abs(getattr(l, 'weight', 1)))
-                                   for l in legs if getattr(l, 'contract', None) is not None)
-            base_qty = total_option_qty if total_option_qty > 0 else 1
-            stock_qty = sum(
-                abs(leg.weight)
-                for leg in legs
-                if leg.is_stock_leg)
+        if stock_legs and spot_price is not None and spot_price > 0:
+            # محاسبه مجموع حجم دارایی پایه پوزیشن
+            stock_qty = sum(abs(leg.ratio)
+                            # 🟢 اصلاح: تغییر فیلد به ratio
+                            for leg in stock_legs)
 
             stock_buy_rate = get_commission_rate(market, kind, True)
             total_underlying_buy = (spot_price * stock_qty) * stock_buy_rate
@@ -122,21 +121,19 @@ class IranMarketCostCalculator:
             underlying_buy_fees=round(total_underlying_buy, 2),
             underlying_sell_fees=round(total_underlying_sell, 2),
             total_if_closed=round(total_if_closed, 2),
-            # مقدار پایه سررسید (بدون هزینه اعمال نقطه‌ای)
             total_if_exercised=round(total_if_closed, 2)
         )
 
     @classmethod
     def generate_exercise_cost_vector(
-        cls,
-        underlying_symbol: str,
-        legs: List[LegDefinition],
-        price_levels: np.ndarray,
-        include_exercise_tax: bool = True
+            cls,
+            underlying_symbol: str,
+            legs: List[LegDefinition],
+            price_levels: np.ndarray,
+            include_exercise_tax: bool = True
     ) -> np.ndarray:
         """
-        [حل ایراد ۲، ۳ و ۵]: تولید کاملاً برداری بردار هزینه‌های اعمال بر اساس سطوح قیمتی سررسید
-        کنترل دقیق وضعیت Naked/Covered و تفاوت جهت‌های معاملاتی (Long/Short)
+        تولید کاملاً برداری بردار هزینه‌های اعمال بر اساس سطوح قیمتی سررسید
         """
         market = get_symbol_market(underlying_symbol)
         kind = get_symbol_kind(underlying_symbol)
@@ -145,13 +142,15 @@ class IranMarketCostCalculator:
         exercise_costs_vector = np.zeros_like(price_levels, dtype=np.float64)
 
         for leg in legs:
-            contract = getattr(leg, 'contract')
-            if contract is None:
+            contract = getattr(leg, 'contract', None)
+            # 🟢 اصلاح: نادیده گرفتن لنگه سهام پایه در اعمال
+            if contract is None or contract.option_type == OptionType.STOCK:
                 continue
 
-            qty = int(abs(getattr(leg, 'weight')))
-            c_size = getattr(contract, 'contract_size')
-            K = getattr(contract, 'strike_price')
+            # 🟢 اصلاح: تغییر فیلد از weight به ratio
+            qty = int(abs(getattr(leg, 'ratio', 1)))
+            c_size = getattr(contract, 'contract_size', 1000) or 1000
+            K = getattr(contract, 'strike_price', 0.0)
             strike_value = K * c_size * qty
 
             # کارمزد اعمال فقط و فقط متعلق به دارنده موقعیت خرید (Long) است
@@ -160,17 +159,17 @@ class IranMarketCostCalculator:
             # مالیات واگذاری سهم (0.5%) فقط برای فروشنده واقعی دارایی پایه
             leg_tax = 0.0
             if include_exercise_tax:
-                if (leg.contract.option_type == OptionType.CALL and leg.side == Side.SELL) or \
-                   (leg.contract.option_type == OptionType.PUT and leg.side == Side.BUY):
+                if (contract.option_type == OptionType.CALL and leg.side == Side.SELL) or \
+                   (contract.option_type == OptionType.PUT and leg.side == Side.BUY):
                     leg_tax = strike_value * cls.EXERCISE_TAX_RATE
 
             total_leg_at_exercise = leg_exercise_fee + leg_tax
 
             # اعمال مشروط برداری بر اساس وضعیت In-The-Money بودن در سررسید
-            if leg.contract.option_type == OptionType.CALL:
+            if contract.option_type == OptionType.CALL:
                 exercise_costs_vector += np.where(price_levels >
                                                   K, total_leg_at_exercise, 0.0)
-            elif leg.contract.option_type == OptionType.PUT:
+            elif contract.option_type == OptionType.PUT:
                 exercise_costs_vector += np.where(price_levels <
                                                   K, total_leg_at_exercise, 0.0)
 

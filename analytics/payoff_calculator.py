@@ -11,7 +11,7 @@ from core.enums import Side, OptionType
 from analytics.cost_calculator import IranMarketCostCalculator
 
 
-@njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 def calc_pure_gross_payoff_numba(
         price_levels: np.ndarray,
         weights: np.ndarray,
@@ -63,14 +63,11 @@ class IranMarketPayoffCalculator:
             legs: List[LegDefinition],
             spot_price: float,
             price_levels: Optional[np.ndarray],
-            required_margin: float = 0.0) -> PayoffAnalysis:
+            required_margin: float,
+            days_to_maturity: float) -> PayoffAnalysis:
         """
-        محاسبه برداری بازدهی خالص و ناخالص و تبدیل به درصد بازدهی ماهانه (نرمال شده ۳۰ روزه)
+        محاسبه برداری بازدهی خالص و ناخالص و تبدیل به درصد بازدهی ماهانه بر اساس Capital Base واقعی بورس ایران
         """
-        if price_levels is None:
-            # گام ۵ درصدی پیش‌فرض در بازه -۵۰ تا +۵۰ درصد دارایی پایه
-            price_levels = np.arange(
-                spot_price * 0.5, spot_price * 1.5, spot_price * 0.05)
 
         num_legs = len(legs)
         weights = np.zeros(num_legs, dtype=np.float64)
@@ -81,11 +78,9 @@ class IranMarketPayoffCalculator:
         contract_sizes = np.zeros(num_legs, dtype=np.int32)
         has_contract = np.zeros(num_legs, dtype=np.int32)
 
-        days_to_maturity = 30  # مقدار پیش‌فرض منطقی دوره در صورت عدم وجود آپشن
-
         # ✅ استخراج اطلاعات به صورت ایمن
         for idx, leg in enumerate(legs):
-            weights[idx] = leg.ratio  # اصلاح دسترسی فیلد از weight به ratio
+            weights[idx] = leg.ratio
             sides[idx] = 1 if leg.side == Side.BUY else -1
             contract = leg.contract
 
@@ -96,10 +91,6 @@ class IranMarketPayoffCalculator:
                 option_types[idx] = contract.option_type.value
                 contract_sizes[idx] = contract.contract_size
                 has_contract[idx] = 1
-
-                # استخراج امن DTE از اولین لگ آپشن معتبر
-                if contract.option_type != OptionType.STOCK and contract.days_to_maturity > 0:
-                    days_to_maturity = contract.days_to_maturity
             else:
                 entry_prices[idx] = spot_price
                 option_types[idx] = OptionType.STOCK.value
@@ -110,39 +101,47 @@ class IranMarketPayoffCalculator:
             price_levels, weights, strikes, entry_prices,
             option_types, sides, contract_sizes)
 
-        # ✅ محاسبه هزینه‌های معاملاتی با رویکرد Lazy Evaluation
+        # ✅ استخراج امن نام نماد پایه بدون تداخل با لایه‌های مدل آپشن
+        first_option_leg = next(
+            (l for l in legs if l.contract and l.contract.option_type != OptionType.STOCK), None)
+        underlying_ticker = first_option_leg.contract.underlying_ticker if first_option_leg else ""
+
+        # ✅ محاسبه هزینه‌های معاملاتی ورود با رویکرد Lazy Evaluation
         flags = get_feature_flags()
-        if flags.get("apply_commissions", True):
-            underlying_ticker = legs[0].contract.underlying_ticker if legs and legs[0].contract else ""
+        if flags.get("apply_commissions", True) and underlying_ticker:
             strategy_costs = IranMarketCostCalculator.calculate_strategy_costs(
                 underlying_symbol=underlying_ticker,
                 legs=legs,
                 spot_price=spot_price)
             net_profits_closed = gross_profits - strategy_costs.total_if_closed
+            option_fees = strategy_costs.option_entry_fees + \
+                strategy_costs.clearing_fees + strategy_costs.underlying_buy_fees
         else:
             net_profits_closed = gross_profits.copy()
+            option_fees = 0.0
 
-        # ✅ محاسبه Net Premium (کاملاً برداری) کل موقعیت
-        net_premium = np.sum(
-            entry_prices * contract_sizes * weights * sides * has_contract,
-            dtype=np.float64)
+        # ✅ محاسبه جریانات نقدی خالص پرمیوم (دبیت هزینه کل مثبت / کردیت دریافتی منفی)
+        # لنگه‌های غیر سهام (آپشن‌ها) بر مبنای جهت معامله تعیین وضعیت می‌شوند.
+        net_premium = 0.0
+        for idx in range(num_legs):
+            if option_types[idx] != OptionType.STOCK.value and has_contract[idx] == 1:
+                leg_val = entry_prices[idx] * \
+                    contract_sizes[idx] * weights[idx]
+                net_premium += leg_val if sides[idx] == 1 else -leg_val
 
-        # ✅ تعیین پایه سرمایه‌گذاری واقعی معامله (Capital Base) برای تبدیل درصد
-        capital_base = required_margin if required_margin > 0 else abs(
-            net_premium)
-        if capital_base <= 0:
-            # همپوشانی در مواقع اضطراری پوزیشن‌های کاملاً درآمدی بدون مارجین
-            fallback_size = contract_sizes[0] if num_legs > 0 else 1000
-            capital_base = spot_price * fallback_size
+        # ✅ تشکیل مخرج کسر سرمایه‌گذاری واقعی معامله (Capital Base)
+        # فرمول: خالص پرمیوم جریان نقدی (در صورت بدهکار بودن موقعیت) + مجموع هزینه‌ها کارمزد ورود + وجه تضمین کل
+        premium_pay = max(net_premium, 0.0)
+        capital_base = premium_pay + option_fees + required_margin
 
-        # ✅ محاسبه درصد بازدهی کل دوره و اعمال فاکتور زمانی ۳۰ روزه (سود ماهانه اسکیل‌شده)
+        #  محاسبه درصد بازدهی کل دوره و اعمال فاکتور زمانی ۳۰ روزه (سود ماهانه اسکیل‌شده)
         returns_pct_period = (net_profits_closed / capital_base) * 100.0
         dte_factor = 30.0 / max(days_to_maturity, 1)
         monthly_returns = returns_pct_period * dte_factor
 
-        # تبدیل سقف و کف نتایج نهایی به درصد ماهانه جهت تغذیه موتورهای فازی
-        max_profit = float(np.max(monthly_returns))
-        max_loss = float(np.min(monthly_returns))
+        # ✅ استخراج سود و زیان ماکزیمم ریالی دوره (مطلق)
+        max_profit_total = float(np.max(net_profits_closed))
+        max_loss_total = float(np.min(net_profits_closed))
 
         # ✅ نقاط سربه‌سر بر مبنای قیمت دارایی پایه
         break_even_points = cls._find_break_even_points(
@@ -151,8 +150,8 @@ class IranMarketPayoffCalculator:
         return PayoffAnalysis(
             returns_pct=monthly_returns,
             net_premium=round(float(net_premium), 2),
-            max_profit=round(max_profit, 2),
-            max_loss=round(abs(max_loss), 2),
+            max_profit=round(max_profit_total, 2),
+            max_loss=round(abs(max_loss_total), 2),
             break_even_points=break_even_points)
 
     @staticmethod

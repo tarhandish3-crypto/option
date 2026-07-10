@@ -70,7 +70,7 @@ def _inject_greeks(opp: Opportunity, spot_price: float) -> None:
         'gamma': result.get('gamma', 0.0),
         'theta': result.get('theta_daily', 0.0),
         'vega': result.get('vega', 0.0),
-        'rho': result.get('rho', 0.0),})
+        'rho': result.get('rho', 0.0), })
 
 
 class ScannerEngine:
@@ -159,6 +159,8 @@ class ScannerEngine:
                 self.total_filtered_stats += scanner_stats.get("filtered", 0)
 
             enriched_opportunities = []
+
+            # فلگ فعال بودن یا عدم فعال بودن محاسبه یونانی ها
             calculate_greeks_flag = config.get_feature_flags().get("calculate_greeks")
 
             for opp in raw_opportunities:
@@ -167,7 +169,8 @@ class ScannerEngine:
 
                 meta = opp.metadata
                 if hasattr(opp, 'returns_monthly_pct') and opp.returns_monthly_pct is not None:
-                    returns_list = opp.returns_monthly_pct.tolist() if hasattr(opp.returns_monthly_pct, 'tolist') else list(opp.returns_monthly_pct)
+                    returns_list = opp.returns_monthly_pct.tolist() if hasattr(
+                        opp.returns_monthly_pct, 'tolist') else list(opp.returns_monthly_pct)
                     meta.update({
                         'returns_monthly_pct': returns_list,
                         'net_profits_closed': returns_list})
@@ -180,11 +183,11 @@ class ScannerEngine:
                 })
 
                 # تزریق یونانی‌ها در صورت فعال بودن فلگ سیستم
-                if calculate_greeks_flag and s0_stock > 0:
+                if calculate_greeks_flag:
                     _inject_greeks(opp, s0_stock)
 
                 enriched_opportunities.append(opp)
-                
+
             return enriched_opportunities
 
         except Exception as e:

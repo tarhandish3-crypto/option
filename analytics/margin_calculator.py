@@ -81,11 +81,11 @@ class MarginCalculator:
         # حالت اول: ورودی یک شیء پایتونی (Object-based Leg) است
         if hasattr(leg, 'contract') and leg.contract:
             contract = leg.contract
-            opt_type = getattr(contract, 'option_type', OptionType.CALL)
+            opt_type = getattr(contract, 'option_type')
             is_stock = (opt_type == OptionType.STOCK)
 
             margin_contract = MarginContract(
-                strike_price=getattr(contract, 'strike_price', 0.0),
+                strike_price=getattr(contract, 'strike_price'),
                 option_type=opt_type,
                 ticker=getattr(contract, 'ticker', 'UNKNOWN'),
                 underlying_ticker=getattr(contract, 'underlying_ticker', 'UNKNOWN'),

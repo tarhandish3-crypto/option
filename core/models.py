@@ -294,7 +294,6 @@ class Opportunity:
     risk_reward_ratio: float = 0.0
     expected_return_pct: float = 0.0
     liquidity_score: float = 0.0
-    execution_score: float = 0.0
 
     # ===== امتیازدهی هوشمند (DSS) =====
     classification: StrategyClassification = field(
