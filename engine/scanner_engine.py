@@ -25,6 +25,7 @@ from strategies.core import get_all_strategies
 
 logger = logging.getLogger("OptionScanner.Engine.ScannerEngine")
 
+
 def _inject_greeks(opp: Opportunity, spot_price: float) -> None:
     """محاسبه یونانی‌ها با بهینه‌سازی تخصیص حافظه و استفاده از متغیرهای محلی."""
     from core.enums import OptionType as OT, Side as SD
@@ -41,10 +42,11 @@ def _inject_greeks(opp: Opportunity, spot_price: float) -> None:
         contract = leg.contract
         if not contract or contract.option_type == OT.STOCK:
             continue
-            
-        iv = getattr(contract, 'iv', None) or getattr(contract, 'implied_volatility', None) or DEFAULT_VOLATILITY
+
+        iv = getattr(contract, 'iv', None) or getattr(
+            contract, 'implied_volatility', None) or DEFAULT_VOLATILITY
         iv_float = float(iv) if iv and iv > 0 else DEFAULT_VOLATILITY
-        
+
         total_iv += iv_float
         valid_legs_count += 1
 
@@ -59,7 +61,7 @@ def _inject_greeks(opp: Opportunity, spot_price: float) -> None:
         return
 
     avg_iv = total_iv / valid_legs_count if valid_legs_count > 0 else DEFAULT_VOLATILITY
-    
+
     result = calculate_strategy_greeks(
         legs=legs_for_greeks,
         current_price=spot_price,
@@ -77,15 +79,17 @@ def _inject_greeks(opp: Opportunity, spot_price: float) -> None:
         'rho': result.get('rho', 0.0),
     })
 
+
 class ScannerEngine:
     __slots__ = (
-        'snapshot', 'filters', 'parallel', 'max_workers', 
-        '_stats_lock', 'scanned_count', 'error_count', 
+        'snapshot', 'filters', 'parallel', 'max_workers',
+        '_stats_lock', 'scanned_count', 'error_count',
         'total_generated_stats', 'total_filtered_stats'
     )
 
     def __init__(self, snapshot: Union[MarketSnapshot, pd.DataFrame], filters: Optional[List[Callable]] = None):
-        self.snapshot = MarketSnapshot.from_dataframe(snapshot) if isinstance(snapshot, pd.DataFrame) else snapshot
+        self.snapshot = MarketSnapshot.from_dataframe(
+            snapshot) if isinstance(snapshot, pd.DataFrame) else snapshot
         self.snapshot.build_indices()
         self.filters = filters or []
 
@@ -108,9 +112,11 @@ class ScannerEngine:
         all_strategies = get_all_strategies()
 
         if self.parallel and len(target_tickers) > 1:
-            all_opportunities = self._scan_parallel(target_tickers, all_strategies)
+            all_opportunities = self._scan_parallel(
+                target_tickers, all_strategies)
         else:
-            all_opportunities = self._scan_sequential(target_tickers, all_strategies)
+            all_opportunities = self._scan_sequential(
+                target_tickers, all_strategies)
 
         return self._create_result(all_opportunities, start_time)
 
@@ -125,7 +131,8 @@ class ScannerEngine:
     def _scan_parallel(self, tickers: List[str], all_strategies: Dict[str, Any]) -> List[Opportunity]:
         all_opportunities = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            future_to_ticker = {executor.submit(self._scan_single_ticker, ticker, all_strategies): ticker for ticker in tickers}
+            future_to_ticker = {executor.submit(
+                self._scan_single_ticker, ticker, all_strategies): ticker for ticker in tickers}
             for future in as_completed(future_to_ticker):
                 opps = future.result()
                 if opps:
@@ -134,42 +141,46 @@ class ScannerEngine:
 
     def _scan_single_ticker(self, ticker: str, all_strategies: Dict[str, Any]) -> List[Opportunity]:
         try:
-            opts = self.snapshot.get_options(ticker)
+            opts = self.snapshot.get_options_by_underlying(ticker)
             if not opts or len(opts) < 2:
                 return []
 
             scanner = Scanner(self.snapshot)
-            raw_opportunities = scanner.scan_ticker_with_strategies(ticker, all_strategies)
+            raw_opportunities = scanner.scan_ticker_with_strategies(
+                ticker, all_strategies)
 
             if not raw_opportunities:
                 return []
 
-            underlying = self.snapshot.get_underlying(ticker)
-            s0_stock = underlying.close_price if underlying and underlying.close_price > 0 else getattr(underlying, 'last_price', 0)
+            underlying = self.snapshot.get_underlying_assets(ticker)
+            s0_stock = getattr(underlying, 'last_price')
+
+            if s0_stock > 0:
+                price_levels = config.get_price_levels(s0_stock)
+                self.snapshot.price_levels = price_levels
 
             scanner_stats = scanner.get_stats()
             with self._stats_lock:
                 self.scanned_count += 1
-                self.total_generated_stats += scanner_stats.get("generated", len(raw_opportunities))
+                self.total_generated_stats += scanner_stats.get(
+                    "generated", len(raw_opportunities))
                 self.total_filtered_stats += scanner_stats.get("filtered", 0)
 
             enriched_opportunities = []
             calculate_greeks_flag = config.get_feature_flags().get("calculate_greeks", True)
-            price_levels = getattr(self.snapshot, 'price_levels', None)
 
             for opp in raw_opportunities:
                 if s0_stock > 0:
                     opp.S0_stock = s0_stock
 
                 analysis = IranMarketPayoffCalculator.calculate_payoff(
-                    legs=list(opp.legs), spot_price=s0_stock, price_levels=price_levels
-                )
-                
+                    legs=list(opp.legs), spot_price=s0_stock, price_levels=price_levels)
+
                 opp.net_premium = analysis.net_premium
                 opp.max_profit = analysis.max_profit
                 opp.max_loss = analysis.max_loss
                 opp.break_even_points = analysis.break_even_points
-                
+
                 meta = opp.metadata
                 meta.update({
                     'returns_monthly_pct': analysis.returns_pct.tolist(),
@@ -190,7 +201,8 @@ class ScannerEngine:
         except Exception as e:
             with self._stats_lock:
                 self.error_count += 1
-            logger.error(f"Critical error scanning {ticker}: {e}", exc_info=True)
+            logger.error(
+                f"Critical error scanning {ticker}: {e}", exc_info=True)
             return []
 
     def _reset_stats(self) -> None:

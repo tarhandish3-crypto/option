@@ -41,8 +41,7 @@ class TwoLegGenerator(BaseGenerator):
         self,
         underlying: UnderlyingAsset,
         index: ContractIndex,  # کانتراکت ایندکس بهینه شده و تزریقی از بیرون
-        contract_scores: Dict[str, float],
-    ) -> Iterator[Opportunity]:
+        contract_scores: Dict[str, float],) -> Iterator[Opportunity]:
         """اسکن ۱۰۰٪ جریانی، بدون تخصیص حافظه محلی و کاملاً Stateless"""
         
         base_price = self._get_S0_stock(underlying)

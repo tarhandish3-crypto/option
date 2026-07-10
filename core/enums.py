@@ -15,9 +15,9 @@ class GeneratorType(Enum):
 
 class OptionType(Enum):
     """نوع اختیار معامله یا دارایی لگ"""
-    CALL = "Call"
-    PUT = "Put"
-    STOCK = "Stock"  # ✅ اضافه شده در گام ۱ مانیفست برای پشتیبانی از کاورکال، کالر و پوزیشن‌های ترکیبی سهم پایه
+    STOCK = 0
+    CALL = 1
+    PUT = 2
 
 
 class OptionStatus(Enum):

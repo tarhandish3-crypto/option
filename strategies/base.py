@@ -46,8 +46,7 @@ class StrategyDefinition:
         patterns: List[Dict[str, Any]],
         include_stock: bool = False,
         description: str = "",
-        rules: Optional[Dict[str, Any]] = None,
-    ) -> "StrategyDefinition":
+        rules: Optional[Dict[str, Any]] = None,) -> "StrategyDefinition":
         """سازنده ساده برای تبدیل دیکشنری‌های خام به ساختار شیءگرا"""
         leg_patterns: List[StrategyLegPattern] = []
 
@@ -74,8 +73,7 @@ class StrategyDefinition:
                     ratio=int(leg.get("ratio", 1)),
                     strike_group=leg.get("strike_group"), # در صورت عدم وجود سهم، None می‌ماند
                     maturity_group=leg.get("maturity_group"),
-                )
-            )
+                ))
 
         return cls(
             name=name,

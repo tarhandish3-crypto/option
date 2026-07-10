@@ -55,18 +55,16 @@ class Scanner:
         return self._scan_with_strategies(ticker, get_all_strategies())
 
     def scan_ticker_with_strategies(
-        self,
-        ticker: str,
-        all_strategies: Dict[str, Any]
-    ) -> List[Opportunity]:
-        """نسخه با استراتژی‌های ورودی (سازگاری)"""
+            self,
+            ticker: str,
+            all_strategies: Dict[str, Any]) -> List[Opportunity]:
+
         return list(self.scan_ticker_stream_with_strategies(ticker, all_strategies))
 
     def scan_ticker_stream_with_strategies(
-        self,
-        ticker: str,
-        all_strategies: Dict[str, Any]
-    ) -> Iterator[Opportunity]:
+            self,
+            ticker: str,
+            all_strategies: Dict[str, Any]) -> Iterator[Opportunity]:
         """نسخه جریانی با استراتژی‌های ورودی"""
         yield from self._scan_with_strategies(ticker, all_strategies)
 
@@ -75,20 +73,19 @@ class Scanner:
     # ============================================================
 
     def _scan_with_strategies(
-        self,
-        ticker: str,
-        all_strategies: Dict[str, Any]
-    ) -> Iterator[Opportunity]:
+            self,
+            ticker: str,
+            all_strategies: Dict[str, Any]) -> Iterator[Opportunity]:
         """
         پیاده‌سازی مشترک اسکن — خروجی جریانی با استفاده از ContractIndex
         """
         # ۱. دریافت دارایی پایه
-        underlying = self.snapshot.get_underlying(ticker)
+        underlying = self.snapshot.get_underlying_assets(ticker)
         if not underlying or getattr(underlying, 'is_frozen', False):
             return
 
         # ۲. دریافت قراردادها
-        contracts = self.snapshot.get_options(ticker)
+        contracts = self.snapshot.get_options_by_underlying(ticker)
         if not contracts or len(contracts) < 2:
             return
 
@@ -103,17 +100,18 @@ class Scanner:
         get_stats_attr = getattr
 
         for strategy_name, strategy_def in all_strategies.items():
+            if strategy_name == "covered_call":
+                pass
             try:
                 generator = get_generator_func(strategy_def)
                 if generator is None:
                     continue
 
-                # ✅ امضای جدید با index
+                # امضای جدید با index
                 opps_iterator = generator.generate(
                     underlying=underlying,
                     index=contract_index,
-                    contract_scores=self._contract_scores
-                )
+                    contract_scores=self._contract_scores)
 
                 strategy_count = 0
                 for opp in opps_iterator:
@@ -161,8 +159,7 @@ class Scanner:
             depth_score = min(min(bid_vol, ask_vol) / 500, 1.0) * 20
 
             scores[contract.ticker] = round(
-                volume_score + oi_score + spread_score + depth_score, 2
-            )
+                volume_score + oi_score + spread_score + depth_score, 2)
 
         return scores
 
@@ -174,8 +171,7 @@ class Scanner:
         """ارائه آمارهای تجمیعی"""
         return {
             "generated": self._generated_count,
-            "filtered": self._filtered_count
-        }
+            "filtered": self._filtered_count}
 
     def reset_stats(self) -> None:
         """بازنشانی آمار"""

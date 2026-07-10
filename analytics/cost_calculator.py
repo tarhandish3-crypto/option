@@ -75,8 +75,8 @@ class IranMarketCostCalculator:
                 qty = int(abs(getattr(leg, 'weight')))
                 c_size = getattr(contract, 'contract_size')
                 entry_p = getattr(leg, 'entry_price', None) or getattr(
-                    contract, 'last_price', 0.0)
-                exit_p = getattr(contract, 'last_price', entry_p)
+                    contract, 'last_price')
+                exit_p = getattr(contract, 'last_price')
 
                 entry_val = entry_p * c_size * qty
                 exit_val = exit_p * c_size * qty

@@ -55,10 +55,12 @@ class DataCleaner:
         # DEBUG_SYMBOls = ['اهرم', 'اخابر']
         DEBUG_SYMBOls = ['اهرم']
         before_debug = len(df)
-        # df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
+        df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
+        df = df[df['Ticker'].isin(['ضهرم4024', 'ضهرم4033'])]
+        
         after_debug = len(df)
 
-        removed_count = original_count - len(df)
+        removed_count = original_count - after_debug
         logger.info(
             f"Cleaning complete: {len(df)} records kept, {removed_count} removed")
 

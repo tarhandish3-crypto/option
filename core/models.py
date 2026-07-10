@@ -507,7 +507,7 @@ class MarketSnapshot:
         for opt in self.option_contracts:
             if not opt.underlying_ticker:
                 continue
-            underlying = self.get_underlying(opt.underlying_ticker)
+            underlying = self.get_underlying_assets(opt.underlying_ticker)
             if underlying:
                 opt.underlying_price = underlying.last_price
 
@@ -525,17 +525,17 @@ class MarketSnapshot:
                 self._options_by_symbol[opt.ticker] = opt
         self._indices_built = True
 
-    def get_options(self, underlying_ticker: str) -> List[OptionContract]:
+    def get_options_by_underlying(self, underlying_ticker: str) -> List[OptionContract]:
         if not self._indices_built:
             self.build_indices()
         return self._options_by_underlying.get(underlying_ticker, [])
 
-    def get_option(self, symbol: str) -> Optional[OptionContract]:
+    def get_options_by_symbol(self, symbol: str) -> Optional[OptionContract]:
         if not self._indices_built:
             self.build_indices()
         return self._options_by_symbol.get(symbol)
 
-    def get_underlying(self, ticker: str) -> Optional[UnderlyingAsset]:
+    def get_underlying_assets(self, ticker: str) -> Optional[UnderlyingAsset]:
         return self.underlying_assets.get(ticker)
 
 

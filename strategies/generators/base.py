@@ -84,15 +84,8 @@ class BaseGenerator(ABC):
         دریافت قیمت پایه بدون لاگ‌گذاری در صورت خطا.
         """
         try:
-            val = underlying.close_price
-            if val > 0.0:
-                return float(val)
             val = underlying.last_price
-            if val > 0.0:
-                return float(val)
-            val = underlying.yesterday_price
-            if val > 0.0:
-                return float(val)
+            return float(val)
         except (AttributeError, TypeError):
             pass
 
