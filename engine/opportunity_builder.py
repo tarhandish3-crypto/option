@@ -71,6 +71,14 @@ class OpportunityBuilder:
 
         metadata = OpportunityBuilder._build_leg_metadata(legs, contract_scores)
 
+        # پیدا کردن اندازه قرارداد معتبر آپشن‌های موجود در استراتژی جهت نرمال‌سازی سهم پایه
+        base_option_size = 1000
+        for leg in legs:
+            if leg.contract and leg.contract.option_type != OptionType.STOCK:
+                if leg.contract.contract_size > 0:
+                    base_option_size = leg.contract.contract_size
+                    break
+
         # ── ۲. واگذاری مطلق محاسبات مارجین به ماژول تخصصی ─────────────────────────
         required_margin = 0.0
         flags = config.get_feature_flags()
@@ -99,7 +107,8 @@ class OpportunityBuilder:
                 spot_price=spot,
                 price_levels=price_levels,
                 required_margin=required_margin,
-                days_to_maturity=days_to_maturity)
+                days_to_maturity=days_to_maturity,
+                base_option_size=base_option_size)
 
             returns_pct = payoff.returns_pct
             max_profit = payoff.max_profit if payoff.max_profit is not None else 0.0

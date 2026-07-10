@@ -56,9 +56,9 @@ class IranMarketCostCalculator:
             cls,
             underlying_symbol: str,
             legs: List[LegDefinition],
-            spot_price: Optional[float] = None,
-            include_clearing: bool = True,
-            include_exercise_tax: bool = True) -> StrategyCosts:
+            spot_price: Optional[float],
+            contract_sizes: np.ndarray,
+            include_clearing: bool = True,) -> StrategyCosts:
         total_entry = 0.0
         total_exit = 0.0
         total_clearing = 0.0
@@ -69,13 +69,13 @@ class IranMarketCostCalculator:
         kind = get_symbol_kind(underlying_symbol)
 
         # محاسبه حجم و کارمزد ورود/خروج پوزیشن‌های اختیار
-        for leg in legs:
+        for idx, leg in enumerate(legs):
             contract = getattr(leg, 'contract', None)
             # 🟢 اصلاح: کارمزدها فقط برای لنگه‌های اختیار محاسبه می‌شوند، نه لنگه دارایی پایه مستقیم
             if contract is not None and contract.option_type != OptionType.STOCK:
                 # 🟢 اصلاح: تغییر فیلد از weight به ratio
                 qty = int(abs(getattr(leg, 'ratio', 1)))
-                c_size = getattr(contract, 'contract_size', 1000) or 1000
+                c_size = contract_sizes[idx]
                 entry_p = getattr(leg, 'entry_price', None) or getattr(
                     contract, 'last_price', 0.0)
                 exit_p = getattr(contract, 'last_price', 0.0)
@@ -94,25 +94,21 @@ class IranMarketCostCalculator:
                 if include_clearing and leg.side == Side.BUY:
                     total_clearing += max(entry_val *
                                           cls.CLEARING_FEE_RATE, cls.CLEARING_FEE_MIN)
+        
+        stock_qty = 0.0
+        for idx, leg in enumerate(legs):
+            if leg.contract and leg.contract.option_type == OptionType.STOCK:
+                # 🟢 نسبت لِگ سهم را در سایز نرمالایز شده موجود در آرایه ضرب می‌کنیم
+                stock_qty += abs(leg.ratio) * contract_sizes[idx]
 
-        # 🟢 اصلاح: تشخیص پوزیشن سهام پایه منطبق بر معماری V5
-        stock_legs = [
-            l for l in legs if l.contract and l.contract.option_type == OptionType.STOCK]
-
-        if stock_legs and spot_price is not None and spot_price > 0:
-            # محاسبه مجموع حجم دارایی پایه پوزیشن
-            stock_qty = sum(abs(leg.ratio)
-                            # 🟢 اصلاح: تغییر فیلد به ratio
-                            for leg in stock_legs)
-
+        if stock_qty > 0 and spot_price is not None and spot_price > 0:
             stock_buy_rate = get_commission_rate(market, kind, True)
             total_underlying_buy = (spot_price * stock_qty) * stock_buy_rate
 
             stock_sell_rate = get_commission_rate(market, kind, False)
             total_underlying_sell = (spot_price * stock_qty) * stock_sell_rate
 
-        total_if_closed = total_entry + total_exit + \
-            total_clearing + total_underlying_buy
+        total_if_closed = total_entry + total_exit + total_clearing + total_underlying_buy
 
         return StrategyCosts(
             option_entry_fees=round(total_entry, 2),

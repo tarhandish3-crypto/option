@@ -3,7 +3,6 @@
 
 """
 ماژول محاسبه وجه تضمین (Margin Required) و کال مارجین بر اساس ضوابط رسمی بورس ایران (سمات)
-کاملاً هماهنگ با معماری V5، مدل‌های Core و ساختار داده اسکنر مرکزی.
 """
 
 import math
@@ -95,8 +94,7 @@ class MarginCalculator:
                 bid=getattr(contract, 'bid', 0.0),
                 ask=getattr(contract, 'ask', 0.0),
                 volume=getattr(contract, 'volume', 0.0),
-                open_interest=getattr(contract, 'open_interest', 0.0)
-            )
+                open_interest=getattr(contract, 'open_interest', 0.0))
 
             side = Side.BUY
             if hasattr(leg, 'side'):
@@ -111,8 +109,7 @@ class MarginCalculator:
                 contract=margin_contract,
                 side=side,
                 ratio=ratio,
-                entry_price=entry_price
-            )
+                entry_price=entry_price)
 
         # حالت دوم: ورودی دیکشنری است (تست‌باکس‌ها / لایه Legacy API)
         elif isinstance(leg, dict):
@@ -134,8 +131,7 @@ class MarginCalculator:
                 bid=leg.get('bid', 0.0),
                 ask=leg.get('ask', 0.0),
                 volume=leg.get('volume', 0.0),
-                open_interest=leg.get('open_interest', 0.0)
-            )
+                open_interest=leg.get('open_interest', 0.0))
 
             is_buy = leg.get('is_buy', True) if 'is_buy' in leg else (
                 leg.get('side') == Side.BUY or leg.get('weight', 1) > 0)
@@ -146,8 +142,7 @@ class MarginCalculator:
                 contract=margin_contract,
                 side=side,
                 ratio=ratio,
-                entry_price=leg.get('entry_price', leg.get('premium', 0.0))
-            )
+                entry_price=leg.get('entry_price', leg.get('premium', 0.0)))
 
         else:
             raise TypeError(f"نوع لگ ارسالی پشتیبانی نمی‌شود: {type(leg)}")
@@ -249,9 +244,7 @@ class MarginCalculator:
     def _calculate_spread_margin(
             cls,
             buy_leg: LegDefinition,
-            sell_leg: LegDefinition,
-            underlying_price: float,
-            asset_type: Optional[str] = None) -> Optional[MarginResult]:
+            sell_leg: LegDefinition,) -> Optional[MarginResult]:
         if buy_leg.contract.option_type != sell_leg.contract.option_type:
             return None
 
@@ -277,8 +270,7 @@ class MarginCalculator:
                 strategy_type="debit_spread",
                 is_spread=True,
                 net_premium=net_premium,
-                premium_effect=0.0
-            )
+                premium_effect=0.0)
 
         is_credit_call = (sell_leg.contract.option_type == OptionType.CALL and buy_leg.contract.strike_price > sell_leg.contract.strike_price)
         is_credit_put = (sell_leg.contract.option_type == OptionType.PUT and buy_leg.contract.strike_price < sell_leg.contract.strike_price)
@@ -291,8 +283,7 @@ class MarginCalculator:
                 strategy_type="credit_spread",
                 is_spread=True,
                 net_premium=net_premium,
-                premium_effect=-net_premium if net_premium > 0 else 0.0
-            )
+                premium_effect=-net_premium if net_premium > 0 else 0.0)
 
         return None
 
@@ -316,8 +307,7 @@ class MarginCalculator:
             margin_info = cls.calculate_contract_margin(
                 contract=leg.contract,
                 underlying_price=underlying_price,
-                asset_type=asset_type
-            )
+                asset_type=asset_type)
 
             leg_initial = margin_info["initial_margin"] * abs_ratio
             leg_required = margin_info["required_margin"] * abs_ratio
@@ -346,9 +336,7 @@ class MarginCalculator:
     @classmethod
     def _calculate_iron_condor_margin(
             cls,
-            legs: List[LegDefinition],
-            underlying_price: float,
-            asset_type: Optional[str] = None) -> Optional[MarginResult]:
+            legs: List[LegDefinition],) -> Optional[MarginResult]:
         if len(legs) != 4:
             return None
 
@@ -389,8 +377,7 @@ class MarginCalculator:
 
         net_premium = sum(
             (1 if leg.side == Side.BUY else -1) * leg.ratio * leg.entry_price * leg.contract.contract_size
-            for leg in legs
-        )
+            for leg in legs)
 
         return MarginResult(
             initial_margin=max_risk,
@@ -403,8 +390,7 @@ class MarginCalculator:
                 'call_spread_risk': call_risk,
                 'put_spread_risk': put_risk,
                 'max_risk': max_risk
-            }
-        )
+            })
 
     # ============================================================
     # بخش ۲-۷: محاسبه مارجین Butterfly
@@ -413,9 +399,7 @@ class MarginCalculator:
     @classmethod
     def _calculate_butterfly_margin(
             cls,
-            legs: List[LegDefinition],
-            underlying_price: float,
-            asset_type: Optional[str] = None) -> Optional[MarginResult]:
+            legs: List[LegDefinition],) -> Optional[MarginResult]:
         if len(legs) != 3:
             return None
 
@@ -438,8 +422,7 @@ class MarginCalculator:
 
         net_premium = sum(
             (1 if leg.side == Side.BUY else -1) * leg.ratio * leg.entry_price * leg.contract.contract_size
-            for leg in legs
-        )
+            for leg in legs)
 
         return MarginResult(
             initial_margin=spread_width,
@@ -451,8 +434,7 @@ class MarginCalculator:
             breakdown={
                 'spread_width': spread_width,
                 'strikes': strikes
-            }
-        )
+            })
 
     # ============================================================
     # بخش ۲-۸: تابع هماهنگ‌کننده اصلی اسکنر (V5 Master Interface)
@@ -493,8 +475,7 @@ class MarginCalculator:
                 strategy_type="long_only",
                 is_covered=False,
                 is_spread=False,
-                net_premium=net_premium
-            )
+                net_premium=net_premium)
 
         if stock_legs:
             naked_put_sells = [l for l in sell_legs if l.contract.option_type == OptionType.PUT]
@@ -504,19 +485,18 @@ class MarginCalculator:
                     required_margin=0.0,
                     strategy_type="covered_call",
                     is_covered=True,
-                    net_premium=net_premium
-                )
+                    net_premium=net_premium)
 
-        iron_condor = cls._calculate_iron_condor_margin(option_legs, underlying_price, asset_type)
+        iron_condor = cls._calculate_iron_condor_margin(option_legs)
         if iron_condor:
             return iron_condor
 
-        butterfly = cls._calculate_butterfly_margin(option_legs, underlying_price, asset_type)
+        butterfly = cls._calculate_butterfly_margin(option_legs)
         if butterfly:
             return butterfly
 
         if len(buy_legs) == 1 and len(sell_legs) == 1:
-            spread_result = cls._calculate_spread_margin(buy_legs[0], sell_legs[0], underlying_price, asset_type)
+            spread_result = cls._calculate_spread_margin(buy_legs[0], sell_legs[0])
             if spread_result:
                 return spread_result
 
@@ -542,8 +522,7 @@ class MarginCalculator:
         total_option_buy_cost = sum(
             l.entry_price * l.contract.contract_size * l.ratio
             for l in prepared_legs
-            if l.side == Side.BUY and l.contract.option_type != OptionType.STOCK
-        )
+            if l.side == Side.BUY and l.contract.option_type != OptionType.STOCK)
 
         capital_required = result.required_margin + max(0.0, total_option_buy_cost)
 

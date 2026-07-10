@@ -64,7 +64,8 @@ class IranMarketPayoffCalculator:
             spot_price: float,
             price_levels: Optional[np.ndarray],
             required_margin: float,
-            days_to_maturity: float) -> PayoffAnalysis:
+            days_to_maturity: float,
+            base_option_size: float,) -> PayoffAnalysis:
         """
         محاسبه برداری بازدهی خالص و ناخالص و تبدیل به درصد بازدهی ماهانه بر اساس Capital Base واقعی بورس ایران
         """
@@ -77,14 +78,6 @@ class IranMarketPayoffCalculator:
         sides = np.zeros(num_legs, dtype=np.int32)
         contract_sizes = np.zeros(num_legs, dtype=np.int32)
         has_contract = np.zeros(num_legs, dtype=np.int32)
-
-        # پیدا کردن اندازه قرارداد معتبر آپشن‌های موجود در استراتژی جهت نرمال‌سازی سهم پایه
-        base_option_size = 1000 
-        for leg in legs:
-            if leg.contract and leg.contract.option_type != OptionType.STOCK:
-                if leg.contract.contract_size > 0:
-                    base_option_size = leg.contract.contract_size
-                    break
 
         # ✅ استخراج اطلاعات به صورت ایمن
         for idx, leg in enumerate(legs):
@@ -123,8 +116,8 @@ class IranMarketPayoffCalculator:
         if flags.get("apply_commissions", True) and underlying_ticker:
             strategy_costs = IranMarketCostCalculator.calculate_strategy_costs(
                 underlying_symbol=underlying_ticker,
-                legs=legs,
-                spot_price=spot_price)
+                legs=legs, spot_price=spot_price, contract_sizes=contract_sizes)
+            
             net_profits_closed = gross_profits - strategy_costs.total_if_closed
             option_fees = strategy_costs.option_entry_fees + \
                 strategy_costs.clearing_fees + strategy_costs.underlying_buy_fees
