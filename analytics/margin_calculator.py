@@ -484,8 +484,7 @@ class MarginCalculator:
         # محاسبه ایمن نت‌پرمیوم کل استراتژی بر مبنای خرید/فروش موقعیت‌ها
         net_premium = sum(
             (1 if l.side == Side.BUY else -1) * l.ratio * l.entry_price * l.contract.contract_size
-            for l in prepared_legs
-        )
+            for l in prepared_legs)
 
         if not sell_legs:
             return MarginResult(

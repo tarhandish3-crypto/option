@@ -81,15 +81,14 @@ class OpportunityBuilder:
                     margin_result = MarginCalculator.calculate_strategy_margin(
                         legs=valid_legs,
                         underlying_price=spot,
-                        underlying_symbol=underlying.ticker,
-                    )
+                        underlying_symbol=underlying.ticker,)
                     required_margin = float(margin_result.required_margin) if hasattr(margin_result, 'required_margin') else float(margin_result or 0.0)
             except Exception as e:
                 logger.debug(f"Margin calculation failed via MarginCalculator: {e}")
 
         # ── ۳. واگذاری نمره‌دهی نقدشوندگی و اجرا به ماژول تخصصی scoring ──────────────────
         liquidity_score = LiquidityScorer.score_strategy(legs, contract_scores)
-        execution_score = liquidity_score  
+        execution_score = LiquidityScorer.execution_score(legs)
 
         # ── ۴. واگذاری مطلق محاسبات P&L و سود ماهانه به ماژول تخصصی ───────────────
         try:
@@ -100,8 +99,7 @@ class OpportunityBuilder:
                 spot_price=spot,
                 price_levels=price_levels,
                 required_margin=required_margin,
-                days_to_maturity=days_to_maturity
-            )
+                days_to_maturity=days_to_maturity)
 
             returns_pct = payoff.returns_pct
             max_profit = payoff.max_profit if payoff.max_profit is not None else 0.0

@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List
 
 from core.models import Opportunity, StrategyClassification
 from core.enums import OptionType, Side, MarketType, RiskLevel, InvestorProfile
@@ -30,7 +30,7 @@ class StrategyClassifier:
         """
         for opp in opportunities:
             cls.classify(opp)
-        logger.info(f"🏷️ تعداد {len(opportunities)} موقعیت معاملاتی با موفقیت برچسب‌گذاری فازی شدند.")
+        logger.info(f"تعداد {len(opportunities)} موقعیت معاملاتی با موفقیت برچسب‌گذاری فازی شدند.")
         return opportunities
 
     @classmethod

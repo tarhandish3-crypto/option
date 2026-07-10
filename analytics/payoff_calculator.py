@@ -78,6 +78,14 @@ class IranMarketPayoffCalculator:
         contract_sizes = np.zeros(num_legs, dtype=np.int32)
         has_contract = np.zeros(num_legs, dtype=np.int32)
 
+        # پیدا کردن اندازه قرارداد معتبر آپشن‌های موجود در استراتژی جهت نرمال‌سازی سهم پایه
+        base_option_size = 1000 
+        for leg in legs:
+            if leg.contract and leg.contract.option_type != OptionType.STOCK:
+                if leg.contract.contract_size > 0:
+                    base_option_size = leg.contract.contract_size
+                    break
+
         # ✅ استخراج اطلاعات به صورت ایمن
         for idx, leg in enumerate(legs):
             weights[idx] = leg.ratio
@@ -89,12 +97,16 @@ class IranMarketPayoffCalculator:
                 entry_prices[idx] = leg.entry_price or getattr(
                     contract, 'mid_price', 0.0) or contract.last_price
                 option_types[idx] = contract.option_type.value
-                contract_sizes[idx] = contract.contract_size
                 has_contract[idx] = 1
+                if contract.option_type == OptionType.STOCK:
+                    contract_sizes[idx] = base_option_size
+                else:
+                    contract_sizes[idx] = contract.contract_size
+                
             else:
                 entry_prices[idx] = spot_price
                 option_types[idx] = OptionType.STOCK.value
-                contract_sizes[idx] = 1
+                contract_sizes[idx] = base_option_size
 
         # ✅ محاسبه P&L ناخالص مطلق ریالی کل موقعیت
         gross_profits = calc_pure_gross_payoff_numba(

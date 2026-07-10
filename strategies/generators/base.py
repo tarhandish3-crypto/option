@@ -8,9 +8,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Iterator
+from typing import Dict, Iterator
 
-from core.models import UnderlyingAsset, Opportunity, LegDefinition
+from core.models import UnderlyingAsset, Opportunity
 from strategies.base import StrategyDefinition
 from strategies.matching.contract_index import ContractIndex
 
@@ -48,36 +48,6 @@ class BaseGenerator(ABC):
     # ============================================================
     # HOT PATH METHODS (ZERO ALLOCATION & NO I/O)
     # ============================================================
-
-    def _calculate_liquidity_score(
-            self,
-            legs: List[LegDefinition],
-            contract_scores: Dict[str, float]) -> float:
-        """
-        محاسبه امتیاز نقدشوندگی بدون round و بدون List Comprehension.
-        """
-        if not legs:
-            return 0.0
-
-        total_score = 0.0
-        min_score = float('inf')
-        count = 0
-        get_score = contract_scores.get
-
-        for leg in legs:
-            contract = leg.contract
-            if contract is not None and contract.ticker:
-                score = get_score(contract.ticker, 0.0)
-                total_score += score
-                if score < min_score:
-                    min_score = score
-                count += 1
-
-        if count == 0:
-            return 100.0
-
-        # بازگشت خام (بدون round) - انتقال بار پردازشی به لایه Scoring
-        return (min_score * 0.70) + ((total_score / count) * 0.30)
 
     def _get_S0_stock(self, underlying: UnderlyingAsset) -> float:
         """

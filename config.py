@@ -174,7 +174,7 @@ HISTORICAL_VOLATILITY_WINDOW = 30  # پنجره محاسبه نوسان تاری
 # تنظیمات کش (Cache Settings)
 # =====================================================
 
-CACHE_TTL_SECONDS = 600           # زمان انقضای کش (ثانیه)
+CACHE_TTL_SECONDS = 6000           # زمان انقضای کش (ثانیه)
 MAX_CACHE_SIZE = 30000           # حداکثر تعداد آیتم‌های کش
 CACHE_ENABLED = True             # فعال/غیرفعال کردن کش
 
