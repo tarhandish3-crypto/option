@@ -145,7 +145,7 @@ SYMBOL_INFO = {
 PRICE_RANGE_CONFIG = {
     "min_percent": -50,          # حداقل درصد تغییر قیمت
     "max_percent": 50,           # حداکثر درصد تغییر قیمت
-    "num_points": 21,            # تعداد نقاط (گام‌ها)
+    "num_points": 1,            # تعداد نقاط (گام‌ها)
     "step_size": None,           # اگر None باشد، بر اساس num_points محاسبه می‌شود
     "labels_format": "{:.0f}%",  # فرمت برچسب‌ها
 }
@@ -468,9 +468,9 @@ def get_fee_config() -> Dict[str, Any]:
 
 
 def get_commission_rate(
-    market: str,
-    asset_type: str,
-    is_buy: bool) -> float:
+        market: str,
+        asset_type: str,
+        is_buy: bool) -> float:
     """
     دریافت نرخ کارمزد بر اساس نوع بازار و دارایی
     """
@@ -515,6 +515,9 @@ def get_price_steps() -> np.ndarray:
     min_pct = config["min_percent"]
     max_pct = config["max_percent"]
     num_points = config["num_points"]
+
+    if num_points <= 1:
+        return np.array([0.0], dtype=np.float64)
 
     step_size = config.get("step_size")
     if step_size is not None:

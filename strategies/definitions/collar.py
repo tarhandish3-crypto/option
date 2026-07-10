@@ -7,17 +7,16 @@ from strategies.base import StrategyDefinition, GeneratorType
 
 DEFINITION = StrategyDefinition(
     name="collar",
-    generator_type=GeneratorType.THREE_LEG,   # سهم پایه + پوت + کال → سه لگ
-    include_stock=True,
+    generator_type=GeneratorType.THREE_LEG,
 
     patterns=(
-        # لگ ۱: خرید سهم پایه (توسط ThreeLegGenerator از طریق include_stock مدیریت می‌شود)
+        # لگ ۱: خرید سهم پایه
         StrategyLegPattern(
             option_type=OptionType.STOCK,
             side=Side.BUY,
             ratio=1,
         ),
-        # لگ ۲: خرید Put — کف حمایتی
+        # لگ ۲: خرید Put — کف حمایتی (K1)
         StrategyLegPattern(
             option_type=OptionType.PUT,
             side=Side.BUY,
@@ -25,7 +24,7 @@ DEFINITION = StrategyDefinition(
             strike_group="K1",
             maturity_group="M1",
         ),
-        # لگ ۳: فروش Call — سقف و تامین هزینه
+        # لگ ۳: فروش Call — سقف قیمت (K2 > K1)
         StrategyLegPattern(
             option_type=OptionType.CALL,
             side=Side.SELL,
@@ -35,10 +34,10 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Collar Strategy - Long Stock + Long Put + Short Call (Zero-Cost or Low-Cost Hedge)",
+    description="Collar - Long Stock + Long Put + Short Call (Hedge Strategy)",
     rules={
-        "strike_order": "ascending",   # K1 (Put) < K2 (Call)
         "maturity_order": "same",
-        "min_strike_gap_pct": 0.03,    # حداقل فاصله بین strikeها
+        "strike_order": "ascending",
+        "min_strike_gap_pct": 0.03,
     },
 )

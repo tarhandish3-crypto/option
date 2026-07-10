@@ -11,7 +11,7 @@ from core.enums import Side, OptionType
 from analytics.cost_calculator import IranMarketCostCalculator
 
 
-@njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 def calc_pure_gross_payoff_numba(
         price_levels: np.ndarray,
         weights: np.ndarray,

@@ -1,22 +1,22 @@
 # strategies/definitions/covered_call.py
 # -*- coding: utf-8 -*-
 
-"""
-تعریف استراتژی Covered Call (خرید سهم پایه + فروش اختیار خرید).
-این ماژول ساختار الگوها و فیلترهای اولیه قیمت اعمال را برای StockOptionGenerator مشخص می‌کند.
-"""
-
 from core.enums import Side, OptionType
 from core.models import StrategyLegPattern
 from strategies.base import StrategyDefinition, GeneratorType
 
 DEFINITION = StrategyDefinition(
     name="covered_call",
-    generator_type=GeneratorType.STOCK_OPTION,
-    include_stock=True,
+    generator_type=GeneratorType.TWO_LEG,
 
     patterns=(
-        # لنگه اختیار معامله: فروش Call جهت کسب پرمیوم
+        # لگ ۱: خرید سهم پایه
+        StrategyLegPattern(
+            option_type=OptionType.STOCK,
+            side=Side.BUY,
+            ratio=1,
+        ),
+        # لگ ۲: فروش Call (ATM/OTM)
         StrategyLegPattern(
             option_type=OptionType.CALL,
             side=Side.SELL,
@@ -24,15 +24,11 @@ DEFINITION = StrategyDefinition(
             strike_group="K1",
             maturity_group="M1",
         ),
-        # لنگه دارایی پایه (Stock) به صورت داینامیک توسط StockOptionGenerator در موتور تزریق می‌شود.
     ),
 
-    description="Covered Call - Long Stock + Short Call (Income Generation Strategy for Tehran Option Market)",
-
+    description="Covered Call - Long Stock + Short Call (Income Generation)",
     rules={
-        # فیلتر اعمال: اختیار خرید باید حوالی قیمت سهم یا بالاتر از آن (ATM / OTM) فروخته شود.
-        "strike_above_spot": True,
         "maturity_order": "same",
-        "min_strike_gap_pct": 0.0,
+        "strike_above_spot": True,
     },
 )

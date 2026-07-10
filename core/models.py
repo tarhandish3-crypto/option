@@ -263,9 +263,7 @@ class OpportunityCandidate:
             tuple(
                 (leg.contract.ticker, leg.contract.strike_price,
                  leg.contract.days_to_maturity, leg.side, leg.ratio)
-                for leg in self.legs if leg.contract
-            )
-        )
+                for leg in self.legs if leg.contract))
 
 
 # =====================================================
@@ -467,8 +465,7 @@ class MarketSnapshot:
 
             underlyings[ticker_str] = UnderlyingAsset(
                 ticker=ticker_str, name=name, last_price=underlying_price,
-                close_price=underlying_price, market=market, asset_type=asset_type, yesterday_price=underlying_price
-            )
+                close_price=underlying_price, market=market, asset_type=asset_type, yesterday_price=underlying_price)
         return underlyings
 
     @classmethod
@@ -491,8 +488,7 @@ class MarketSnapshot:
             open_interest=int(row.get('OpenPositions', 0)) if pd.notna(
                 row.get('OpenPositions')) else 0,
             value=cls._clean_float(row.get('Value')), instrument_code=str(row.get('InstrumentCode', '')),
-            instrument_code_ua=str(row.get('InstrumentCode-UA', ''))
-        )
+            instrument_code_ua=str(row.get('InstrumentCode-UA', '')))
 
     @staticmethod
     def _clean_float(val) -> float:

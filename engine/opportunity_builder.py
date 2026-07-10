@@ -1,14 +1,17 @@
 # engine/opportunity_builder.py
 # -*- coding: utf-8 -*-
 
+"""
+OpportunityBuilder — تنها منبع ساخت LegDefinition‌ها و شیء Opportunity.
+"""
+
 from __future__ import annotations
 
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from core.models import Opportunity, LegDefinition
-from core.models import OptionContract as OC
+from core.models import Opportunity, LegDefinition, OptionContract, UnderlyingAsset
 from core.enums import Side, OptionType
 from scoring.liquidity_score import LiquidityScorer
 from analytics.margin_calculator import MarginCalculator, MarginResult
@@ -19,9 +22,104 @@ logger = logging.getLogger("OptionScanner.Engine.OpportunityBuilder")
 
 class OpportunityBuilder:
     """
-    کارخانه پیشرفته و صنعتی تبدیل لنگه‌های ساختاریافته به شیء نهایی Opportunity
-    با اعمال ضریب قرارداد بورس تهران، فیلترینگ هوشمند سهم پایه و نگاشت مستقیم ماتریس ریسک.
+    کارخانه واحد ساخت Opportunity از contracts خام + strategy patterns.
+    هیچ لگی در جای دیگری ساخته نمی‌شود.
     """
+
+    @staticmethod
+    def build_opportunity(
+        strategy_def: Any,
+        underlying: UnderlyingAsset,
+        matched_contracts: List[OptionContract],
+        contract_scores: Dict[str, float],
+        underlying_price: Optional[float] = None,) -> Optional[Opportunity]:
+        """
+        متد واحد ساخت Opportunity.
+
+        پارامترها:
+        - strategy_def:      تعریف استراتژی (شامل patterns با Side، ratio)
+        - underlying:        دارایی پایه
+        - matched_contracts: لیست OptionContract خام از PatternMatcher
+                             (یک به ازای هر pattern، به همان ترتیب)
+        - contract_scores:   امتیاز نقدشوندگی کانتراکت‌ها
+        - underlying_price:  قیمت پایه (اگر None، از underlying گرفته می‌شود)
+
+        خروجی:
+        - Opportunity با legs منسجم، بدون هیچ تکراری
+        """
+        patterns = strategy_def.patterns
+        if not matched_contracts or len(matched_contracts) != len(patterns):
+            logger.debug(
+                f"build_opportunity: mismatch contracts={len(matched_contracts)} "
+                f"patterns={len(patterns)} for {strategy_def.name}"
+            )
+            return None
+
+        spot = underlying_price
+        if spot is None or spot <= 0:
+            spot = underlying.last_price if underlying.last_price > 0 else underlying.close_price
+
+        # ── ساخت LegDefinitions — تنها منبع ──────────────────────────────
+        legs: List[LegDefinition] = []
+        days_to_maturity = 0
+
+        for contract, pattern in zip(matched_contracts, patterns):
+            # محاسبه entry_price بر اساس جهت معامله
+            if contract.option_type == OptionType.STOCK:
+                ep = contract.last_price or spot
+            elif pattern.side == Side.BUY:
+                ep = contract.ask if contract.ask > 0 else contract.last_price
+            else:
+                ep = contract.bid if contract.bid > 0 else contract.last_price
+
+            legs.append(LegDefinition(
+                side=pattern.side,
+                ratio=pattern.ratio,
+                contract=contract,
+                entry_price=ep,
+            ))
+
+            # DTE از اولین لگ آپشن واقعی
+            if days_to_maturity == 0 and contract.option_type != OptionType.STOCK:
+                days_to_maturity = contract.days_to_maturity
+
+        # ── محاسبات مالی ─────────────────────────────────────────────────
+        total_premium = OpportunityBuilder._calculate_total_premium(legs)
+
+        try:
+            margin_result = OpportunityBuilder._calculate_required_margin(
+                legs, spot, underlying.ticker
+            )
+            if margin_result is None:
+                required_margin = 0.0
+            elif hasattr(margin_result, 'required_margin'):
+                required_margin = float(margin_result.required_margin)
+            else:
+                required_margin = float(margin_result)
+        except Exception as e:
+            logger.debug(f"Margin calculation failed for {strategy_def.name}: {e}")
+            required_margin = 0.0
+
+        liquidity_score = OpportunityBuilder._calculate_liquidity_score(legs)
+        execution_score = OpportunityBuilder._calculate_execution_score(legs)
+        metadata = OpportunityBuilder._build_leg_metadata(legs, contract_scores)
+
+        return Opportunity(
+            strategy_name=strategy_def.name,
+            underlying_ticker=underlying.ticker,
+            legs=legs,
+            S0_stock=spot,
+            days_to_maturity=days_to_maturity,
+            net_premium=total_premium,
+            required_margin=required_margin,
+            liquidity_score=liquidity_score,
+            execution_score=execution_score,
+            metadata=metadata,
+            timestamp=datetime.now(),)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # متد legacy برای سازگاری با FourLegGenerator (create_opportunity)
+    # ──────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def create_opportunity(
@@ -31,19 +129,12 @@ class OpportunityBuilder:
         days_to_maturity: int,
         metrics: Optional[Dict[str, Any]] = None,
         underlying_price: float = 0.0,
-        break_even_points: Optional[List[float]] = None
-    ) -> Opportunity:
-        """
-        ساخت، محاسبه و تنظیم فیلدهای تخت و ساختاریافته مدل Opportunity
-        """
+        break_even_points: Optional[List[float]] = None,) -> Optional[Opportunity]:
+        """Legacy — فقط توسط FourLegGenerator استفاده می‌شود. در آینده حذف خواهد شد."""
         metadata = metrics or {}
-
-        # ۱. محاسبه کل حق بیمه واقعی با احتساب Contract Size بورس ایران
         total_premium = OpportunityBuilder._calculate_total_premium(legs)
 
-        # ۲. محاسبه وجه تضمین کل — مقدار float استخراج می‌شود، نه شیء MarginResult
-        margin_result = OpportunityBuilder._calculate_required_margin(
-            legs, underlying_price)
+        margin_result = OpportunityBuilder._calculate_required_margin(legs, underlying_price)
         if margin_result is None:
             required_margin = 0.0
         elif hasattr(margin_result, 'required_margin'):
@@ -51,412 +142,134 @@ class OpportunityBuilder:
         else:
             required_margin = float(margin_result)
 
-        # ۳. محاسبه امتیاز نقدشوندگی
         liquidity_score = OpportunityBuilder._calculate_liquidity_score(legs)
-
-        # ۴. محاسبه امتیاز قابلیت اجرا (بدون دخالت دادن حجم سهم پایه)
         execution_score = OpportunityBuilder._calculate_execution_score(legs)
 
-        # ۵. استخراج نقاط سربه‌سر
         if break_even_points is None:
             break_even_points = metadata.get("break_even_points", [])
 
-        # ۶. کپسوله‌سازی و ساخت فرصت معاملاتی با فیلدهای کاملاً تخت
-        opp = Opportunity(
+        return Opportunity(
             strategy_name=strategy_name,
             underlying_ticker=ticker,
             legs=legs,
             days_to_maturity=days_to_maturity,
             timestamp=datetime.now(),
-
-            # معیارهای مالی و سرمایه‌ای واقعی
             required_margin=required_margin,
             net_premium=total_premium,
-
-            # فیلدهای تخت شده محاسباتی
             max_profit=metadata.get("max_profit", 0.0),
             max_loss=metadata.get("max_loss", 0.0),
             pop=metadata.get("pop", 0.0),
             risk_reward_ratio=metadata.get("risk_reward_ratio", 0.0),
             expected_return_pct=metadata.get("expected_return_pct", 0.0),
-
-            # معیارهای ریسک و عملیات بازار
             liquidity_score=liquidity_score,
             execution_score=execution_score,
-
-            # داده‌های جانبی و یونانی‌ها
             metadata=metadata,
             break_even_points=break_even_points,
-
-            # رتبه و امتیاز نهایی پیش‌فرض
             final_score=0.0,
-            rank=0
+            rank=0,
         )
 
-        return opp
-
-    # ============================================================
-    # ✅ متدهای جدید برای ژنراتورهای تخصصی
-    # ============================================================
-
-    @staticmethod
-    def create_2leg_opportunity(
-        strategy_def: Any,
-        underlying: Any,
-        legs: List[LegDefinition],
-        days_to_maturity: int,
-        contract_scores: Dict[str, float],
-        include_stock: bool = False,
-        underlying_price: Optional[float] = None
-    ) -> Optional[Opportunity]:
-        """
-        ساخت فرصت معاملاتی برای استراتژی‌های ۲ یا چند لگی.
-        نام متد به دلایل سازگاری حفظ شده اما چک تعداد لگ حذف شده تا
-        create_3leg_opportunity نیز بتواند از آن استفاده کند.
-
-        Args:
-            strategy_def: تعریف استراتژی
-            underlying: دارایی پایه
-            legs: لیست لگ‌ها (۲ یا بیشتر)
-            days_to_maturity: روز تا سررسید
-            contract_scores: امتیازات نقدشوندگی
-            include_stock: آیا شامل سهام است؟
-            underlying_price: قیمت دارایی پایه (اختیاری)
-
-        Returns:
-            Optional[Opportunity]: فرصت معاملاتی یا None
-        """
-        if not legs:
-            logger.debug("create_2leg_opportunity: لیست لگ‌ها خالی است")
-            return None
-
-        # تنظیم قیمت پایه
-        if underlying_price is None:
-            underlying_price = underlying.last_price if hasattr(
-                underlying, 'last_price') else 0.0
-
-        # دریافت نام استراتژی
-        strategy_name = strategy_def.name if hasattr(
-            strategy_def, 'name') else "unknown"
-
-        # دریافت تیکر
-        ticker = underlying.ticker if hasattr(underlying, 'ticker') else ""
-
-        # اگر استراتژی نیاز به لگ سهام دارد و هیچ لگ سهامی در لیست نیست، آن را اضافه می‌کنیم
-        has_stock_leg = any(
-            leg.contract and leg.contract.option_type.value == "Stock"
-            for leg in legs
-        )
-        if include_stock and not has_stock_leg and underlying_price > 0:
-            from core.models import OptionContract as OC
-            from core.enums import OptionType as OT, Side as SD
-            stock_contract = OC(
-                ticker=ticker,
-                name=getattr(underlying, 'name', ticker),
-                underlying_ticker=ticker,
-                option_type=OT.STOCK,
-                strike_price=underlying_price,
-                contract_size=1,
-                last_price=underlying_price,
-                underlying_price=underlying_price,
-            )
-            stock_leg = LegDefinition(
-                contract=stock_contract,
-                side=SD.BUY,
-                ratio=1,
-                entry_price=underlying_price,
-            )
-            legs = [stock_leg] + list(legs)
-
-        # ۱. محاسبه کل حق بیمه
-        total_premium = OpportunityBuilder._calculate_total_premium(legs)
-
-        # ۲. محاسبه وجه تضمین — مقدار float استخراج می‌شود، نه شیء MarginResult
-        try:
-            margin_result = OpportunityBuilder._calculate_required_margin(
-                legs, underlying_price, ticker
-            )
-            if margin_result is None:
-                required_margin = 0.0
-            elif hasattr(margin_result, 'required_margin'):
-                required_margin = float(margin_result.required_margin)
-            else:
-                required_margin = float(margin_result)
-        except Exception as e:
-            logger.debug(f"Margin calculation failed: {e}")
-            required_margin = 0.0
-
-        # ۳. محاسبه نقدشوندگی
-        liquidity_score = OpportunityBuilder._calculate_liquidity_score(legs)
-
-        # ۴. محاسبه امتیاز اجرا
-        execution_score = OpportunityBuilder._calculate_execution_score(legs)
-
-        # ۵. ساخت متادیتا
-        metadata = OpportunityBuilder._build_leg_metadata(
-            legs, contract_scores)
-
-        # ۶. ساخت فرصت
-        opp = Opportunity(
-            strategy_name=strategy_name,
-            underlying_ticker=ticker,
-            legs=legs,
-            S0_stock=underlying_price,
-            days_to_maturity=days_to_maturity,
-            net_premium=total_premium,
-            required_margin=required_margin,
-            liquidity_score=liquidity_score,
-            execution_score=execution_score,
-            metadata=metadata,
-            timestamp=datetime.now()
-        )
-
-        return opp
-
-    @staticmethod
-    def create_3leg_opportunity(
-        strategy_def: Any,
-        underlying: Any,
-        legs: List[LegDefinition],
-        days_to_maturity: int,
-        contract_scores: Dict[str, float],
-        include_stock: bool = False,
-        underlying_price: Optional[float] = None
-    ) -> Optional[Opportunity]:
-        """
-        ساخت فرصت معاملاتی برای استراتژی‌های ۳ لگی
-        """
-        if not legs or len(legs) != 3:
-            logger.debug("create_3leg_opportunity: نیاز به ۳ لگ دارد")
-            return None
-
-        return OpportunityBuilder.create_2leg_opportunity(
-            strategy_def=strategy_def,
-            underlying=underlying,
-            legs=legs,
-            days_to_maturity=days_to_maturity,
-            contract_scores=contract_scores,
-            include_stock=include_stock,
-            underlying_price=underlying_price
-        )
-
-    @staticmethod
-    def create_stock_option_opportunity(
-        strategy_def: Any,
-        underlying: Any,
-        option_leg_data: Any,
-        spot_price: float,
-        contract_scores: Dict[str, float],
-        # پارامتر قدیمی برای سازگاری با کدهای احتمالی دیگر
-        option_leg: Any = None,
-    ) -> Optional[Opportunity]:
-        """
-        ساخت فرصت معاملاتی برای استراتژی‌های Stock + Option (Covered Call / Married Put)
-
-        Args:
-            strategy_def: تعریف استراتژی
-            underlying: دارایی پایه
-            option_leg_data: داده لگ اختیار معامله (OptionLegData یا LegDefinition)
-            spot_price: قیمت لحظه‌ای دارایی پایه
-            contract_scores: امتیازات نقدشوندگی
-            option_leg: نام قدیمی — در صورت ارائه جایگزین option_leg_data می‌شود
-
-        Returns:
-            Optional[Opportunity]: فرصت معاملاتی یا None
-        """
-
-        # پشتیبانی از هر دو نام پارامتر
-        raw_leg = option_leg if option_leg is not None else option_leg_data
-
-        # تبدیل OptionLegData به LegDefinition در صورت لزوم
-        if isinstance(raw_leg, LegDefinition):
-            leg_obj = raw_leg
-        else:
-            # OptionLegData (dataclass با فیلدهای contract, side, ratio, entry_price)
-            leg_obj = LegDefinition(
-                contract=raw_leg.contract,
-                side=raw_leg.side,
-                ratio=raw_leg.ratio,
-                entry_price=raw_leg.entry_price,
-            )
-
-        # ساخت لگ سهام مجازی
-        stock_contract = OC(
-            ticker=underlying.ticker,
-            name=underlying.name,
-            underlying_ticker=underlying.ticker,
-            option_type=OptionType.STOCK,
-            strike_price=spot_price,
-            contract_size=1,
-            last_price=spot_price,
-            underlying_price=spot_price,
-        )
-
-        stock_leg = LegDefinition(
-            contract=stock_contract,
-            side=Side.BUY,
-            ratio=1,
-            entry_price=spot_price,
-        )
-
-        legs = [stock_leg, leg_obj]
-
-        return OpportunityBuilder.create_2leg_opportunity(
-            strategy_def=strategy_def,
-            underlying=underlying,
-            legs=legs,
-            days_to_maturity=leg_obj.contract.days_to_maturity if leg_obj.contract else 0,
-            contract_scores=contract_scores,
-            include_stock=True,
-            underlying_price=spot_price
-        )
-
-    # ============================================================
-    # PRIVATE HELPERS
-    # ============================================================
+    # ──────────────────────────────────────────────────────────────────────
+    # Private helpers
+    # ──────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _calculate_total_premium(legs: List[LegDefinition]) -> float:
-        """
-        محاسبه کل ارزش ریالی حق بیمه استراتژی بر اساس فرآیند عرضه و تقاضا و اندازه قرارداد.
-        """
         total = 0.0
         for leg in legs:
             contract = leg.contract
-
             if not contract:
-                logger.warning(
-                    "لنگه معاملاتی فاقد ابزار کانتراکت کپسوله‌شده است. لنگه نادیده گرفته شد.")
                 continue
-
-            # استخراج ضریب قرارداد
             size = getattr(contract, "contract_size", 1) or 1
-
-            # تعیین قیمت لنگه بر اساس عرضه/تقاضا
             if contract.option_type == OptionType.STOCK:
-                entry_price = contract.last_price
+                ep = contract.last_price
+            elif leg.side == Side.BUY:
+                ep = contract.ask if contract.ask > 0 else contract.last_price
             else:
-                if leg.side == Side.BUY:
-                    entry_price = contract.ask if contract.ask > 0 else contract.last_price
-                else:
-                    entry_price = contract.bid if contract.bid > 0 else contract.last_price
-
-            premium_value = entry_price * size * leg.ratio
-
-            if leg.side == Side.BUY:
-                total += premium_value
-            else:
-                total -= premium_value
-
+                ep = contract.bid if contract.bid > 0 else contract.last_price
+            value = ep * size * leg.ratio
+            total += value if leg.side == Side.BUY else -value
         return round(total, 2)
 
     @staticmethod
     def _calculate_required_margin(
         legs: List[LegDefinition],
         underlying_price: float,
-        underlying_symbol: str = None
-    ) -> Optional[MarginResult]:
-        """
-        محاسبه وجه تضمین مورد نیاز استراتژی.
-        """
+        underlying_symbol: Optional[str] = None,) -> Optional[MarginResult]:
         flags = config.get_feature_flags()
         if not flags.get("calculate_margin", True):
             return None
-
         try:
             valid_legs = [leg for leg in legs if leg.contract is not None]
             if not valid_legs:
                 return None
-
             return MarginCalculator.calculate_strategy_margin(
                 legs=valid_legs,
                 underlying_price=underlying_price,
-                underlying_symbol=underlying_symbol
+                underlying_symbol=underlying_symbol,
             )
         except Exception as e:
-            logger.error(f"خطا در محاسبات مارجین ترکیبی استراتژی: {e}")
+            logger.error(f"Margin calculation error: {e}")
             return None
 
     @staticmethod
     def _calculate_liquidity_score(legs: List[LegDefinition]) -> float:
-        """
-        محاسبه امتیاز نقدشوندگی استراتژی بر مبنای جریمه ضعیف‌ترین لنگه معاملاتی.
-        """
         if not legs:
             return 0.0
-
         scores = []
         for leg in legs:
-            contract = leg.contract
-            if not contract:
+            c = leg.contract
+            if not c:
                 continue
-
-            if contract.option_type == OptionType.STOCK:
+            if c.option_type == OptionType.STOCK:
                 scores.append(100.0)
             else:
-                score = LiquidityScorer.score_single_contract(contract)
-                scores.append(score)
-
+                scores.append(LiquidityScorer.score_single_contract(c))
         if not scores:
             return 0.0
-
         return round((min(scores) * 0.70) + ((sum(scores) / len(scores)) * 0.30), 2)
 
     @staticmethod
     def _calculate_execution_score(legs: List[LegDefinition]) -> float:
-        """
-        محاسبه امتیاز ریسک لغزش قیمت بر برآیند همزمان لنگه‌های آپشن.
-        """
         if not legs:
             return 0.0
-
         option_contracts = [
-            leg.contract for leg in legs if leg.contract and leg.contract.option_type != OptionType.STOCK]
-
+            leg.contract for leg in legs
+            if leg.contract and leg.contract.option_type != OptionType.STOCK
+        ]
         if not option_contracts:
             return 100.0
 
         min_volume = min((c.volume for c in option_contracts), default=0)
         min_oi = min((c.open_interest for c in option_contracts), default=0)
-
         max_spread = 0.0
-        for contract in option_contracts:
-            if contract.bid > 0 and contract.ask > 0:
-                spread = (contract.ask - contract.bid) / \
-                    ((contract.bid + contract.ask) / 2)
-                max_spread = max(max_spread, spread)
+        for c in option_contracts:
+            if c.bid > 0 and c.ask > 0:
+                mid = (c.bid + c.ask) / 2
+                max_spread = max(max_spread, (c.ask - c.bid) / mid)
 
         score = 100.0
-
         if min_volume < 50:
             score -= 30
         elif min_volume < 200:
             score -= 15
-
         if min_oi < 20:
             score -= 25
         elif min_oi < 100:
             score -= 12
-
         if max_spread > 0.15:
             score -= 30
         elif max_spread > 0.10:
             score -= 20
         elif max_spread > 0.05:
             score -= 10
-
         score -= (len(legs) - 1) * 5
-
         return max(0.0, round(score, 2))
 
     @staticmethod
     def _build_leg_metadata(
         legs: List[LegDefinition],
-        contract_scores: Dict[str, float]
-    ) -> Dict[str, Any]:
-        """
-        ساخت متادیتا برای لگ‌ها
-        """
+        contract_scores: Dict[str, float],) -> Dict[str, Any]:
         metadata = {}
         for idx, leg in enumerate(legs, start=1):
             if not leg.contract:
@@ -466,5 +279,4 @@ class OpportunityBuilder:
             metadata[f"l{idx}_strike"] = c.strike_price
             metadata[f"l{idx}_option_type"] = c.option_type.value
             metadata[f"l{idx}_score"] = contract_scores.get(c.ticker, 0.0)
-
         return metadata

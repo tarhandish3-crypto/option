@@ -1,4 +1,4 @@
-# strategies/definitions/base.py
+# strategies/base.py
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
@@ -14,14 +14,22 @@ logger = logging.getLogger("OptionScanner.Strategies.Base")
 @dataclass(slots=True)
 class StrategyDefinition:
     """
-    تعریف کامل و خودکار یک استراتژی اختیار معامله
+    تعریف کامل و خودکار یک استراتژی اختیار معامله.
+    سهم پایه مستقیماً در patterns با OptionType.STOCK تعریف می‌شود.
     """
     name: str
     generator_type: GeneratorType
     patterns: Tuple[StrategyLegPattern, ...]
-    include_stock: bool = False
     description: str = ""
     rules: Dict[str, Any] = field(default_factory=dict)
+
+    # سازگاری با کد قدیمی — این فیلد نادیده گرفته می‌شود
+    include_stock: bool = field(default=False, repr=False)
+
+    @property
+    def has_stock_leg(self) -> bool:
+        """آیا این استراتژی یک لگ سهم پایه در patterns دارد؟"""
+        return any(p.option_type == OptionType.STOCK for p in self.patterns)
 
     def __post_init__(self):
         """اعتبارسنجی خودکار و ثبت آمار لگ‌ها"""

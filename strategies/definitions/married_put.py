@@ -7,9 +7,8 @@ from strategies.base import StrategyDefinition, GeneratorType
 
 DEFINITION = StrategyDefinition(
     name="married_put",
-    generator_type=GeneratorType.STOCK_OPTION,
-    include_stock=True,
-    
+    generator_type=GeneratorType.TWO_LEG,
+
     patterns=(
         # لگ ۱: خرید سهم پایه
         StrategyLegPattern(
@@ -17,7 +16,7 @@ DEFINITION = StrategyDefinition(
             side=Side.BUY,
             ratio=1,
         ),
-        # لگ ۲: خرید پوت حفاظتی (Protective Put)
+        # لگ ۲: خرید Put حفاظتی
         StrategyLegPattern(
             option_type=OptionType.PUT,
             side=Side.BUY,
@@ -26,12 +25,11 @@ DEFINITION = StrategyDefinition(
             maturity_group="M1",
         ),
     ),
-    
+
     description="Married Put - Long Stock + Long Protective Put (Insurance Strategy)",
     rules={
-        "strike_order": "any",           # strike پوت می‌تواند ATM یا کمی OTM باشد
         "maturity_order": "same",
-        "strike_below_spot": False,      # معمولاً نزدیک به قیمت سهم یا کمی بالاتر
-        "min_strike_gap_pct": 0.0,       # بدون محدودیت فاصله
+        "strike_order": "any",
+        "min_strike_gap_pct": 0.0,
     },
 )
