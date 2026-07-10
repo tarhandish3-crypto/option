@@ -10,11 +10,13 @@ from __future__ import annotations
 import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import numpy as np
 
 from core.models import Opportunity, LegDefinition, OptionContract, UnderlyingAsset
 from core.enums import Side, OptionType
 from scoring.liquidity_score import LiquidityScorer
 from analytics.margin_calculator import MarginCalculator, MarginResult
+from analytics.payoff_calculator import IranMarketPayoffCalculator
 import config
 
 logger = logging.getLogger("OptionScanner.Engine.OpportunityBuilder")
@@ -28,31 +30,17 @@ class OpportunityBuilder:
 
     @staticmethod
     def build_opportunity(
-        strategy_def: Any,
-        underlying: UnderlyingAsset,
-        matched_contracts: List[OptionContract],
-        contract_scores: Dict[str, float],
-        underlying_price: Optional[float] = None,) -> Optional[Opportunity]:
-        """
-        متد واحد ساخت Opportunity.
+            strategy_def: Any,
+            underlying: UnderlyingAsset,
+            matched_contracts: List[OptionContract],
+            contract_scores: Dict[str, float],
+            underlying_price: Optional[float] = None,) -> Optional[Opportunity]:
 
-        پارامترها:
-        - strategy_def:      تعریف استراتژی (شامل patterns با Side، ratio)
-        - underlying:        دارایی پایه
-        - matched_contracts: لیست OptionContract خام از PatternMatcher
-                             (یک به ازای هر pattern، به همان ترتیب)
-        - contract_scores:   امتیاز نقدشوندگی کانتراکت‌ها
-        - underlying_price:  قیمت پایه (اگر None، از underlying گرفته می‌شود)
-
-        خروجی:
-        - Opportunity با legs منسجم، بدون هیچ تکراری
-        """
         patterns = strategy_def.patterns
         if not matched_contracts or len(matched_contracts) != len(patterns):
             logger.debug(
                 f"build_opportunity: mismatch contracts={len(matched_contracts)} "
-                f"patterns={len(patterns)} for {strategy_def.name}"
-            )
+                f"patterns={len(patterns)} for {strategy_def.name}")
             return None
 
         spot = underlying_price
@@ -76,8 +64,7 @@ class OpportunityBuilder:
                 side=pattern.side,
                 ratio=pattern.ratio,
                 contract=contract,
-                entry_price=ep,
-            ))
+                entry_price=ep,))
 
             # DTE از اولین لگ آپشن واقعی
             if days_to_maturity == 0 and contract.option_type != OptionType.STOCK:
@@ -88,8 +75,7 @@ class OpportunityBuilder:
 
         try:
             margin_result = OpportunityBuilder._calculate_required_margin(
-                legs, spot, underlying.ticker
-            )
+                legs, spot, underlying.ticker)
             if margin_result is None:
                 required_margin = 0.0
             elif hasattr(margin_result, 'required_margin'):
@@ -97,13 +83,38 @@ class OpportunityBuilder:
             else:
                 required_margin = float(margin_result)
         except Exception as e:
-            logger.debug(f"Margin calculation failed for {strategy_def.name}: {e}")
+            logger.debug(
+                f"Margin calculation failed for {strategy_def.name}: {e}")
             required_margin = 0.0
 
         liquidity_score = OpportunityBuilder._calculate_liquidity_score(legs)
         execution_score = OpportunityBuilder._calculate_execution_score(legs)
         metadata = OpportunityBuilder._build_leg_metadata(legs, contract_scores)
 
+        # ── محاسبه ماتریس بازدهی (P&L) هماهنگ با اندازه قرارداد بازار ایران ──
+        try:
+            # ✅ تضمین نوع داده
+            price_levels = config.get_price_levels(spot)
+
+            payoff = IranMarketPayoffCalculator.calculate_payoff(
+                legs=legs, spot_price=spot,
+                price_levels=price_levels,required_margin=required_margin)
+
+            returns_pct = payoff.returns_pct
+            max_profit = payoff.max_profit if payoff.max_profit is not None else 0.0
+            max_loss = payoff.max_loss if payoff.max_loss is not None else 0.0
+            break_even = payoff.break_even_points
+            metadata['price_levels'] = price_levels
+        except Exception as e:
+            logger.error(
+                f"Payoff calculation failed for {strategy_def.name}: {e}")
+            returns_pct = np.array([], dtype=float)
+            max_profit = 0.0
+            max_loss = 0.0
+            break_even = []
+            metadata['price_levels'] = []
+
+        # ── ساخت Opportunity کامل ──────────────────────────────────────────
         return Opportunity(
             strategy_name=strategy_def.name,
             underlying_ticker=underlying.ticker,
@@ -115,6 +126,11 @@ class OpportunityBuilder:
             liquidity_score=liquidity_score,
             execution_score=execution_score,
             metadata=metadata,
+            # داده‌های احیا شده برای تغذیه کامل لایه ChartPlotter
+            returns_monthly_pct=returns_pct,
+            max_profit=max_profit,
+            max_loss=max_loss,
+            break_even_points=break_even,
             timestamp=datetime.now(),)
 
     # ──────────────────────────────────────────────────────────────────────
@@ -123,18 +139,19 @@ class OpportunityBuilder:
 
     @staticmethod
     def create_opportunity(
-        strategy_name: str,
-        ticker: str,
-        legs: List[LegDefinition],
-        days_to_maturity: int,
-        metrics: Optional[Dict[str, Any]] = None,
-        underlying_price: float = 0.0,
-        break_even_points: Optional[List[float]] = None,) -> Optional[Opportunity]:
+            strategy_name: str,
+            ticker: str,
+            legs: List[LegDefinition],
+            days_to_maturity: int,
+            metrics: Optional[Dict[str, Any]] = None,
+            underlying_price: float = 0.0,
+            break_even_points: Optional[List[float]] = None,) -> Optional[Opportunity]:
         """Legacy — فقط توسط FourLegGenerator استفاده می‌شود. در آینده حذف خواهد شد."""
         metadata = metrics or {}
         total_premium = OpportunityBuilder._calculate_total_premium(legs)
 
-        margin_result = OpportunityBuilder._calculate_required_margin(legs, underlying_price)
+        margin_result = OpportunityBuilder._calculate_required_margin(
+            legs, underlying_price)
         if margin_result is None:
             required_margin = 0.0
         elif hasattr(margin_result, 'required_margin'):
@@ -166,8 +183,7 @@ class OpportunityBuilder:
             metadata=metadata,
             break_even_points=break_even_points,
             final_score=0.0,
-            rank=0,
-        )
+            rank=0,)
 
     # ──────────────────────────────────────────────────────────────────────
     # Private helpers
@@ -193,9 +209,9 @@ class OpportunityBuilder:
 
     @staticmethod
     def _calculate_required_margin(
-        legs: List[LegDefinition],
-        underlying_price: float,
-        underlying_symbol: Optional[str] = None,) -> Optional[MarginResult]:
+            legs: List[LegDefinition],
+            underlying_price: float,
+            underlying_symbol: Optional[str] = None,) -> Optional[MarginResult]:
         flags = config.get_feature_flags()
         if not flags.get("calculate_margin", True):
             return None
@@ -206,8 +222,7 @@ class OpportunityBuilder:
             return MarginCalculator.calculate_strategy_margin(
                 legs=valid_legs,
                 underlying_price=underlying_price,
-                underlying_symbol=underlying_symbol,
-            )
+                underlying_symbol=underlying_symbol,)
         except Exception as e:
             logger.error(f"Margin calculation error: {e}")
             return None
@@ -268,8 +283,8 @@ class OpportunityBuilder:
 
     @staticmethod
     def _build_leg_metadata(
-        legs: List[LegDefinition],
-        contract_scores: Dict[str, float],) -> Dict[str, Any]:
+            legs: List[LegDefinition],
+            contract_scores: Dict[str, float],) -> Dict[str, Any]:
         metadata = {}
         for idx, leg in enumerate(legs, start=1):
             if not leg.contract:

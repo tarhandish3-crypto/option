@@ -5,13 +5,13 @@ import numpy as np
 from numba import njit
 from typing import List, Optional
 
-from config import get_price_levels, get_feature_flags
+from config import get_feature_flags
 from core.models import LegDefinition, PayoffAnalysis
 from core.enums import Side, OptionType
 from analytics.cost_calculator import IranMarketCostCalculator
 
 
-# @njit(cache=True, fastmath=True)
+@njit(cache=True, fastmath=True)
 def calc_pure_gross_payoff_numba(
         price_levels: np.ndarray,
         weights: np.ndarray,
@@ -37,11 +37,11 @@ def calc_pure_gross_payoff_numba(
                 continue
 
             opt_type = option_types[j]
-            if opt_type == 0:    # Stock
+            if opt_type == 0:    # OptionType.STOCK
                 val_at_expiry = S
-            elif opt_type == 1:  # Call
+            elif opt_type == 1:  # OptionType.CALL
                 val_at_expiry = max(S - strikes[j], 0.0)
-            else:                # Put
+            else:                # OptionType.PUT
                 val_at_expiry = max(strikes[j] - S, 0.0)
 
             pnl = sides[j] * (val_at_expiry - entry_prices[j])
@@ -54,7 +54,7 @@ def calc_pure_gross_payoff_numba(
 
 class IranMarketPayoffCalculator:
     """
-    محاسبه‌گر ماتریس P&L استراتژی‌های آپشن
+    محاسبه‌گر ماتریس P&L استراتژی‌های آپشن همراه با نرمال‌سازی درصد ماهانه
     """
 
     @classmethod
@@ -62,13 +62,15 @@ class IranMarketPayoffCalculator:
             cls,
             legs: List[LegDefinition],
             spot_price: float,
-            price_levels: Optional[np.ndarray] = None) -> PayoffAnalysis:
+            price_levels: Optional[np.ndarray],
+            required_margin: float = 0.0) -> PayoffAnalysis:
         """
-        محاسبه برداری بازدهی خالص و ناخالص
+        محاسبه برداری بازدهی خالص و ناخالص و تبدیل به درصد بازدهی ماهانه (نرمال شده ۳۰ روزه)
         """
-        # ✅ تضمین نوع داده
-        price_levels = np.asarray(
-            price_levels, dtype=np.float64) if price_levels is not None else get_price_levels(spot_price)
+        if price_levels is None:
+            # گام ۵ درصدی پیش‌فرض در بازه -۵۰ تا +۵۰ درصد دارایی پایه
+            price_levels = np.arange(
+                spot_price * 0.5, spot_price * 1.5, spot_price * 0.05)
 
         num_legs = len(legs)
         weights = np.zeros(num_legs, dtype=np.float64)
@@ -79,34 +81,38 @@ class IranMarketPayoffCalculator:
         contract_sizes = np.zeros(num_legs, dtype=np.int32)
         has_contract = np.zeros(num_legs, dtype=np.int32)
 
-        # ✅ استخراج اطلاعات
+        days_to_maturity = 30  # مقدار پیش‌فرض منطقی دوره در صورت عدم وجود آپشن
+
+        # ✅ استخراج اطلاعات به صورت ایمن
         for idx, leg in enumerate(legs):
-            weights[idx] = leg.weight
+            weights[idx] = leg.ratio  # اصلاح دسترسی فیلد از weight به ratio
             sides[idx] = 1 if leg.side == Side.BUY else -1
             contract = leg.contract
 
             if contract is not None:
                 strikes[idx] = contract.strike_price
-                # بازگرداندن دریافت خودکار قیمت از قرارداد در صورت عدم وجود entry_price کاربر
                 entry_prices[idx] = leg.entry_price or getattr(
                     contract, 'mid_price', 0.0) or contract.last_price
                 option_types[idx] = contract.option_type.value
                 contract_sizes[idx] = contract.contract_size
                 has_contract[idx] = 1
+
+                # استخراج امن DTE از اولین لگ آپشن معتبر
+                if contract.option_type != OptionType.STOCK and contract.days_to_maturity > 0:
+                    days_to_maturity = contract.days_to_maturity
             else:
-                # بازگرداندن مقادیر حیاتی برای لگ‌های سهم پایه (بدون قرارداد)
                 entry_prices[idx] = spot_price
+                option_types[idx] = OptionType.STOCK.value
                 contract_sizes[idx] = 1
 
-        # ✅ محاسبه P&L
+        # ✅ محاسبه P&L ناخالص مطلق ریالی کل موقعیت
         gross_profits = calc_pure_gross_payoff_numba(
             price_levels, weights, strikes, entry_prices,
             option_types, sides, contract_sizes)
 
-        # ✅ هزینه‌های معاملاتی (اصلاح شده با رویکرد Lazy Evaluation)
+        # ✅ محاسبه هزینه‌های معاملاتی با رویکرد Lazy Evaluation
         flags = get_feature_flags()
         if flags.get("apply_commissions", True):
-            # محاسبه هزینه‌ها تنها در صورتی انجام می‌شود که سوئیچ کارمزد فعال باشد
             underlying_ticker = legs[0].contract.underlying_ticker if legs and legs[0].contract else ""
             strategy_costs = IranMarketCostCalculator.calculate_strategy_costs(
                 underlying_symbol=underlying_ticker,
@@ -114,23 +120,36 @@ class IranMarketPayoffCalculator:
                 spot_price=spot_price)
             net_profits_closed = gross_profits - strategy_costs.total_if_closed
         else:
-            # در صورت خاموش بودن کارمزد، مستقیماً کپی می‌شود
             net_profits_closed = gross_profits.copy()
 
-        # ✅ محاسبه Net Premium (کاملاً برداری)
+        # ✅ محاسبه Net Premium (کاملاً برداری) کل موقعیت
         net_premium = np.sum(
             entry_prices * contract_sizes * weights * sides * has_contract,
             dtype=np.float64)
 
-        max_profit = float(np.max(net_profits_closed))
-        max_loss = float(np.min(net_profits_closed))
+        # ✅ تعیین پایه سرمایه‌گذاری واقعی معامله (Capital Base) برای تبدیل درصد
+        capital_base = required_margin if required_margin > 0 else abs(
+            net_premium)
+        if capital_base <= 0:
+            # همپوشانی در مواقع اضطراری پوزیشن‌های کاملاً درآمدی بدون مارجین
+            fallback_size = contract_sizes[0] if num_legs > 0 else 1000
+            capital_base = spot_price * fallback_size
 
-        # ✅ نقاط سربه‌سر
+        # ✅ محاسبه درصد بازدهی کل دوره و اعمال فاکتور زمانی ۳۰ روزه (سود ماهانه اسکیل‌شده)
+        returns_pct_period = (net_profits_closed / capital_base) * 100.0
+        dte_factor = 30.0 / max(days_to_maturity, 1)
+        monthly_returns = returns_pct_period * dte_factor
+
+        # تبدیل سقف و کف نتایج نهایی به درصد ماهانه جهت تغذیه موتورهای فازی
+        max_profit = float(np.max(monthly_returns))
+        max_loss = float(np.min(monthly_returns))
+
+        # ✅ نقاط سربه‌سر بر مبنای قیمت دارایی پایه
         break_even_points = cls._find_break_even_points(
             price_levels, net_profits_closed)
 
         return PayoffAnalysis(
-            returns_pct=net_profits_closed,
+            returns_pct=monthly_returns,
             net_premium=round(float(net_premium), 2),
             max_profit=round(max_profit, 2),
             max_loss=round(abs(max_loss), 2),

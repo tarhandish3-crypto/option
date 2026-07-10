@@ -145,7 +145,7 @@ SYMBOL_INFO = {
 PRICE_RANGE_CONFIG = {
     "min_percent": -50,          # حداقل درصد تغییر قیمت
     "max_percent": 50,           # حداکثر درصد تغییر قیمت
-    "num_points": 1,            # تعداد نقاط (گام‌ها)
+    "num_points": 21,            # تعداد نقاط (گام‌ها)
     "step_size": None,           # اگر None باشد، بر اساس num_points محاسبه می‌شود
     "labels_format": "{:.0f}%",  # فرمت برچسب‌ها
 }

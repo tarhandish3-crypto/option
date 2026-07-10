@@ -128,12 +128,11 @@ class ChartPlotter:
         return str(filepath)
 
     def plot_comparison(
-        self,
-        data: List[Tuple[str, Any, Optional[str]]],
-        ticker: str,
-        top_n: int = 5,
-        filename: Optional[str] = None
-    ) -> str:
+            self,
+            data: List[Tuple[str, Any, Optional[str]]],
+            ticker: str,
+            top_n: int = 5,
+            filename: Optional[str] = None) -> str:
         """
         رسم همزمان منحنی چند ترکیب برتر جهت مقایسه بازدهی لایو کاندیداها
         """
@@ -163,18 +162,10 @@ class ChartPlotter:
                         color = colors[i % len(colors)]
 
                 price_levels = opp.metadata.get('price_levels', [])
-                profits = opp.metadata.get('net_profits_closed', [])
+                profits = opp.returns_monthly_pct
 
                 if not price_levels or not profits:
                     logger.warning(f"No P&L data for {name}, skipping")
-                    continue
-
-                try:
-                    price_levels = np.array([float(p) for p in price_levels])
-                    profits = np.array([float(p) for p in profits])
-                except (ValueError, TypeError) as e:
-                    logger.warning(
-                        f"Error converting data for {name}: {e}, skipping")
                     continue
 
                 ax.plot(price_levels, profits, linewidth=2, color=color,

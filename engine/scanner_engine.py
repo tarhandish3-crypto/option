@@ -1,10 +1,6 @@
 # engine/scanner_engine.py
 # -*- coding: utf-8 -*-
 
-"""
-موتور ارکستراتور و مدیریت اسکن (Scanner Engine) - معماری V5
-این ماژول مسئول هماهنگی اسکن موازی، تزریق شاخص‌های ریسک و محاسبه P&L نهایی است.
-"""
 
 from __future__ import annotations
 
@@ -19,7 +15,6 @@ import pandas as pd
 import config
 from core.models import MarketSnapshot, ScanResult, Opportunity
 from engine.scanner import Scanner
-from analytics.payoff_calculator import IranMarketPayoffCalculator
 from analytics.probabilities_calculator import calculate_strategy_greeks
 from strategies.core import get_all_strategies
 
@@ -67,8 +62,7 @@ def _inject_greeks(opp: Opportunity, spot_price: float) -> None:
         current_price=spot_price,
         days_to_maturity=opp.days_to_maturity or 30,
         risk_free_rate=RISK_FREE_RATE,
-        volatility=avg_iv,
-    )
+        volatility=avg_iv,)
 
     meta = opp.metadata
     meta.update({
@@ -76,16 +70,14 @@ def _inject_greeks(opp: Opportunity, spot_price: float) -> None:
         'gamma': result.get('gamma', 0.0),
         'theta': result.get('theta_daily', 0.0),
         'vega': result.get('vega', 0.0),
-        'rho': result.get('rho', 0.0),
-    })
+        'rho': result.get('rho', 0.0),})
 
 
 class ScannerEngine:
     __slots__ = (
         'snapshot', 'filters', 'parallel', 'max_workers',
         '_stats_lock', 'scanned_count', 'error_count',
-        'total_generated_stats', 'total_filtered_stats'
-    )
+        'total_generated_stats', 'total_filtered_stats')
 
     def __init__(self, snapshot: Union[MarketSnapshot, pd.DataFrame], filters: Optional[List[Callable]] = None):
         self.snapshot = MarketSnapshot.from_dataframe(
@@ -167,35 +159,32 @@ class ScannerEngine:
                 self.total_filtered_stats += scanner_stats.get("filtered", 0)
 
             enriched_opportunities = []
-            calculate_greeks_flag = config.get_feature_flags().get("calculate_greeks", True)
+            calculate_greeks_flag = config.get_feature_flags().get("calculate_greeks")
 
             for opp in raw_opportunities:
                 if s0_stock > 0:
                     opp.S0_stock = s0_stock
 
-                analysis = IranMarketPayoffCalculator.calculate_payoff(
-                    legs=list(opp.legs), spot_price=s0_stock, price_levels=price_levels)
-
-                opp.net_premium = analysis.net_premium
-                opp.max_profit = analysis.max_profit
-                opp.max_loss = analysis.max_loss
-                opp.break_even_points = analysis.break_even_points
-
                 meta = opp.metadata
+                if hasattr(opp, 'returns_monthly_pct') and opp.returns_monthly_pct is not None:
+                    returns_list = opp.returns_monthly_pct.tolist() if hasattr(opp.returns_monthly_pct, 'tolist') else list(opp.returns_monthly_pct)
+                    meta.update({
+                        'returns_monthly_pct': returns_list,
+                        'net_profits_closed': returns_list})
+
                 meta.update({
-                    'returns_monthly_pct': analysis.returns_pct.tolist(),
-                    # کلید net_profits_closed برای RiskEngine (سازگاری با evaluate_opportunity)
-                    'net_profits_closed': analysis.returns_pct.tolist(),
-                    'max_profit': analysis.max_profit,
-                    'max_loss': analysis.max_loss,
-                    'break_even_points': analysis.break_even_points,
-                    'net_premium': analysis.net_premium
+                    'max_profit': opp.max_profit,
+                    'max_loss': opp.max_loss,
+                    'break_even_points': opp.break_even_points,
+                    'net_premium': opp.net_premium
                 })
 
+                # تزریق یونانی‌ها در صورت فعال بودن فلگ سیستم
                 if calculate_greeks_flag and s0_stock > 0:
                     _inject_greeks(opp, s0_stock)
 
                 enriched_opportunities.append(opp)
+                
             return enriched_opportunities
 
         except Exception as e:
