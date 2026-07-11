@@ -17,11 +17,11 @@ def calc_pure_gross_payoff_numba(
         weights: np.ndarray,
         strikes: np.ndarray,
         entry_prices: np.ndarray,
-        option_types: np.ndarray,
-        sides: np.ndarray,
+        option_types: np.ndarray,  # 0: STOCK, 1: CALL, 2: PUT
+        sides: np.ndarray,         # 1: BUY, -1: SELL
         contract_sizes: np.ndarray) -> np.ndarray:
     """
-    محاسبه سود/زیان ناخالص با استفاده از Numba و وکتوریزاسیون پیشرفته
+    محاسبه سود/زیان ناخالص با استفاده از Numba و وکتوریزاسیون پیشرفته به صورت کاملاً کامپایل‌شده
     """
     num_points = len(price_levels)
     num_legs = len(weights)
@@ -81,7 +81,7 @@ class IranMarketPayoffCalculator:
 
         # اعمال بند ۴ (ماده ۲۴): استخراج ایمن قیمت با قابلیت سوئیچ به قیمت نظری یا مبنا در صورت فاقد معامله بودن
         use_fallback = FEATURE_FLAGS.get(
-            "use_theoretical_price_fallback", True)
+            "use_theoretical_price_fallback", False)
 
         # استخراج اطلاعات به صورت ایمن با در نظر گرفتن فالبک
         for idx, leg in enumerate(legs):
@@ -91,12 +91,17 @@ class IranMarketPayoffCalculator:
 
             if contract is not None:
                 strikes[idx] = contract.strike_price
-                option_types[idx] = contract.option_type.value
                 has_contract[idx] = 1
 
+                # نگاشت صحیح Enum به مقادیر عددی برای Numba جهت جلوگیری از خطای کامپایل
                 if contract.option_type == OptionType.STOCK:
+                    option_types[idx] = 0
                     contract_sizes[idx] = base_option_size
-                else:
+                elif contract.option_type == OptionType.CALL:
+                    option_types[idx] = 1
+                    contract_sizes[idx] = contract.contract_size
+                else:  # OptionType.PUT
+                    option_types[idx] = 2
                     contract_sizes[idx] = contract.contract_size
 
                 # اعمال منطق اولویت‌بندی قیمت (بند ۴)
@@ -114,10 +119,10 @@ class IranMarketPayoffCalculator:
                         entry_prices[idx] = spot_price
             else:
                 entry_prices[idx] = spot_price
-                option_types[idx] = OptionType.STOCK.value
+                option_types[idx] = 0  # 0 یعنی STOCK
                 contract_sizes[idx] = base_option_size
 
-        # محاسبه P&L ناخالص مطلق ریالی کل موقعیت
+        # محاسبه P&L ناخالص مطلق ریالی کل موقعیت با استفاده از تابع بهینه‌شده Numba
         gross_profits = calc_pure_gross_payoff_numba(
             price_levels, weights, strikes, entry_prices,
             option_types, sides, contract_sizes)
@@ -131,7 +136,7 @@ class IranMarketPayoffCalculator:
         apply_commissions = FEATURE_FLAGS.get("apply_commissions", True)
         apply_exercise_fee = FEATURE_FLAGS.get("apply_exercise_fee", True)
 
-        # ۱. 🟢 مدیریت کارمزدهای معاملاتی دوره (آرگومان include_clearing و پرچم آن کاملاً حذف شدند)
+        # ۱. مدیریت کارمزدهای معاملاتی دوره
         if apply_commissions and underlying_ticker:
             strategy_costs = IranMarketCostCalculator.calculate_strategy_costs(
                 underlying_symbol=underlying_ticker,
@@ -146,7 +151,7 @@ class IranMarketPayoffCalculator:
             net_profits_closed = gross_profits.copy()
             option_fees = 0.0
 
-        # ۲. 🟢 مدیریت کارمزد اعمال در سررسید (آرگومان include_exercise_tax و پرچم آن حذف شدند؛ مالیات داخلی و اتوماتیک مدیریت می‌شود)
+        # ۲. مدیریت کارمزد اعمال در سررسید
         if underlying_ticker:
             exercise_costs_vector = IranMarketCostCalculator.generate_exercise_cost_vector(
                 underlying_symbol=underlying_ticker,
@@ -158,7 +163,8 @@ class IranMarketPayoffCalculator:
         # محاسبه جریانات نقدی خالص پرمیوم (دبیت هزینه کل مثبت / کردیت دریافتی منفی)
         net_premium = 0.0
         for idx in range(num_legs):
-            if option_types[idx] != OptionType.STOCK.value and has_contract[idx] == 1:
+            # بررسی عدم مساوی با صفر (یعنی دارایی پایه نیست)
+            if option_types[idx] != 0 and has_contract[idx] == 1:
                 leg_val = entry_prices[idx] * \
                     contract_sizes[idx] * weights[idx]
                 net_premium += leg_val if sides[idx] == 1 else -leg_val
@@ -170,7 +176,7 @@ class IranMarketPayoffCalculator:
         # محاسبه درصد بازدهی کل دوره و اعمال فاکتور زمانی ۳۰ روزه (سود ماهانه اسکیل‌شده)
         returns_pct_period = (net_profits_closed / capital_base) * \
             100.0 if capital_base > 0 else np.zeros_like(net_profits_closed)
-        dte_factor = 30.0 / max(days_to_maturity, 1)
+        dte_factor = 30.0 / max(days_to_maturity, 1.0)
         monthly_returns = returns_pct_period * dte_factor
 
         # استخراج سود و زیان ماکزیمم ریالی دوره (مطلق)

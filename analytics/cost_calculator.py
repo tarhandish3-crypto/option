@@ -58,9 +58,9 @@ class IranMarketCostCalculator:
             underlying_symbol: str,
             legs: List[LegDefinition],
             spot_price: Optional[float],
-            contract_sizes: np.ndarray) -> StrategyCosts:  # 🟢 پارامتر include_clearing حذف شد
+            contract_sizes: np.ndarray) -> StrategyCosts:
         """
-        محاسبه تمام‌برداری هزینه‌های ورود، خروج و پایاپای قانونی استراتژی
+        محاسبه تمام‌برداری هزینه‌های ورود، خروج و پایاپای قانونی استراتژی آپشن
         """
         if not legs or spot_price is None or spot_price <= 0:
             return StrategyCosts()
@@ -69,10 +69,8 @@ class IranMarketCostCalculator:
         kind = get_symbol_kind(underlying_symbol)
 
         # ۱. استخراج مشخصات لِگ‌ها به آرایه‌های نامپای جهت پردازش موازی و برداری
-        ratios = np.array([abs(getattr(l, 'ratio', 1))
-                          for l in legs], dtype=np.float64)
-        sides = np.array([1 if l.side == Side.BUY else -
-                         1 for l in legs], dtype=np.int32)
+        ratios = np.array([abs(getattr(l, 'ratio', 1)) for l in legs], dtype=np.float64)
+        sides = np.array([1 if l.side == Side.BUY else -1 for l in legs], dtype=np.int32)
 
         option_types = np.array([
             l.contract.option_type.value if l.contract else OptionType.STOCK.value
@@ -80,8 +78,7 @@ class IranMarketCostCalculator:
         ], dtype=np.int32)
 
         # اعمال بند ۴ (ماده ۲۴): فالبک به قیمت نظری در صورت عدم معامله فعال در زنجیره اختیارها
-        use_fallback = FEATURE_FLAGS.get(
-            "use_theoretical_price_fallback", True)
+        use_fallback = FEATURE_FLAGS.get("use_theoretical_price_fallback", False)
 
         def _get_valid_price(leg: LegDefinition) -> float:
             if not leg.contract:
@@ -101,8 +98,7 @@ class IranMarketCostCalculator:
             getattr(l, 'entry_price', None) or _get_valid_price(l) for l in legs
         ], dtype=np.float64)
 
-        last_prices = np.array([_get_valid_price(l)
-                               for l in legs], dtype=np.float64)
+        last_prices = np.array([_get_valid_price(l) for l in legs], dtype=np.float64)
 
         # ۲. ساخت ماسک‌های شرطی برداری
         is_option = (option_types != OptionType.STOCK.value)
@@ -114,7 +110,7 @@ class IranMarketCostCalculator:
         entry_values = entry_prices * contract_sizes * option_qtys
         exit_values = last_prices * contract_sizes * option_qtys
 
-        # دریافت نرخ‌های ثابت کارمزد بورس
+        # دریافت نرخ‌های ثابت کارمزد بورس از فایل تنظیمات
         opt_buy_rate = get_commission_rate(market, 'option', True)
         opt_sell_rate = get_commission_rate(market, 'option', False)
 
@@ -124,25 +120,22 @@ class IranMarketCostCalculator:
         option_exit_fees = np.sum(
             np.where(~is_buy, exit_values * opt_buy_rate, exit_values * opt_sell_rate))
 
-        # 🟢 ۴. محاسبه برداری کارمزد پایاپای (سمات) به صورت کاملاً اجباری و دائمی برای لِگ‌های خرید
+        # ۴. محاسبه برداری کارمزد پایاپای (سمات) به صورت اجباری برای لِگ‌های خرید (ماده تسویه نقدی/پایاپای)
         clearing_fees = np.sum(
             np.where(
                 is_buy & is_option,
                 np.maximum(entry_values * cls.CLEARING_FEE_RATE, cls.CLEARING_FEE_MIN), 0.0))
 
-        # ۵. محاسبه کارمزد خرید و فروش دارایی پایه نقدی (سهم مستقیم)
+        # ۵. محاسبه کارمزد خرید و فروش دارایی پایه نقدی (سهام عادی، طلا، درآمد ثابت یا مختلط)
         stock_qty = np.sum(ratios * is_stock * contract_sizes)
         if stock_qty > 0:
-            total_underlying_buy = (
-                spot_price * stock_qty) * get_commission_rate(market, kind, True)
-            total_underlying_sell = (
-                spot_price * stock_qty) * get_commission_rate(market, kind, False)
+            total_underlying_buy = (spot_price * stock_qty) * get_commission_rate(market, kind, True)
+            total_underlying_sell = (spot_price * stock_qty) * get_commission_rate(market, kind, False)
         else:
             total_underlying_buy = 0.0
             total_underlying_sell = 0.0
 
-        total_if_closed = option_entry_fees + option_exit_fees + \
-            clearing_fees + total_underlying_buy
+        total_if_closed = option_entry_fees + option_exit_fees + clearing_fees + total_underlying_buy
 
         return StrategyCosts(
             option_entry_fees=round(float(option_entry_fees), 2),
@@ -159,9 +152,9 @@ class IranMarketCostCalculator:
             underlying_symbol: str,
             legs: List[LegDefinition],
             price_levels: np.ndarray,
-            include_exercise_fee: bool = True) -> np.ndarray:  # 🟢 پارامتر include_exercise_tax حذف شد
+            include_exercise_fee: bool = True) -> np.ndarray:
         """
-        تولید کاملاً برداری ماتریس هزینه‌های اعمال بر اساس قیمت‌های سررسید با پیاده‌سازی خودکار و هوشمند شروط مالیاتی
+        تولید کاملاً برداری ماتریس هزینه‌های اعمال بر اساس قیمت‌های سررسید با اعمال هوشمند شروط مالیاتی
         """
         if not legs or price_levels is None or len(price_levels) == 0:
             return np.zeros_like(price_levels, dtype=np.float64)
@@ -170,11 +163,10 @@ class IranMarketCostCalculator:
         kind = get_symbol_kind(underlying_symbol)
         exercise_rate = get_exercise_fee_rate(market, kind)
 
-        # 🟢 استخراج نوع تسویه انتخابی کاربر از پرچم‌های سیستم جهت مدیریت خودکار مالیات واگذاری
-        settlement_type = FEATURE_FLAGS.get(
-            "exercise_settlement_type", "PHYSICAL")
+        # استخراج نوع تسویه انتخابی سیستم جهت مدیریت هوشمند مالیات واگذاری
+        settlement_type = FEATURE_FLAGS.get("exercise_settlement_type", "PHYSICAL")
 
-        # آرایه خروجی نهایی هم‌اندازه با سطوح قیمتی
+        # آرایه خروجی نهایی هم‌اندازه با سطوح قیمتی دایینامیک ارسالی
         exercise_costs_vector = np.zeros_like(price_levels, dtype=np.float64)
 
         for leg in legs:
@@ -187,11 +179,10 @@ class IranMarketCostCalculator:
             K = getattr(contract, 'strike_price', 0.0)
             strike_value = K * c_size * qty
 
-            # کارمزد اعمال بدون تفکیک جهت پوزیشن، شامل حال هر دو طرف (خرید و فروش) می‌شود
-            leg_exercise_fee = (
-                strike_value * exercise_rate) if include_exercise_fee else 0.0
+            # کارمزد اعمال ثابت سمات (شامل حال خریدار و فروشنده در صورت وقوع فرآیند اعمال)
+            leg_exercise_fee = (strike_value * exercise_rate) if include_exercise_fee else 0.0
 
-            # 🟢 مالیات نقل و انتقال واگذاری (۰.۵٪) تنها در زمان تسویه فیزیکی به موقعیت تعلق می‌گیرد (اتوماسیون بند ۱)
+            # مالیات نقل و انتقال واگذاری (۰.۵٪) تنها در تسویه فیزیکی و فقط برای فروشنده نهایی دارایی پایه
             leg_tax = 0.0
             if settlement_type == "PHYSICAL":
                 if (contract.option_type == OptionType.CALL and leg.side == Side.SELL) or \
@@ -200,12 +191,10 @@ class IranMarketCostCalculator:
 
             total_leg_at_exercise = leg_exercise_fee + leg_tax
 
-            # اعمال مشروط برداری بر مبنای وضعیت In-The-Money (ITM) بودن در ماتریس سطوح قیمتی
+            # اعمال مشروط برداری بر مبنای در سود بودن (In-the-Money) موقعیت در زنجیره قیمت‌ها
             if contract.option_type == OptionType.CALL:
-                exercise_costs_vector += np.where(price_levels >
-                                                  K, total_leg_at_exercise, 0.0)
+                exercise_costs_vector += np.where(price_levels > K, total_leg_at_exercise, 0.0)
             elif contract.option_type == OptionType.PUT:
-                exercise_costs_vector += np.where(price_levels <
-                                                  K, total_leg_at_exercise, 0.0)
+                exercise_costs_vector += np.where(price_levels < K, total_leg_at_exercise, 0.0)
 
         return exercise_costs_vector
