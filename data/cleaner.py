@@ -54,8 +54,8 @@ class DataCleaner:
 
         # DEBUG_SYMBOls = ['اهرم', 'اخابر']
         DEBUG_SYMBOls = ['اهرم']
-        df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
-        df = df[df['Ticker'].isin(['ضهرم4024', 'ضهرم4033', 'طهرم4032'])]
+        # df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
+        # df = df[df['Ticker'].isin(['ضهرم4024', 'ضهرم4033', 'طهرم4032'])]
         
         after_debug = len(df)
 

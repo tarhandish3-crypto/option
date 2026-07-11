@@ -39,10 +39,9 @@ class ChartPlotter:
         profits: np.ndarray,
         strategy_name: str,
         ticker: str,
-        breakeven_points: Optional[List[float]] = None,
+        breakeven_points: Optional[List[float] | np.ndarray] = None,
         current_price: Optional[float] = None,
-        filename: Optional[str] = None
-    ) -> str:
+        filename: Optional[str] = None) -> str:
         """
         ترسیم دقیق نمودار سود و زیان منقطع و پیوسته با کالیبراسیون هوشمند محدوده سودآوری
         """
@@ -68,8 +67,8 @@ class ChartPlotter:
                 ax.axvline(x=current_price, color='#2CA02C', linestyle=':', linewidth=2,
                            alpha=0.8, label=f'Underlying Price: {current_price:,.0f}')
 
-            # رسم خطوط عمودی نقاط سر‌به‌سر (Breakeven)
-            if breakeven_points:
+            # ✅ اصلاح امن اعتبارسنجی نقاط سربه‌سر (جلوگیری از خطای Ambiguous Array Value)
+            if breakeven_points is not None and len(breakeven_points) > 0:
                 for i, be in enumerate(breakeven_points):
                     label = 'Breakeven Point' if i == 0 else ""
                     ax.axvline(x=be, color='#D62728', linestyle='--', linewidth=1.2,
@@ -103,10 +102,8 @@ class ChartPlotter:
             max_profit = np.max(profits)
             max_loss = np.min(profits)
 
-            profit_text = f"{max_profit:,.0f}" if max_profit < float(
-                'inf') else "Unlimited"
-            loss_text = f"{max_loss:,.0f}" if max_loss > float(
-                '-inf') else "Unlimited"
+            profit_text = f"{max_profit:,.0f}" if max_profit < float('inf') else "Unlimited"
+            loss_text = f"{max_loss:,.0f}" if max_loss > float('-inf') else "Unlimited"
 
             box_content = f"Max Profit: {profit_text}\nMax Loss: {loss_text}"
             ax.text(0.97, 0.03, box_content, transform=ax.transAxes, fontsize=10,
@@ -123,8 +120,7 @@ class ChartPlotter:
                         bbox_inches='tight', facecolor='white')
             plt.close()
 
-        logger.info(
-            f"P&L Payoff chart successfully generated and saved: {filepath}")
+        logger.info(f"P&L Payoff chart successfully generated and saved: {filepath}")
         return str(filepath)
 
     def plot_comparison(
@@ -161,10 +157,11 @@ class ChartPlotter:
                     if color is None:
                         color = colors[i % len(colors)]
 
-                price_levels = opp.metadata.get('price_levels', [])
-                profits = opp.returns_monthly_pct
+                # ✅ اصلاح دریافت ایمن متغیرها برای جلوگیری از ارزیابی منطقی اشتباه آرایه‌ها
+                price_levels = opp.metadata.get('price_levels', None)
+                profits = getattr(opp, 'returns_monthly_pct', None)
 
-                if not price_levels or not profits:
+                if price_levels is None or profits is None or len(price_levels) == 0 or len(profits) == 0:
                     logger.warning(f"No P&L data for {name}, skipping")
                     continue
 
@@ -220,10 +217,8 @@ class ChartPlotter:
             target_data = data[:10]
             names = [item['name'].replace("_", " ") for item in target_data]
 
-            # مهار عدم تقارن طول لیست‌های پروفایل (تضمین ساخت ماتریس دو بعدی مستطیلی)
             min_length = min(len(item['profits']) for item in target_data)
-            aligned_profits = [item['profits'][:min_length]
-                               for item in target_data]
+            aligned_profits = [item['profits'][:min_length] for item in target_data]
             profits_matrix = np.array(aligned_profits)
 
             im = ax.imshow(profits_matrix, cmap='RdYlGn',
@@ -232,20 +227,15 @@ class ChartPlotter:
             ax.set_yticks(range(len(names)))
             ax.set_yticklabels(names, fontsize=9, fontweight='medium')
 
-            ax.set_xlabel(
-                f'Price Index Levels (Aligned to {min_length} steps)', fontsize=11, labelpad=10)
-            ax.set_ylabel('Generated Strategy Option Configuration',
-                          fontsize=11, labelpad=10)
-            ax.set_title(f'Strategy Profit Matrix Heatmap - {ticker}',
-                         fontsize=14, fontweight='bold', pad=15)
+            ax.set_xlabel(f'Price Index Levels (Aligned to {min_length} steps)', fontsize=11, labelpad=10)
+            ax.set_ylabel('Generated Strategy Option Configuration', fontsize=11, labelpad=10)
+            ax.set_title(f'Strategy Profit Matrix Heatmap - {ticker}', fontsize=14, fontweight='bold', pad=15)
 
             cbar = plt.colorbar(im, ax=ax, pad=0.02)
-            cbar.set_label('Expected Profit / Loss (Toman)',
-                           fontsize=10, labelpad=10)
+            cbar.set_label('Expected Profit / Loss (Toman)', fontsize=10, labelpad=10)
 
             plt.tight_layout()
-            plt.savefig(filepath, dpi=self.dpi,
-                        bbox_inches='tight', facecolor='white')
+            plt.savefig(filepath, dpi=self.dpi, bbox_inches='tight', facecolor='white')
             plt.close()
 
         logger.info(f"Matrix Heatmap successfully outputted to {filepath}")
