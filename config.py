@@ -79,10 +79,10 @@ COMMISSION_DICT = {
     ('ifb', 'etf-mix', False): 0.0013225,  # فروش ETF مختلط فرابورس
 
     # ===== اختیار معامله (Option) =====
-    ('tse', 'option', True): 0.00103,      # خرید اختیار بورس
+    ('tse', 'option', True): 0.00102,      # خرید اختیار بورس
     ('tse', 'option', False): 0.00103,     # فروش اختیار بورس
-    ('ifb', 'option', True): 0.00102,      # خرید اختیار فرابورس
-    ('ifb', 'option', False): 0.00103,     # فروش اختیار فرابورس
+    ('ifb', 'option', True): 0.003004,      # خرید اختیار فرابورس
+    ('ifb', 'option', False): 0.004472,     # فروش اختیار فرابورس
 }
 
 # =====================================================
@@ -371,19 +371,28 @@ FEATURE_FLAGS = {
     # اگر False باشد، required_margin = 0 خواهد بود
     "calculate_margin": True,
 
-    # اگر True باشد، کارمزد معاملاتی از سود/زیان کسر می‌شود
+    # اگر True باشد، کارمزد معاملاتی (کارگزاری + بورس + پایاپای) از سود/زیان کسر می‌شود
     # اگر False باشد، P&L ناخالص بدون کسر کارمزد گزارش می‌شود
     "apply_commissions": True,
 
+    # کارمزد اعمال/تسویه فیزیکی در سررسید برای موقعیت‌های ITM خریدار
+    "apply_exercise_fee": True,
+
+
     # اگر True باشد، یونانی‌ها (Delta, Gamma, Theta, Vega) محاسبه شده
     # و در ستون‌های اکسل نمایش داده می‌شوند
-    # اگر False باشد، ستون‌های یونانی مقدار 0 خواهند داشت
     "calculate_greeks": False,
 
     # اگر True باشد، Risk Metrics (POP, Sharpe, VaR, ...) محاسبه شود
     "calculate_risk_metrics": True,
 
-    "calculate_risk_metrics": True,
+    # نوع تسویه در سررسید: 'CASH' (نقدی) یا 'PHYSICAL' (فیزیکی)
+    # در حالت PHYSICAL، مالیات واگذاری (۰.۵٪) به صورت خودکار اعمال می‌شود.
+    # در حالت CASH، مالیات واگذاری به صورت خودکار صفر در نظر گرفته می‌شود.
+    "exercise_settlement_type": "PHYSICAL",
+
+    # فعال‌سازی فالبک به قیمت نظری در صورت عدم وجود معامله در روز (ماده ۲۴)
+    "use_theoretical_price_fallback": False,
 }
 
 

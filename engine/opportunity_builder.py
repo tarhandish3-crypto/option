@@ -3,7 +3,6 @@
 
 """
 OpportunityBuilder — هماهنگ‌کننده و کارخانه واحد ساخت شیء Opportunity.
-کد کاملاً بازنویسی شده و فاقد هرگونه محاسبات فرعی، مارجین یا اسکورینگ داخلی است.
 """
 
 from __future__ import annotations
@@ -69,7 +68,8 @@ class OpportunityBuilder:
             if contract.option_type != OptionType.STOCK:
                 days_to_maturity = contract.days_to_maturity
 
-        metadata = OpportunityBuilder._build_leg_metadata(legs, contract_scores)
+        metadata = OpportunityBuilder._build_leg_metadata(
+            legs, contract_scores)
 
         # پیدا کردن اندازه قرارداد معتبر آپشن‌های موجود در استراتژی جهت نرمال‌سازی سهم پایه
         base_option_size = 1000
@@ -90,9 +90,11 @@ class OpportunityBuilder:
                         legs=valid_legs,
                         underlying_price=spot,
                         underlying_symbol=underlying.ticker,)
-                    required_margin = float(margin_result.required_margin) if hasattr(margin_result, 'required_margin') else float(margin_result or 0.0)
+                    required_margin = float(margin_result.required_margin) if hasattr(
+                        margin_result, 'required_margin') else float(margin_result or 0.0)
             except Exception as e:
-                logger.debug(f"Margin calculation failed via MarginCalculator: {e}")
+                logger.debug(
+                    f"Margin calculation failed via MarginCalculator: {e}")
 
         # ── ۳. واگذاری نمره‌دهی نقدشوندگی و اجرا به ماژول تخصصی scoring ──────────────────
         liquidity_score = LiquidityScorer.score_strategy(legs, contract_scores)
@@ -102,8 +104,9 @@ class OpportunityBuilder:
         try:
             price_levels = config.get_price_levels(spot)
 
+            # 🟢 اعمال تغییرات هماهنگی زنجیره پ&ال و قوانین کارمزد:
             payoff = IranMarketPayoffCalculator.calculate_payoff(
-                legs=legs, 
+                legs=legs,
                 spot_price=spot,
                 price_levels=price_levels,
                 required_margin=required_margin,
@@ -114,11 +117,12 @@ class OpportunityBuilder:
             max_profit = payoff.max_profit if payoff.max_profit is not None else 0.0
             max_loss = payoff.max_loss if payoff.max_loss is not None else 0.0
             break_even = payoff.break_even_points
-            total_premium = payoff.net_premium  
+            total_premium = payoff.net_premium
             metadata['price_levels'] = price_levels
-            
+
         except Exception as e:
-            logger.error(f"Payoff calculation failed via PayoffCalculator for {strategy_def.name}: {e}")
+            logger.error(
+                f"Payoff calculation failed via PayoffCalculator for {strategy_def.name}: {e}")
             returns_pct = np.array([], dtype=float)
             max_profit, max_loss, total_premium = 0.0, 0.0, 0.0
             break_even = []
@@ -166,22 +170,35 @@ class OpportunityBuilder:
             if valid_legs and spot > 0:
                 margin_result = MarginCalculator.calculate_strategy_margin(
                     legs=valid_legs, underlying_price=spot, underlying_symbol=ticker)
-                required_margin = float(margin_result.required_margin) if hasattr(margin_result, 'required_margin') else float(margin_result or 0.0)
+                required_margin = float(margin_result.required_margin) if hasattr(
+                    margin_result, 'required_margin') else float(margin_result or 0.0)
         except Exception as e:
             logger.debug(f"Legacy create_opportunity margin failed: {e}")
 
-        # ارجاع محاسبات پی‌آف و پرمیوم به مرجع تخصصی برداری بورس ایران
+        # 🟢 استخراج داینامیک base_option_size برای هماهنگی کامل متد لگاسی با ماژول محاسبات
+        base_option_size = 1000
+        for leg in legs:
+            if leg.contract and leg.contract.option_type != OptionType.STOCK:
+                if leg.contract.contract_size > 0:
+                    base_option_size = leg.contract.contract_size
+                    break
+
+        # ارجاع محاسبات پی‌آف و پرمیوم به مرجع تخصصی برداری بورس ایران همراه با متغیرهای زمانی و اندازه قرارداد
         try:
             price_levels = config.get_price_levels(spot)
             payoff = IranMarketPayoffCalculator.calculate_payoff(
-                legs=legs, spot_price=spot,
+                legs=legs,
+                spot_price=spot,
                 price_levels=price_levels,
-                required_margin=required_margin)
-            
+                required_margin=required_margin,
+                days_to_maturity=days_to_maturity,
+                base_option_size=base_option_size)
+
             total_premium = payoff.net_premium
             returns_pct = payoff.returns_pct
             derived_break_even = payoff.break_even_points
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Legacy create_opportunity payoff failed: {e}")
             total_premium = 0.0
             returns_pct = np.array([], dtype=float)
             derived_break_even = []
@@ -190,7 +207,8 @@ class OpportunityBuilder:
         liquidity_score = LiquidityScorer.score_strategy(legs, {})
 
         if break_even_points is None:
-            break_even_points = derived_break_even if derived_break_even else metadata.get("break_even_points", [])
+            break_even_points = derived_break_even if derived_break_even else metadata.get(
+                "break_even_points", [])
 
         return Opportunity(
             strategy_name=strategy_name,
@@ -200,8 +218,10 @@ class OpportunityBuilder:
             timestamp=datetime.now(),
             required_margin=required_margin,
             net_premium=total_premium,
-            max_profit=metadata.get("max_profit", float(np.max(returns_pct)) if len(returns_pct) > 0 else 0.0),
-            max_loss=metadata.get("max_loss", float(np.min(returns_pct)) if len(returns_pct) > 0 else 0.0),
+            max_profit=metadata.get("max_profit", float(
+                np.max(returns_pct)) if len(returns_pct) > 0 else 0.0),
+            max_loss=metadata.get("max_loss", float(
+                np.min(returns_pct)) if len(returns_pct) > 0 else 0.0),
             pop=metadata.get("pop", 0.0),
             risk_reward_ratio=metadata.get("risk_reward_ratio", 0.0),
             expected_return_pct=metadata.get("expected_return_pct", 0.0),

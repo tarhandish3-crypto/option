@@ -77,7 +77,6 @@ class MarginCalculator:
         """
         تبدیل موقعیت‌های ورودی (مدل مرجع یا دیکشنری) به LegDefinition استاندارد لایه تحلیل
         """
-        # حالت اول: ورودی یک شیء پایتونی (Object-based Leg) است
         if hasattr(leg, 'contract') and leg.contract:
             contract = leg.contract
             opt_type = getattr(contract, 'option_type')
@@ -111,7 +110,6 @@ class MarginCalculator:
                 ratio=ratio,
                 entry_price=entry_price)
 
-        # حالت دوم: ورودی دیکشنری است (تست‌باکس‌ها / لایه Legacy API)
         elif isinstance(leg, dict):
             is_stock = leg.get('is_stock_leg', False) or leg.get('type') == 0 or leg.get('option_type') == OptionType.STOCK
             
@@ -149,7 +147,6 @@ class MarginCalculator:
 
     @classmethod
     def _prepare_legs(cls, legs: List) -> List[LegDefinition]:
-        """آماده‌سازی یکپارچه لِگ‌ها پیش از شروع محاسبات مارجین"""
         return [cls._convert_leg_to_internal(leg) for leg in legs]
 
     @classmethod
@@ -175,10 +172,6 @@ class MarginCalculator:
         else:
             return cls.STOCK_A, cls.STOCK_B
 
-    # ============================================================
-    # بخش ۲-۲: اعتبارسنجی پوزیشن‌ها
-    # ============================================================
-
     @classmethod
     def _validate_legs(cls, legs: List[LegDefinition]) -> None:
         if not legs:
@@ -195,7 +188,7 @@ class MarginCalculator:
                 raise ValueError(f"قیمت ورودی موقعیت {i+1} نمی‌تواند منفی باشد: {leg.entry_price}")
 
     # ============================================================
-    # بخش ۲-۳: محاسبه مارجین تک قرارداد (Naked Short)
+    # بخش ۲-۳: محاسبه مارجین تک قرارداد (Naked Short) همراه با اصلاح فرمول و سقف مارجین
     # ============================================================
 
     @classmethod
@@ -223,10 +216,16 @@ class MarginCalculator:
         base_margin_per_unit = max(base_margin_per_unit, 0.0)
 
         raw_base_margin = base_margin_per_unit * size
+        
+        # 🟢 اعمال سقف وجه تضمین (Margin Cap) برای آپشن‌های فروش (Put)
+        if contract.option_type == OptionType.PUT:
+            raw_base_margin = min(raw_base_margin, K * size)
+
         initial_margin = math.ceil(raw_base_margin / cls.ROUND_FACTOR) * cls.ROUND_FACTOR
 
+        # 🟢 اصلاح فرمول رسمی سمات: وجه تضمین لازم = وجه تضمین اولیه - پرمیوم دریافتی
         premium_total = premium * size
-        required_margin = initial_margin + premium_total
+        required_margin = max(0.0, initial_margin - premium_total)
 
         return {
             "initial_margin": float(initial_margin),
@@ -237,7 +236,7 @@ class MarginCalculator:
         }
 
     # ============================================================
-    # بخش ۲-۴: محاسبه مارجین اسپرد (Spreads)
+    # بخش ۲-۴: محاسبه مارجین اسپردها (Spreads) همراه با کسر کر دیت
     # ============================================================
 
     @classmethod
@@ -257,7 +256,7 @@ class MarginCalculator:
         size = sell_leg.contract.contract_size
         ratio = buy_leg.ratio
 
-        # فرمول یکپارچه و اصولی پرمیوم خالص (خرید منفی، فروش مثبت)
+        # پرمیوم خالص (خرید منفی، فروش مثبت)
         net_premium = (sell_leg.entry_price - buy_leg.entry_price) * size * ratio
 
         is_debit_call = (sell_leg.contract.option_type == OptionType.CALL and buy_leg.contract.strike_price < sell_leg.contract.strike_price)
@@ -277,9 +276,12 @@ class MarginCalculator:
 
         if is_credit_call or is_credit_put:
             spread_risk = abs(buy_leg.contract.strike_price - sell_leg.contract.strike_price) * size * ratio
+            # 🟢 کسر پرمیوم دریافتی از سقف ریسک اسپرد طبق فرمول سمات
+            required_margin = max(0.0, spread_risk - net_premium) if net_premium > 0 else spread_risk
+            
             return MarginResult(
                 initial_margin=spread_risk,
-                required_margin=spread_risk,
+                required_margin=required_margin,
                 strategy_type="credit_spread",
                 is_spread=True,
                 net_premium=net_premium,
@@ -324,7 +326,7 @@ class MarginCalculator:
             required_margin=total_required,
             strategy_type="naked",
             is_spread=False,
-            net_premium=-total_net_premium,  # دریافت پوزیشن فروش کر دیت است
+            net_premium=-total_net_premium,
             premium_effect=0.0,
             breakdown=breakdown
         )
@@ -378,10 +380,13 @@ class MarginCalculator:
         net_premium = sum(
             (1 if leg.side == Side.BUY else -1) * leg.ratio * leg.entry_price * leg.contract.contract_size
             for leg in legs)
+        
+        # 🟢 کسر کر دیت خالص کل استراتژی از وجه تضمین نهایی آیرون کندور
+        required_margin = max(0.0, max_risk + net_premium) if net_premium < 0 else max_risk
 
         return MarginResult(
             initial_margin=max_risk,
-            required_margin=max_risk,
+            required_margin=required_margin,
             strategy_type="iron_condor",
             is_spread=True,
             net_premium=net_premium,
@@ -423,10 +428,12 @@ class MarginCalculator:
         net_premium = sum(
             (1 if leg.side == Side.BUY else -1) * leg.ratio * leg.entry_price * leg.contract.contract_size
             for leg in legs)
+        
+        required_margin = max(0.0, spread_width + net_premium) if net_premium < 0 else spread_width
 
         return MarginResult(
             initial_margin=spread_width,
-            required_margin=spread_width,
+            required_margin=required_margin,
             strategy_type="butterfly",
             is_spread=True,
             net_premium=net_premium,
@@ -463,7 +470,6 @@ class MarginCalculator:
         buy_legs = [l for l in option_legs if l.side == Side.BUY]
         sell_legs = [l for l in option_legs if l.side == Side.SELL]
 
-        # محاسبه ایمن نت‌پرمیوم کل استراتژی بر مبنای خرید/فروش موقعیت‌ها
         net_premium = sum(
             (1 if l.side == Side.BUY else -1) * l.ratio * l.entry_price * l.contract.contract_size
             for l in prepared_legs)
@@ -518,7 +524,6 @@ class MarginCalculator:
         prepared_legs = cls._prepare_legs(legs)
         result = cls.calculate_strategy_margin(prepared_legs, underlying_price, asset_type, underlying_symbol)
 
-        # تفکیک دقیق فاکتور هزینه خرید آپشن‌ها از لنگه‌های موقعیت خرید نقدی
         total_option_buy_cost = sum(
             l.entry_price * l.contract.contract_size * l.ratio
             for l in prepared_legs
