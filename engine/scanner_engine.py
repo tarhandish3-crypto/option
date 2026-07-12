@@ -135,7 +135,7 @@ class ScannerEngine:
         try:
             opts = self.snapshot.get_options_by_underlying(ticker)
             if not opts or len(opts) < 2:
-                return []
+                        return []
 
             scanner = Scanner(self.snapshot)
             raw_opportunities = scanner.scan_ticker_with_strategies(

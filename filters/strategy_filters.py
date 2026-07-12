@@ -14,6 +14,21 @@ from core.models import Opportunity
 logger = logging.getLogger("OptionScanner.Filters.StrategyFilters")
 
 
+def get_dte_factor(days_to_maturity: int) -> float:
+    """
+    محاسبه ضریب تعدیل بر اساس زمان تا سررسید
+    """
+    # مبنا: ۳۰ روز (میانگین)
+    BASE_DTE = 30
+    # اگر DTE صفر یا نامشخص باشد، از ۳۰ استفاده کن
+    if days_to_maturity <= 0:
+        return 1.0
+    
+    # ضریب تعدیل: (DTE / BASE_DTE) ^ 0.5
+    # استفاده از ریشه دوم برای کاهش اثر نوسانات شدید
+    return min(2.0 , (days_to_maturity / BASE_DTE) ** 0.5)
+
+
 def apply_strategy_filter(opp: Opportunity, user_conditions: Dict[str, Any] = None) -> bool:
     """
     فیلتر اصلی هوشمند بر اساس درصد بازدهی روی شیء Opportunity
@@ -29,42 +44,65 @@ def apply_strategy_filter(opp: Opportunity, user_conditions: Dict[str, Any] = No
 
     max_ret = float(np.max(returns))
     min_ret = float(np.min(returns))
+    
+    days_to_maturity = getattr(opp, 'days_to_maturity')
+    dte_factor = get_dte_factor(days_to_maturity)
 
     # =====================================================
     # فیلترهای اختصاصی استراتژی
     # =====================================================
     if "covered_call" in name:
-        return max_ret >= 0 and min_ret > -15.0
+        max_loss_threshold = -15.0 * dte_factor 
+        return max_ret >= 0 and min_ret > max_loss_threshold
 
     elif "married_put" in name:
-        return min_ret > -12.0 and max_ret > 0
+        max_loss_threshold = -12.0 * dte_factor 
+        return min_ret > max_loss_threshold and max_ret > 0
 
     elif "collar" in name:
-        return max_ret > 3.0 and min_ret > -10.0
+        min_profit_threshold = 3.0 * dte_factor 
+        max_loss_threshold = -10.0 * dte_factor 
+        return max_ret > min_profit_threshold and min_ret > max_loss_threshold
 
     elif "bull_call_spread" in name or "bear_put_spread" in name:
-        return max_ret > 8.0 and min_ret > -25.0
+        min_profit_threshold = 8.0 * dte_factor 
+        max_loss_threshold = -25.0 * dte_factor 
+        return max_ret > min_profit_threshold and min_ret > max_loss_threshold
 
     elif "long_straddle" in name or "long_strangle" in name:
-        return max_ret > 25.0 or np.max(np.abs(returns)) > 35.0
+        # if opp.metadata['l2_ticker'] == 'ضملت4022':
+        #     pass
+        min_profit_threshold = 25.0 * dte_factor 
+        max_move_threshold = 35.0 * dte_factor 
+        return max_ret > min_profit_threshold or np.max(np.abs(returns)) > max_move_threshold
 
     elif "strap" in name:
-        return max_ret > 22.0 and min_ret > -28.0
+        min_profit_threshold = 22.0 * dte_factor 
+        max_loss_threshold = -28.0 * dte_factor 
+        return max_ret > min_profit_threshold and min_ret > max_loss_threshold
 
     elif "strip" in name:
-        return min_ret < -22.0 and max_ret < 32.0
+        max_loss_threshold = -22.0 * dte_factor 
+        max_profit_threshold = 32.0 * dte_factor 
+        return min_ret < max_loss_threshold and max_ret < max_profit_threshold
 
     elif "long_box" in name or "conversion" in name:
-        return min_ret > -5.0 and max_ret < 18.0
+        max_loss_threshold = -5.0 * dte_factor 
+        max_profit_threshold = 15.0 * dte_factor 
+        return min_ret > max_loss_threshold and max_ret < max_profit_threshold
 
     elif "iron_condor" in name:
+        # فیلتر هوشمند بر اساس بخش میانی توزیع
+        max_loss_threshold = -18.0 * dte_factor 
         mid = returns[returns.size // 4 : 3 * returns.size // 4]
-        return np.mean(mid) > 0 and min_ret > -18.0
+        return np.mean(mid) > 0 and min_ret > max_loss_threshold
+        
 
     # =====================================================
     # فیلترهای عمومی کاربر
     # =====================================================
     if "min_max_profit_pct" in user_conditions:
+            # کاربر ممکن است سود ماهانه را مشخص کند
         if max_ret < user_conditions["min_max_profit_pct"]:
             return False
 
@@ -73,22 +111,25 @@ def apply_strategy_filter(opp: Opportunity, user_conditions: Dict[str, Any] = No
             return False
 
     # فیلتر پیش‌فرض
-    return max_ret >= -5.0
+    default_loss_threshold = -2.0 * dte_factor 
+    return max_ret >= -2.0 and min_ret > default_loss_threshold
 
 
 def filter_payoff_matrix_vectorized(
     strategy_names: List[str],
-    returns_matrix: np.ndarray
-) -> np.ndarray:
+    returns_matrix: np.ndarray) -> np.ndarray:
     """
     فیلتر برداری سریع روی ماتریس درصد بازدهی برای غربالگری دسته‌ای
     """
     num = len(strategy_names)
     keep = np.ones(num, dtype=bool)
+    
+    dtes = [30] * num
 
     for i in range(num):
         name = strategy_names[i].lower()
         rets = returns_matrix[i]
+        dte = dtes[i] if i < len(dtes) else 30
 
         if rets.size == 0:
             keep[i] = False
@@ -96,17 +137,25 @@ def filter_payoff_matrix_vectorized(
 
         max_r = float(np.max(rets))
         min_r = float(np.min(rets))
+        # فیلترهای پویا بر اساس DTE
+        max_loss_threshold = -15.0 * (dte / 30.0)
+        min_profit_threshold = 3.0 * (30.0 / dte) if dte > 0 else 3.0
 
         if "covered_call" in name:
-            keep[i] = max_r >= 0 and min_r > -15.0
+            keep[i] = max_r >= 0 and min_r > max_loss_threshold
         elif "collar" in name:
-            keep[i] = max_r > 3.0 and min_r > -10.0
+            keep[i] = max_r > min_profit_threshold and min_r > max_loss_threshold
         elif "iron_condor" in name:
-            keep[i] = min_r > -18.0
+            max_loss_threshold_ic = -18.0 * (dte / 30.0)
+            keep[i] = min_r > max_loss_threshold_ic
         elif "strap" in name:
-            keep[i] = max_r > 22.0 and min_r > -28.0
+            min_profit_threshold_s = 22.0 * (30.0 / dte) if dte > 0 else 22.0
+            max_loss_threshold_s = -28.0 * (dte / 30.0)
+            keep[i] = max_r > min_profit_threshold_s and min_r > max_loss_threshold_s
         elif "strip" in name:
-            keep[i] = min_r < -22.0 and max_r < 32.0
+            max_loss_threshold_st = -22.0 * (dte / 30.0)
+            max_profit_threshold_st = 32.0 * (30.0 / dte) if dte > 0 else 32.0
+            keep[i] = min_r < max_loss_threshold_st and max_r < max_profit_threshold_st
         elif max_r < -8.0:
             keep[i] = False
 

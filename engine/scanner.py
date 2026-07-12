@@ -99,8 +99,6 @@ class Scanner:
         get_stats_attr = getattr
 
         for strategy_name, strategy_def in all_strategies.items():
-            if strategy_name == "strip":
-                pass
             try:
                 generator = get_generator_func(strategy_def)
                 if generator is None:

@@ -238,6 +238,8 @@ class ExcelExporter:
             # اعمال قواعد شرطی گرافیکی و فعال‌سازی ابزار فیلتر اکسل
             self._apply_conditional_formatting(worksheet, df)
             self._enable_autofilter(worksheet, df)
+            
+            worksheet.freeze_panes = 'A2'
 
             # تنظیم خودکار و دقیق عرض ستون‌ها بر اساس طول کاراکترهای فارسی و انگلیسی
             for col in worksheet.columns:
@@ -353,6 +355,9 @@ class ExcelExporter:
             cell.font = self.header_font
             cell.fill = self.header_fill
             cell.alignment = self.header_alignment
+        
+        # سطر اول و ستون اول ثابت می‌مانند
+        scores_ws.freeze_panes = 'A2'
 
         # بارگذاری ردیف‌ها
         for r_idx, row in enumerate(sub_df.values, start=2):

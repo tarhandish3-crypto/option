@@ -2,12 +2,6 @@
 
 """
 پاکسازی و پیش‌پردازش داده‌های بازار اختیار معامله
-
-وظایف:
-    1. حذف داده‌های نامعتبر و
-    2. مدیریت صف‌های خرید و فروش (Bid/Ask Queue)
-    3. محاسبه ستون‌های مشتق شده (Intrinsic Value, Mid Price, Time Value, Moneyness)
-    4. نرمالایز کردن داده‌ها برای استفاده در موتور اسکن
 """
 
 import pandas as pd
@@ -15,6 +9,7 @@ import numpy as np
 import logging
 from core.enums import OptionType, OptionStatus
 from config import MIN_VOLUME, MAX_SPREAD_PCT, DaysToMaturity
+
 logger = logging.getLogger("OptionScanner.Data.Cleaner")
 
 
@@ -45,20 +40,18 @@ class DataCleaner:
         min_volume = MIN_VOLUME
         df = DataCleaner._filter_volume(df, min_volume)
 
-        # 3. مدیریت صف‌های خرید و فروش
-        # چون در مرحله قبلی حجم صفر حذف شده لذا مدیریت صف درست انجام میشود
+        # 3. مدیریت و حذف صف‌های غیرقابل معامله (تعداد یا حجم صفر)
         df = DataCleaner._handle_queues(df)
 
         # 4. فیلتر سررسید
         df = DataCleaner._filter_maturity(df, DaysToMaturity)
 
         # DEBUG_SYMBOls = ['اهرم', 'اخابر']
-        DEBUG_SYMBOls = ['اهرم']
+        # DEBUG_SYMBOls = ['اهرم']
         # df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
-        # df = df[df['Ticker'].isin(['ضهرم4024', 'ضهرم4033', 'طهرم4032'])]
-        
-        after_debug = len(df)
+        df = df[df['Ticker'].isin(['ضهرم4024', 'ضهرم4033', 'طهرم4032'])]
 
+        after_debug = len(df)
         removed_count = original_count - after_debug
         logger.info(
             f"Cleaning complete: {len(df)} records kept, {removed_count} removed")
@@ -75,10 +68,10 @@ class DataCleaner:
         before = len(df)
 
         if 'StrikePrice' in df.columns:
-            df = df[df['StrikePrice'] > 0]
+            df = df[df['StrikePrice'] > 1]
 
         if 'LastPrice' in df.columns:
-            df = df[df['LastPrice'] > 0]
+            df = df[df['LastPrice'] > 1]
 
         if before - len(df) > 0:
             logger.debug(
@@ -88,22 +81,35 @@ class DataCleaner:
 
     @staticmethod
     def _handle_queues(df: pd.DataFrame) -> pd.DataFrame:
-        """مدیریت صف‌های خرید و فروش"""
+        """
+        مدیریت و فیلتر صف‌های خرید و فروش.
+        """
+        before_count = len(df)
 
-        df = df.copy()
-        # صف خرید
-        bid_queue = (df['AskPrice'] == 0) & (df['BidPrice'] > 0)
-        if bid_queue.any():
-            df.loc[bid_queue, 'LastPrice'] = df.loc[bid_queue, 'BidPrice']
-            df.loc[bid_queue, 'ClosePrice'] = df.loc[bid_queue, 'BidPrice']
-            logger.debug(f"Queue bid: {bid_queue.sum()} records")
+        # تبدیل نوع داده به float جهت مقایسه امن
+        bid_p = df['BidPrice'].values.astype(float)
+        bid_v = df['BidVolume'].values.astype(float)
+        ask_p = df['AskPrice'].values.astype(float)
+        ask_v = df['AskVolume'].values.astype(float)
 
-        # صف فروش
-        ask_queue = (df['BidPrice'] == 0) & (df['AskPrice'] > 0)
-        if ask_queue.any():
-            df.loc[ask_queue, 'LastPrice'] = df.loc[ask_queue, 'AskPrice']
-            df.loc[ask_queue, 'ClosePrice'] = df.loc[ask_queue, 'AskPrice']
-            logger.debug(f"Queue ask: {ask_queue.sum()} records")
+        # ✅ ۱. حذف قراردادهای کاملاً مرده (صف خرید و فروش هر دو صفر)
+        dead_market = (bid_p == 0) & (ask_p == 0)
+
+        # ✅ ۲. حذف صف‌های یک‌طرفه فاقد اعتبار (مانند نمونه ارسالی شما: قیمت عرضه هست اما تقاضا حجم و تعدادش صفر است)
+        # صف خرید معلق (بدون خریدار واقعی) یا صف فروش معلق (بدون فروشنده واقعی)
+        empty_bid = (bid_p == 0) | (bid_v == 0)
+        empty_ask = (ask_p == 0) | (ask_v == 0)
+
+        # قراردادهایی که فاقد هرگونه موقعیت معامله معتبر در یکی از طرفین اصلی هستند، نگهداری نمی‌شوند
+        invalid_queues = dead_market | empty_bid | empty_ask
+
+        # فیلتر کردن و نگه‌داشتن ردیف‌های معتبر
+        df = df[~invalid_queues].reset_index(drop=True)
+
+        removed = before_count - len(df)
+        if removed > 0:
+            logger.debug(
+                f"Removed {removed} contracts due to empty/invalid order book queues (0 volume/price rows).")
 
         return df
 
@@ -176,13 +182,11 @@ class DataCleaner:
             K = df['StrikePrice'].values.astype(float)
             is_call = (df['Type'] == OptionType.CALL).values
 
-            # جلوگیری از تقسیم بر صفر
             S_safe = np.where(S <= 0, np.nan, S)
 
             df['Moneyness'] = np.where(is_call, S / K, K / S_safe)
             df['Moneyness'] = np.nan_to_num(df['Moneyness'], 1.0)
 
-            # وضعیت ITM/ATM/OTM
             conditions = [
                 (df['Type'] == OptionType.CALL) & (
                     df['UnderlyingPrice'] > df['StrikePrice']),
@@ -192,13 +196,14 @@ class DataCleaner:
                 (df['Type'] == OptionType.CALL) & (
                     df['UnderlyingPrice'] < df['StrikePrice']),
                 (df['Type'] == OptionType.PUT) & (
-                    df['UnderlyingPrice'] > df['StrikePrice'])]
+                    df['UnderlyingPrice'] > df['StrikePrice'])
+            ]
             choices = [
-                OptionStatus.ITM.value,  # ITM Call
-                OptionStatus.ITM.value,  # ITM Put
-                OptionStatus.ATM.value,  # ATM
-                OptionStatus.OTM.value,  # OTM Call
-                OptionStatus.OTM.value   # OTM Put
+                OptionStatus.ITM.value,
+                OptionStatus.ITM.value,
+                OptionStatus.ATM.value,
+                OptionStatus.OTM.value,
+                OptionStatus.OTM.value
             ]
             df['OptionStatus'] = np.select(
                 conditions, choices, default='Unknown')

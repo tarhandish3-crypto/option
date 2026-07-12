@@ -152,8 +152,7 @@ class OptionScanner:
             # فیلتر پویا
             filtered_opportunities = [
                 opp for opp in scan_result.opportunities
-                if opp is not None and apply_strategy_filter(opp)
-            ]
+                if opp is not None and apply_strategy_filter(opp)]
 
             if not filtered_opportunities:
                 logger.warning("No opportunities passed the dynamic filters.")

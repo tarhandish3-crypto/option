@@ -30,6 +30,8 @@ EXERCISE_FEE_RATE: Dict[tuple, float] = {
     ('ifb', 'stock'): 0.0005,       # ۰.۱٪ برای سهام فرابورس
     ('tse', 'etf-stock'): 0.0005,  # ۰.۰۵٪ برای ETF سهامی
     ('ifb', 'etf-stock'): 0.0005,  # ۰.۰۵٪ برای ETF سهامی فرابورس
+    ('tse', 'etf-leverage'): 0.0005,  # صندوق های اهرمی
+    ('ifb', 'etf-leverage'): 0.0005,
     ('tse', 'etf-fix'): 0.0005,    # ۰.۰۲٪ برای ETF درآمد ثابت
     ('ifb', 'etf-fix'): 0.0005,    # ۰.۰۲٪ برای ETF درآمد ثابت فرابورس
     ('tse', 'etf-gold'): 0.0005,   # ۰.۰۵٪ برای ETF طلا
@@ -51,10 +53,14 @@ OPTION_SELL_COMMISSION = 0.00103  # ۰.۱۰۳٪ کارمزد فروش اختیا
 
 COMMISSION_DICT = {
     # ===== سهام (Stock) =====
-    ('tse', 'stock', True): 0.003712,      # خرید سهام بورس
-    ('tse', 'stock', False): 0.0088,       # فروش سهام بورس
-    ('ifb', 'stock', True): 0.003632,      # خرید سهام فرابورس
-    ('ifb', 'stock', False): 0.0088,       # فروش سهام فرابورس
+    # خرید سهام بورس (STOCK, market:1, side:true)
+    ('tse', 'stock', True): 0.003712,
+    # فروش سهام بورس (STOCK, market:1, side:false)
+    ('tse', 'stock', False): 0.0088,
+    # خرید سهام فرابورس (STOCK, market:2, side:true)
+    ('ifb', 'stock', True): 0.003632,
+    # فروش سهام فرابورس (STOCK, market:2, side:false)
+    ('ifb', 'stock', False): 0.0088,
 
     # ===== ETF سهام (ETF Stock) =====
     ('tse', 'etf-stock', True): 0.00232,   # خرید ETF سهام بورس
@@ -62,9 +68,17 @@ COMMISSION_DICT = {
     ('ifb', 'etf-stock', True): 0.00232,   # خرید ETF سهام فرابورس
     ('ifb', 'etf-stock', False): 0.002375,  # فروش ETF سهام فرابورس
 
-    # ===== ETF طلا (ETF Gold) =====
-    ('tse', 'etf-gold', True): 0.0012,     # خرید ETF طلا
-    ('tse', 'etf-gold', False): 0.0012,    # فروش ETF طلا
+    # ===== ETF اهرمی (ETF Leverage) =====
+    # اضافه شده جهت انطباق با نگاشت تفکیک‌شده نمادهای اهرم، توان و موج
+    ('tse', 'etf-leverage', True): 0.00232,
+    ('tse', 'etf-leverage', False): 0.002375,
+    ('ifb', 'etf-leverage', True): 0.00232,
+    ('ifb', 'etf-leverage', False): 0.002375,
+
+    # ===== ETF طلا / کالا (ETF Gold) =====
+    # بر اساس داده‌های market:3 و kind:OPTION (یا دارایی‌های کالا) در صورت نیاز به توسعه
+    ('tse', 'etf-gold', True): 0.0012,
+    ('tse', 'etf-gold', False): 0.0012,
 
     # ===== ETF درآمد ثابت (ETF Fix) =====
     ('tse', 'etf-fix', True): 0.000375,    # خرید ETF درآمد ثابت بورس
@@ -74,15 +88,16 @@ COMMISSION_DICT = {
 
     # ===== ETF مختلط (ETF Mix) =====
     ('tse', 'etf-mix', True): 0.001215,    # خرید ETF مختلط بورس
-    ('tse', 'etf-mix', False): 0.0013225,  # فروش ETF مختلط بورس
+    # اصلاح شده: فروش ETF مختلط بورس (طبق جیسون: 0.001323)
+    ('tse', 'etf-mix', False): 0.001323,
     ('ifb', 'etf-mix', True): 0.001215,    # خرید ETF مختلط فرابورس
-    ('ifb', 'etf-mix', False): 0.0013225,  # فروش ETF مختلط فرابورس
+    ('ifb', 'etf-mix', False): 0.001323,   # اصلاح شده: فروش ETF مختلط فرابورس
 
     # ===== اختیار معامله (Option) =====
-    # اصلاح تداخل نرخ‌های فرابورس با سهام عادی و انطباق با کارمزد مصوب ۰.۱۰۳٪
     ('tse', 'option', True): 0.00103,      # خرید اختیار بورس
     ('tse', 'option', False): 0.00103,     # فروش اختیار بورس
-    ('ifb', 'option', True): 0.00103,      # خرید اختیار فرابورس
+    # اصلاح شده: خرید اختیار فرابورس (طبق جیسون: 0.00102)
+    ('ifb', 'option', True): 0.00102,
     ('ifb', 'option', False): 0.00103,     # فروش اختیار فرابورس
 }
 
@@ -92,51 +107,37 @@ COMMISSION_DICT = {
 
 SYMBOL_INFO = {
     # ===== سهام بورس (TSE Stock) =====
-    'اخابر':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'وبملت':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'وتجارت':  {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'فولاد':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'اخابر':    {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'تاصیکو':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'خبهمن':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'خساپا':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'خودرو':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'ذوب':     {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'شپنا':    {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'شستا':    {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
     'فملی':    {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
     'وبصادر':  {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'خودرو':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'شستا':    {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'خساپا':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'شپنا':    {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'خبهمن':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'ذوب':     {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-    'خگستر':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'وبملت':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
+    'وتجارت':  {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
 
     # ===== سهام فرابورس (IFB Stock) =====
-    'اهرم':    {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
-    'خاور':    {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
-    'خپارس':   {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
     'فزر':     {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
-    'فسوژ':    {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
-    'سامان':   {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
-    'وتعاون':  {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
-    'بساما':   {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
 
-    # ===== ETF سهام (ETF Stock) =====
-    'آساس':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
+    # ===== ETF سهام بورس (TSE ETF Stock) =====
+    # صندوق اهرمی بورس
+    'اهرم':    {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-leverage'},
+    # صندوق شاخصی هم‌وزن بورس
+    'هم تراز': {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-stock'},
+
+    # ===== ETF سهام فرابورس (IFB ETF Stock) =====
+    # صندوق توسعه اطلس فرابورس
     'اطلس':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'بیدار':   {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-stock'},
-    'پادا':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'شتاب':    {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-stock'},
-    'توان':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'تیام':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'جهش':     {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-stock'},
-    'خودران':  {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-stock'},
-    'رویین':   {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'کاریس':   {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'موج':     {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'نارنج':   {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'هم وزن':  {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'پتروآبان': {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'پناه':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    'ثمین':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-
-    # ===== ETF طلا (ETF Gold) =====
-    'طلا':     {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-gold'},
+    # صندوق اهرمی توان فرابورس
+    'توان':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-leverage'},
+    # صندوق بخشی فرابورس
+    'طعام':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
+    # صندوق اهرمی موج فرابورس
+    'موج':     {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-leverage'},
 }
 
 # =====================================================
@@ -156,7 +157,7 @@ PRICE_RANGE_CONFIG = {
 # =====================================================
 
 DaysToMaturity = 2               # حداقل روز تا سررسید
-MIN_VOLUME = 1                   # حداقل حجم معاملات روزانه
+MIN_VOLUME = 3                   # حداقل حجم معاملات روزانه
 MIN_OPEN_INTEREST = 50           # حداقل موقعیت‌های باز
 MAX_SPREAD_PCT = 0.05            # حداکثر اسپرد قابل قبول (5%)
 LIQUIDITY_SCORE_THRESHOLD = 1.0  # آستانه امتیاز نقدشوندگی
@@ -175,7 +176,7 @@ HISTORICAL_VOLATILITY_WINDOW = 30  # پنجره محاسبه نوسان تاری
 # تنظیمات کش (Cache Settings)
 # =====================================================
 
-CACHE_TTL_SECONDS = 60           # زمان انقضای کش (ثانیه)
+CACHE_TTL_SECONDS = 6000           # زمان انقضای کش (ثانیه)
 MAX_CACHE_SIZE = 30000           # حداکثر تعداد آیتم‌های کش
 CACHE_ENABLED = True             # فعال/غیرفعال کردن کش
 
@@ -485,7 +486,7 @@ def get_commission_rate(
     دریافت نرخ کارمزد بر اساس نوع بازار و دارایی
     """
     key = (market, asset_type, is_buy)
-    return COMMISSION_DICT.get(key, 0.00103)  # مقدار پیش‌فرض
+    return COMMISSION_DICT.get(key)  # مقدار پیش‌فرض
 
 
 def get_exercise_fee_rate(market: str, kind: str) -> float:
@@ -493,7 +494,7 @@ def get_exercise_fee_rate(market: str, kind: str) -> float:
     دریافت نرخ کارمزد اعمال بر اساس بازار و نوع دارایی
     """
     key = (market, kind)
-    return EXERCISE_FEE_RATE.get(key, 0.001)  # ۰.۱٪ پیش‌فرض
+    return EXERCISE_FEE_RATE.get(key)  # ۰.۱٪ پیش‌فرض
 
 
 def get_symbol_info(symbol: str) -> Optional[Dict[str, Any]]:
