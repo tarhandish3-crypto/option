@@ -7,6 +7,7 @@ import pkgutil
 import logging
 from typing import Dict, Optional, List
 
+from config import ACTIVE_STRATEGIES
 from strategies.base import StrategyDefinition, GeneratorType
 
 logger = logging.getLogger("OptionScanner.Strategies.Core")
@@ -31,9 +32,14 @@ def _load_strategies():
         import strategies.definitions as defs_module
         
         loaded_count = 0
+        active_set = set(ACTIVE_STRATEGIES) if ACTIVE_STRATEGIES else set()
         for _, name, _ in pkgutil.iter_modules(defs_module.__path__):
+            
+            if name not in active_set:
+                continue
             try:
                 imported_module = importlib.import_module(f"strategies.definitions.{name}")
+            
                 if hasattr(imported_module, "DEFINITION"):
                     strategy = getattr(imported_module, "DEFINITION")
                     _strategies[strategy.name] = strategy

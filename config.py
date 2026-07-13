@@ -147,7 +147,7 @@ SYMBOL_INFO = {
 PRICE_RANGE_CONFIG = {
     "min_percent": -50,          # حداقل درصد تغییر قیمت
     "max_percent": 50,           # حداکثر درصد تغییر قیمت
-    "num_points": 3,            # تعداد نقاط (گام‌ها)
+    "num_points": 21,            # تعداد نقاط (گام‌ها)
     "step_size": None,           # اگر None باشد، بر اساس num_points محاسبه می‌شود
     "labels_format": "{:.0f}%",  # فرمت برچسب‌ها
 }
@@ -176,8 +176,8 @@ HISTORICAL_VOLATILITY_WINDOW = 30  # پنجره محاسبه نوسان تاری
 # تنظیمات کش (Cache Settings)
 # =====================================================
 
-CACHE_TTL_SECONDS = 6000           # زمان انقضای کش (ثانیه)
-MAX_CACHE_SIZE = 30000           # حداکثر تعداد آیتم‌های کش
+CACHE_TTL_SECONDS = 6           # زمان انقضای کش (ثانیه)
+MAX_CACHE_SIZE = 3000           # حداکثر تعداد آیتم‌های کش
 CACHE_ENABLED = True             # فعال/غیرفعال کردن کش
 
 # =====================================================
@@ -210,14 +210,17 @@ SCANNER_CONFIG = {
 ACTIVE_STRATEGIES: List[str] = [
     "bull_call_spread",
     "bear_put_spread",
-    "long_straddle",
-    "covered_call",
-    "married_put",
     "collar",
-    "long_strangle",
+    "conversion",
+    "covered_call",
+    "iron_condor",
+    "long_box",
+    "long_guts",
+    # "long_straddle",
+    # "long_strangle",
+    "married_put",
     "strip",
     "strap",
-    "long_box",
 ]
 
 # =====================================================
@@ -275,7 +278,7 @@ DEFAULT_PROFILE = "balanced"
 
 RANKING_CONFIG = {
     "default_profile": DEFAULT_PROFILE,
-    "min_score_threshold": 30.0,
+    "min_score_threshold": 20.0,
     "min_profit_threshold": 0.0,
     "top_n_results": 20,
 }
@@ -301,8 +304,8 @@ EXCEL_CONFIG = {
 # =====================================================
 
 OUTPUT_CONFIG = {
-    "top_n": 100,
-    "min_score_threshold": 20.0,
+    "top_n": 200,
+    "min_score_threshold": 10.0,
     "include_chart_data": False,
     "excel_filename": "opportunities",
 }
@@ -358,10 +361,10 @@ LOGGING_CONFIG = {
 
 SYSTEM_CONFIG = {
     "scan_interval_minutes": 2,     # فاصله زمانی بین هر چرخه (دقیقه)
-    "max_cycles": 1,                # تعداد دفعات اجرا (0 = بی‌نهایت)
+    "max_cycles": 3,                # تعداد دفعات اجرا (0 = بی‌نهایت)
     "parallel_enabled": False,
     "max_workers": 3,
-    "debug_mode": True,
+    "debug_mode": False,
 }
 
 # =====================================================
