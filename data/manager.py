@@ -215,6 +215,6 @@ def Options(bsm_greeks: bool = False, use_cache: bool = True, force_refresh: boo
     if not snapshot.option_contracts:
         return pd.DataFrame()
 
-    # استخراج دیتای ساختاریافته در قالب دیکشنری پنداس
-    records = [contract.__dict__ for contract in snapshot.option_contracts]
+    from dataclasses import asdict
+    records = [asdict(contract) for contract in snapshot.option_contracts]
     return pd.DataFrame(records)
