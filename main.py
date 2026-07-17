@@ -46,8 +46,7 @@ def setup_logging() -> None:
         handlers=[
             logging.StreamHandler(sys.stdout),
             logging.FileHandler(log_dir / "scanner.log", encoding="utf-8")
-        ]
-    )
+        ])
 
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("requests").setLevel(logging.WARNING)
@@ -63,8 +62,7 @@ class OptionScanner:
     __slots__ = (
         'interval_minutes', 'parallel', 'max_workers', 'max_cycles',
         'is_running', 'cycle_count', 'data_manager', 'ranker',
-        'excel_exporter', 'chart_plotter'
-    )
+        'excel_exporter', 'chart_plotter')
 
     def __init__(
             self,

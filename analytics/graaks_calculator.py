@@ -1,4 +1,4 @@
-# data/calculator.py
+# analytics/graaks_calculator.py
 # -*- coding: utf-8 -*-
 
 """
@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 from scipy.stats import norm
 from scipy.optimize import brentq
-from typing import Optional, Union, Tuple, List, Dict
+from typing import Optional, Tuple, Dict
 import logging
 import urllib3
 from functools import lru_cache
@@ -641,7 +641,7 @@ def calculate_greeks_vectorized(df: pd.DataFrame, r_f: float) -> pd.DataFrame:
         r_f * K * exp_rt * norm.cdf(d2)
     theta_put = -(S * pdf_d1 * sigma_safe) / (2 * sqrt_t) + \
         r_f * K * exp_rt * norm.cdf(-d2)
-    theta_raw = np.where(is_call, theta_call, theta_put) / 365
+    theta_raw = np.where(is_call, theta_call, theta_put) / 252
 
     rho_raw = np.where(is_call, K * T_safe * exp_rt * norm.cdf(d2),
                        -K * T_safe * exp_rt * norm.cdf(-d2)) / 100
