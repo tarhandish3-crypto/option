@@ -20,7 +20,6 @@ class StrategyDefinition:
     name: str
     generator_type: GeneratorType
     patterns: Tuple[StrategyLegPattern, ...]
-    description: str = ""
     rules: Dict[str, Any] = field(default_factory=dict)
 
     # سازگاری با کد قدیمی — این فیلد نادیده گرفته می‌شود
@@ -53,7 +52,6 @@ class StrategyDefinition:
         generator_type: GeneratorType,
         patterns: List[Dict[str, Any]],
         include_stock: bool = False,
-        description: str = "",
         rules: Optional[Dict[str, Any]] = None,) -> "StrategyDefinition":
         """سازنده ساده برای تبدیل دیکشنری‌های خام به ساختار شیءگرا"""
         leg_patterns: List[StrategyLegPattern] = []
@@ -88,7 +86,6 @@ class StrategyDefinition:
             generator_type=generator_type,
             patterns=tuple(leg_patterns),
             include_stock=include_stock,
-            description=description,
             rules=rules or {},
         )
 
@@ -99,7 +96,6 @@ class StrategyDefinition:
             "generator_type": self.generator_type.value,
             "legs_count": self.legs_count, # استفاده از property
             "include_stock": self.include_stock,
-            "description": self.description,
             "rules": self.rules,
             "patterns": [
                 {

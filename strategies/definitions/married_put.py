@@ -26,7 +26,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Married Put - Long Stock + Long Protective Put (Insurance Strategy)",
     rules={
         "maturity_order": "same",
         "strike_order": "any",

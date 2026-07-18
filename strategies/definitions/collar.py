@@ -34,7 +34,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Collar - Long Stock + Long Put + Short Call (Hedge Strategy)",
     rules={
         "maturity_order": "same",
         "strike_order": "ascending",

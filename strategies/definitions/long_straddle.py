@@ -29,7 +29,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Long Straddle - Buy ATM Call + Buy ATM Put (Volatility Play)",
     rules={
         "strike_order": "any",           # strikeها باید برابر باشند
         "maturity_order": "same",

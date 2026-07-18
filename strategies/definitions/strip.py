@@ -29,7 +29,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Strip - Long 1 Call + Long 2 Puts at same strike (Bearish Volatility Strategy)",
     rules={
         "maturity_order": "same",
         "strike_equal": True,              # هر دو لگ باید همان strike را داشته باشند

@@ -144,8 +144,7 @@ class IranMarketCostCalculator:
 
         market = get_symbol_market(underlying_symbol)
         kind = get_symbol_kind(underlying_symbol)
-        exercise_rate = get_exercise_fee_rate(
-            market, kind)  # 0.0005 (نیم در هزار ارزش اعمال)
+        exercise_rate = get_exercise_fee_rate(market, kind)  # 0.0005 (نیم در هزار ارزش اعمال)
 
         # استخراج نوع تسویه انتخابی سیستم (PHYSICAL یا CASH)
         settlement_type = FEATURE_FLAGS.get(

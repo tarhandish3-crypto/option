@@ -26,7 +26,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Covered Call - Long Stock + Short Call (Income Generation)",
     rules={
         "maturity_order": "same",
         "strike_above_spot": True,

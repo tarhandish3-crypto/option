@@ -34,7 +34,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Bear Put Spread - Buy Higher Strike Put / Sell Lower Strike Put (Debit Spread)",
 
     rules={
         # پترن‌ها به ترتیب صعودی (K1 < K2) چیده شده‌اند تا با PatternMatcher سازگار باشند

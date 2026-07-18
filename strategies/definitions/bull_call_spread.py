@@ -29,7 +29,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Bull Call Spread - Buy Lower Strike Call / Sell Higher Strike Call (Debit Spread)",
     rules={
         "strike_order": "ascending",      # K1 < K2
         "maturity_order": "same",

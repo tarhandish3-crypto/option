@@ -45,7 +45,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Iron Condor - Neutral Range-Bound Strategy (Limited Risk / Limited Profit)",
     rules={
         "strike_order": "ascending",        # K1 < K2 < K3 < K4
         "maturity_order": "same",

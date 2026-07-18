@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 import logging
 from core.enums import OptionType, OptionStatus
-from config import MIN_VOLUME, MAX_SPREAD_PCT, DaysToMaturity
+from config import MIN_VOLUME, DaysToMaturity
 
 logger = logging.getLogger("OptionScanner.Data.Cleaner")
 
@@ -50,6 +50,14 @@ class DataCleaner:
         # DEBUG_SYMBOls = ['اهرم']
         # df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
         # df = df[df['Ticker'].isin(['ضهرم4024', 'ضهرم4033', 'طهرم4032'])]
+
+        # فيلتر سقف موقعيت هاي باز
+        EXCLUDED_UNDERLYING = ["اهرم"]
+        EXCLUDED_NAME_PATTERN = ["1405/04", "1405-04"]
+        exclude_mask = (df["UnderlyingTicker"].isin(EXCLUDED_UNDERLYING)) & (
+            df["Name"].str.contains("|".join(EXCLUDED_NAME_PATTERN), na=False))
+
+        df = df[~exclude_mask].copy()
 
         after_debug = len(df)
         removed_count = original_count - after_debug
@@ -232,6 +240,6 @@ class DataCleaner:
             df['PremiumOverIntrinsic'] = np.nan_to_num(
                 df['PremiumOverIntrinsic'], nan=0.0)
 
-        logger.debug(f"Added derived columns successfully")
+        logger.debug("Added derived columns successfully")
 
         return df

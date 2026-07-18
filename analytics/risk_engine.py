@@ -31,8 +31,6 @@ class RiskMetrics:
     expected_value: float = 0.0
     pop: float = 0.0
     sharpe_ratio: float = 0.0
-    var_95: float = 0.0
-    var_99: float = 0.0
     profit_area: float = 0.0
     loss_area: float = 0.0
     area_ratio: float = 0.0
@@ -161,28 +159,6 @@ class RiskEngine:
 
         return round(float(sharpe), 4)
 
-    @staticmethod
-    def calculate_weighted_var(
-            net_pnl_profile: np.ndarray,
-            probabilities: np.ndarray,
-            confidence_level: float = 0.95) -> float:
-        """
-        محاسبه Value at Risk با استفاده از توزیع تجمعی احتمالات (CDF)
-        """
-        if len(net_pnl_profile) == 0 or len(probabilities) == 0:
-            return 0.0
-
-        sort_indices = np.argsort(net_pnl_profile)
-        sorted_pnl = net_pnl_profile[sort_indices]
-        sorted_probs = probabilities[sort_indices]
-
-        cdf = np.cumsum(sorted_probs)
-        target_alpha = 1 - confidence_level
-
-        idx = np.searchsorted(cdf, target_alpha)
-        idx = min(idx, len(sorted_pnl) - 1)
-
-        return round(float(sorted_pnl[idx]), 2)
 
     @staticmethod
     def calculate_static_max_drawdown(net_pnl_profile: np.ndarray) -> float:
@@ -280,8 +256,7 @@ class RiskEngine:
             probabilities: Optional[np.ndarray] = None,
             volatility: float = DEFAULT_VOLATILITY,
             risk_free_rate: float = RISK_FREE_RATE,
-            price_levels: Optional[np.ndarray] = None,
-            confidence_level: float = 0.95) -> RiskMetrics:
+            price_levels: Optional[np.ndarray] = None,) -> RiskMetrics:
         """
         محاسبه یکپارچه تمام معیارهای مدیریت ریسک آپشن بر پایه توزیع آماری تصحیح‌شده V4
         """
@@ -305,11 +280,6 @@ class RiskEngine:
         sharpe = cls.calculate_weighted_sharpe_ratio(
             net_pnl_profile, probabilities, risk_free_rate)
 
-        var_95 = cls.calculate_weighted_var(
-            net_pnl_profile, probabilities, 0.95)
-        var_99 = cls.calculate_weighted_var(
-            net_pnl_profile, probabilities, 0.99)
-
         max_drawdown = cls.calculate_static_max_drawdown(net_pnl_profile)
         profit_factor = cls.calculate_weighted_profit_factor(
             net_pnl_profile, probabilities)
@@ -328,8 +298,6 @@ class RiskEngine:
             expected_value=expected_value,
             pop=pop,
             sharpe_ratio=sharpe,
-            var_95=var_95,
-            var_99=var_99,
             profit_area=area_metrics['profit_area'],
             loss_area=area_metrics['loss_area'],
             area_ratio=area_metrics['ratio'],
@@ -415,8 +383,6 @@ class RiskEngine:
             opportunity.metadata.update({
                 'expected_value': metrics.expected_value,
                 'sharpe_ratio': metrics.sharpe_ratio,
-                'var_95': metrics.var_95,
-                'var_99': metrics.var_99,
                 'max_drawdown_pct': metrics.max_drawdown,
                 'profit_factor': metrics.profit_factor,
                 'area_ratio': metrics.area_ratio,
@@ -449,7 +415,6 @@ def print_risk_summary(risk_metrics: RiskMetrics) -> None:
     print(f"نسبت مساحت‌ها               : {risk_metrics.area_ratio:>12.4f}")
     print(
         f"امید ریاضی واقعی (EV)       : {risk_metrics.expected_value:>12.2f}")
-    print(f"وزنی VaR 95%                : {risk_metrics.var_95:>12.2f}")
     print(f"نسبت شارپ وزنی              : {risk_metrics.sharpe_ratio:>12.4f}")
     print(f"حداکثر کاهش افت منحنی       : {risk_metrics.max_drawdown:>12.2f}%")
     print(f"احتمال سوددهی واقعی (POP)   : {risk_metrics.pop:>12.2f}%")

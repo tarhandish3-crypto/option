@@ -167,7 +167,6 @@ class OptionScanner:
                     enriched_opportunities.append(opp)
 
             ranked = self.ranker.rank_opportunities(enriched_opportunities)
-            StrategyClassifier.batch_classify(ranked)
 
             top_n_limit = config.OUTPUT_CONFIG.get("top_n", 50)
             top_opportunities = self.ranker.get_top_n(ranked, n=top_n_limit)
@@ -178,11 +177,11 @@ class OptionScanner:
             self.excel_exporter.export(opportunities=top_opportunities, filename=filename)
             
             # نمودارها
-            try:
-                chart_data = [(opp.strategy_name, opp, '#1f77b4') for opp in top_opportunities[:5]]
-                self.chart_plotter.plot_comparison(data=chart_data, ticker="Market")
-            except Exception as chart_err:
-                logger.warning(f"Chart plotting skipped: {chart_err}")
+            # try:
+            #     chart_data = [(opp.strategy_name, opp, '#1f77b4') for opp in top_opportunities[:5]]
+            #     self.chart_plotter.plot_comparison(data=chart_data, ticker="Market")
+            # except Exception as chart_err:
+            #     logger.warning(f"Chart plotting skipped: {chart_err}")
 
             elapsed = time.time() - cycle_start
             logger.info(f"Cycle #{self.cycle_count} completed successfully in {elapsed:.2f}s")

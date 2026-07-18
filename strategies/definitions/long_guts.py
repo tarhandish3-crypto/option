@@ -26,7 +26,6 @@ DEFINITION = StrategyDefinition.create(
         },
     ],
     include_stock=False,
-    description="Long Guts - Buy ITM Call (lower strike) + Buy ITM Put (higher strike)",
     rules={
         # ترتیب صعودی: K1 (Call) < K2 (Put)
         "strike_order": "ascending",

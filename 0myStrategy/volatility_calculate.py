@@ -98,7 +98,7 @@ def download_and_calculate_volatility(stock_id: str, window_size: int) -> float:
         annual_vol = daily_std * np.sqrt(252)
         return round(float(np.clip(annual_vol, 0.10, 1.00)), 4)
 
-    except Exception as e:
+    except Exception:
         return 0.45
 
 

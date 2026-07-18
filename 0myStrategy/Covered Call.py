@@ -29,7 +29,7 @@ warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
 
 # =============================================
-# ✅ نرخ بهره بدون ریسک ثابت
+# نرخ بهره بدون ریسک ثابت
 # =============================================
 RISK_FREE_RATE = 0.30  # ۳۰ درصد
 
@@ -189,7 +189,7 @@ def add_bsm_and_greeks(df, r=RISK_FREE_RATE):
 
         # نمایش پیشرفت
         if (idx + 1) % 100 == 0 or (idx + 1) == total:
-            print(f"   ✅ {idx + 1}/{total}")
+            print(f"{idx + 1}/{total}")
 
     return df
 

@@ -34,7 +34,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Conversion - Long Stock + Short Call + Long Put (Synthetic Short Forward)",
     rules={
         "maturity_order": "same",
         "strike_order": "any",

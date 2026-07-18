@@ -205,18 +205,6 @@ class EvaluationMetrics:
 
 
 @dataclass(slots=True)
-class StrategyClassification:
-    """برچسب‌های رفتاری سناریوی بازار برای سیستم تصمیم‌یار"""
-    market_type: str = MarketType.NEUTRAL.value
-    investor_profile: str = InvestorProfile.BALANCED.value
-    risk_level: str = RiskLevel.MEDIUM.value
-    description: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {'market_type': self.market_type, 'investor_profile': self.investor_profile, 'risk_level': self.risk_level, 'description': self.description}
-
-
-@dataclass(slots=True)
 class ProfileScores:
     """ساختار متمرکز امتیازدهی موازی متناسب با الگوهای مختلف رفتاری معامله‌گران"""
     conservative: float = 0.0
@@ -297,8 +285,6 @@ class Opportunity:
     execution_score: float = 0.0
 
     # ===== امتیازدهی هوشمند (DSS) =====
-    classification: StrategyClassification = field(
-        default_factory=StrategyClassification)
     profile_scores: ProfileScores = field(default_factory=ProfileScores)
     final_score: float = 0.0
     rank: int = 0
@@ -372,7 +358,6 @@ class ScanResult:
         for opp in self.opportunities:
             record = {
                 'Strategy': opp.strategy_name, 'Ticker': opp.underlying_ticker, 'DaysToMaturity': opp.days_to_maturity,
-                'MarketType': opp.classification.market_type, 'InvestorProfile': opp.classification.investor_profile,
                 'RiskLevel': opp.classification.risk_level, 'NetPremium': round(opp.net_premium, 2),
                 'MaxProfit': round(opp.max_profit, 2), 'MaxLoss': round(opp.max_loss, 2),
                 'RiskReward': round(opp.risk_reward_ratio, 2), 'ExpectedReturn': round(opp.expected_return_pct, 2),

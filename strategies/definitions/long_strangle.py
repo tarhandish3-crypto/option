@@ -29,7 +29,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Long Strangle - Buy OTM Put + Buy OTM Call (Volatility Play with Wider Range)",
     rules={
         "strike_order": "ascending",      # K1 (Put) < K2 (Call)
         "maturity_order": "same",

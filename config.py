@@ -177,7 +177,7 @@ HISTORICAL_VOLATILITY_WINDOW = 30  # پنجره محاسبه نوسان تاری
 # =====================================================
 
 CACHE_TTL_SECONDS = 6           # زمان انقضای کش (ثانیه)
-MAX_CACHE_SIZE = 3000           # حداکثر تعداد آیتم‌های کش
+MAX_CACHE_SIZE = 10000           # حداکثر تعداد آیتم‌های کش
 CACHE_ENABLED = True             # فعال/غیرفعال کردن کش
 
 # =====================================================
@@ -216,8 +216,8 @@ ACTIVE_STRATEGIES: List[str] = [
     "iron_condor",
     "long_box",
     "long_guts",
-    # "long_straddle",
-    # "long_strangle",
+    "long_straddle",
+    "long_strangle",
     "married_put",
     "strip",
     "strap",
@@ -288,7 +288,7 @@ RANKING_CONFIG = {
 # =====================================================
 
 EXCEL_CONFIG = {
-    "top_n": 20,
+    "top_n": 40,
     "min_score_threshold": 30.0,
     "include_chart_data": True,
     "include_help_sheet": True,
@@ -304,8 +304,8 @@ EXCEL_CONFIG = {
 # =====================================================
 
 OUTPUT_CONFIG = {
-    "top_n": 200,
-    "min_score_threshold": 10.0,
+    "top_n": 250,
+    "min_score_threshold": 5.0,
     "include_chart_data": False,
     "excel_filename": "opportunities",
 }
@@ -361,7 +361,7 @@ LOGGING_CONFIG = {
 
 SYSTEM_CONFIG = {
     "scan_interval_minutes": 2,     # فاصله زمانی بین هر چرخه (دقیقه)
-    "max_cycles": 3,                # تعداد دفعات اجرا (0 = بی‌نهایت)
+    "max_cycles": 1,                # تعداد دفعات اجرا (0 = بی‌نهایت)
     "parallel_enabled": False,
     "max_workers": 3,
     "debug_mode": False,

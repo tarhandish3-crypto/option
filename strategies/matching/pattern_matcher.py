@@ -47,8 +47,7 @@ class PatternMatcher:
         min_liquidity_score: float = 30.0,
         contract_scores: Optional[Dict[str, float]] = None,
         underlying_price: Optional[float] = None,
-        dedup: bool = False,
-    ) -> Iterator[List[OptionContract]]:
+        dedup: bool = False,) -> Iterator[List[OptionContract]]:
         """
         تطبیق جریانی patterns با کانتراکت‌های بازار.
         خروجی: لیست OptionContract خام — یک عنصر به ازای هر pattern.
@@ -78,8 +77,7 @@ class PatternMatcher:
                     contract_size=1,
                     last_price=spot,
                     close_price=underlying.close_price,
-                    underlying_price=spot,
-                )
+                    underlying_price=spot,)
 
         # اگر فقط لگ stock داریم (غیرمعمول)
         if option_count == 0:
@@ -109,32 +107,26 @@ class PatternMatcher:
                         single_window = [bucket] * option_count
                         for combo in PatternMatcher._process_window(
                             single_window, option_patterns,
-                            strategy_rules, min_liquidity_score, contract_scores
-                        ):
+                            strategy_rules, min_liquidity_score, contract_scores):
                             yield PatternMatcher._merge_stock_option(
-                                combo, stock_contract, stock_indices, option_indices, len(patterns)
-                            )
+                                combo, stock_contract, stock_indices, option_indices, len(patterns))
 
                 elif option_count == 2:
                     # ── Cross-strike: همه جفت strikeهای ممکن ──
                     for combo in PatternMatcher._match_cross_strike(
                         maturity_bucket, option_patterns,
-                        strategy_rules, min_liquidity_score, contract_scores
-                    ):
+                        strategy_rules, min_liquidity_score, contract_scores):
                         yield PatternMatcher._merge_stock_option(
-                            combo, stock_contract, stock_indices, option_indices, len(patterns)
-                        )
+                            combo, stock_contract, stock_indices, option_indices, len(patterns))
 
                 else:
                     # ── Sliding-window: strikeهای متوالی ──
                     for window in PatternMatcher._iter_windows(maturity_bucket, option_count):
                         for combo in PatternMatcher._process_window(
                             window, option_patterns,
-                            strategy_rules, min_liquidity_score, contract_scores
-                        ):
+                            strategy_rules, min_liquidity_score, contract_scores):
                             yield PatternMatcher._merge_stock_option(
-                                combo, stock_contract, stock_indices, option_indices, len(patterns)
-                            )
+                                combo, stock_contract, stock_indices, option_indices, len(patterns))
         else:
             # calendar/diagonal — آینده
             return
@@ -145,8 +137,7 @@ class PatternMatcher:
         stock_contract: Optional[OptionContract],
         stock_indices: List[int],
         option_indices: List[int],
-        total: int,
-    ) -> List[OptionContract]:
+        total: int,) -> List[OptionContract]:
         """
         بازسازی لیست نهایی به ترتیب اصلی patterns.
         stock_indices مشخص می‌کند کدام موقعیت‌ها stock هستند.
@@ -162,8 +153,7 @@ class PatternMatcher:
     @staticmethod
     def _iter_windows(
         maturity_bucket: Any,
-        size: int,
-    ) -> Iterator[List[StrikeBucket]]:
+        size: int,) -> Iterator[List[StrikeBucket]]:
         """پنجره‌های متحرک از strikeهای متوالی."""
         sorted_strikes = maturity_bucket._sorted_strikes
         n = len(sorted_strikes)
@@ -178,8 +168,7 @@ class PatternMatcher:
         option_patterns: List[StrategyLegPattern],
         rules: Dict[str, Any],
         min_liquidity_score: float,
-        scores: Optional[Dict[str, float]],
-    ) -> Iterator[List[OptionContract]]:
+        scores: Optional[Dict[str, float]],) -> Iterator[List[OptionContract]]:
         """ترکیب cartesian روی همه جفت strikeها برای استراتژی‌های ۲ لگی."""
         sorted_strikes = maturity_bucket._sorted_strikes
         n = len(sorted_strikes)
@@ -194,8 +183,7 @@ class PatternMatcher:
                     continue
                 window = [bucket_i, bucket_j]
                 yield from PatternMatcher._process_window(
-                    window, option_patterns, rules, min_liquidity_score, scores
-                )
+                    window, option_patterns, rules, min_liquidity_score, scores)
 
     @staticmethod
     def _process_window(
@@ -203,8 +191,7 @@ class PatternMatcher:
         option_patterns: List[StrategyLegPattern],
         rules: Dict[str, Any],
         min_liquidity_score: float,
-        scores: Optional[Dict[str, float]],
-    ) -> Iterator[List[OptionContract]]:
+        scores: Optional[Dict[str, float]],) -> Iterator[List[OptionContract]]:
         """
         ضرب دکارتی تنبل روی کانتراکت‌های نقدشونده در پنجره.
         خروجی: لیست OptionContract (فقط آپشن، بدون stock).
@@ -240,8 +227,7 @@ class PatternMatcher:
     def _validate_combo(
         combo: Tuple[OptionContract, ...],
         option_patterns: List[StrategyLegPattern],
-        rules: Dict[str, Any],
-    ) -> bool:
+        rules: Dict[str, Any],) -> bool:
         """اعتبارسنجی ترتیب و فواصل درصدی استرایک‌ها."""
         strike_order = rules.get("strike_order", "ascending")
         min_gap_pct = rules.get("min_strike_gap_pct", 0.0)
@@ -332,7 +318,8 @@ class PatternMatcher:
             contract_sizes_list.append(cs)
 
         if not weights_list:
-            empty = lambda dt: np.empty((0, max_legs), dtype=dt)
+            def empty(dt):
+                return np.empty((0, max_legs), dtype=dt)
             return {k: empty(np.float64) for k in ("weights", "strikes", "entry_prices")} | \
                    {k: empty(np.int32) for k in ("option_types", "sides", "contract_sizes")}
 
@@ -342,5 +329,4 @@ class PatternMatcher:
             "entry_prices": np.vstack(entry_prices_list),
             "option_types": np.vstack(option_types_list),
             "sides": np.vstack(sides_list),
-            "contract_sizes": np.vstack(contract_sizes_list),
-        }
+            "contract_sizes": np.vstack(contract_sizes_list),}

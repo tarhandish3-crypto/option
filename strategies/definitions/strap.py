@@ -29,7 +29,6 @@ DEFINITION = StrategyDefinition(
         ),
     ),
 
-    description="Strap - Long 1 Put + Long 2 Calls at same strike (Bullish Volatility Strategy)",
     rules={
         "maturity_order": "same",
         "strike_equal": True,              # هر دو لگ باید همان strike را داشته باشند

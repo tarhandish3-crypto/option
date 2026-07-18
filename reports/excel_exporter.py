@@ -88,10 +88,6 @@ class ExcelExporter:
             price_levels = np.array(metadata.get('price_levels', []))
             
             classification = getattr(opp, 'classification', None)
-            cls_market = classification.market_type if classification else 'Neutral'
-            cls_profile = classification.investor_profile if classification else 'Balanced'
-            cls_risk = classification.risk_level if classification else 'Medium'
-            cls_desc = classification.description if classification else ''
 
             # یکپارچه‌سازی توصیف پوزیشن لگ‌ها
             positions_desc = " | ".join([
@@ -105,18 +101,13 @@ class ExcelExporter:
                 "Positions": positions_desc,
                 "DTE": getattr(opp, 'days_to_maturity'),
                 "Ticker": opp.underlying_ticker,
-                "Market Type": cls_market,
-                "Investor Profile": cls_profile,
-                "Risk Level": cls_risk,
 
-                "Confidence": metadata.get('confidence'),
                 "Conservative Score": opp.profile_scores.conservative if opp.profile_scores else 0.0,
                 "Balanced Score": opp.profile_scores.balanced if opp.profile_scores else 0.0,
                 "Aggressive Score": opp.profile_scores.aggressive if opp.profile_scores else 0.0,
                 "Income Score": opp.profile_scores.income if opp.profile_scores else 0.0,
                 "Volatility Score": opp.profile_scores.volatility if opp.profile_scores else 0.0,
 
-                "Dynamic Range": self._format_dynamic_range(metadata.get('dynamic_range', []), S0_stock),
                 "Expected Value": metadata.get('expected_value', 0.0),
                 "Area Ratio": metadata.get('area_ratio', 0.0),
                 "POP %": metadata.get('pop', 0.0),
@@ -125,15 +116,9 @@ class ExcelExporter:
                 "Theta": metadata.get('theta', 0.0),
                 "Vega": metadata.get('vega', 0.0),
                 "Sharpe": metadata.get('sharpe_ratio', 0.0),
-                "VaR 95%": metadata.get('var_95', 0.0),
                 "Gross Max Profit": getattr(opp, 'max_profit', 0.0),
                 "Gross Max Loss": getattr(opp, 'max_loss', 0.0),
-                "Net Profit (Closed)": metadata.get('net_profit_if_closed', 0.0),
-                "Net Profit (Exercised)": metadata.get('net_profit_if_exercised', 0.0),
-                "TSE Commission": metadata.get('total_costs_closed', 0.0),
                 "Breakeven": self._format_breakeven(metadata.get('break_even_points', [])),
-                "Description": cls_desc,
-                "Recommendation": metadata.get('recommended_action', 'بررسی سناریوها'),
                 "Liquidity": getattr(opp, 'liquidity_score', 0.0),
                 "Score": getattr(opp, 'final_score', 0.0)}
 
@@ -159,11 +144,11 @@ class ExcelExporter:
 
         # چینش ستون‌های اصلی طبق استانداردهای حسابداری اوراق مشتقه
         main_cols = [
-            "Rank", "Strategy", "Positions", "DTE", "Ticker", "Market Type", "Investor Profile", "Risk Level",
-            "Confidence", "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
-            "Dynamic Range", "Expected Value", "Area Ratio", "POP %", "Delta", "Gamma", "Theta", "Vega", "Sharpe", "VaR 95%",
-            "Gross Max Profit", "Gross Max Loss", "Net Profit (Closed)", "Net Profit (Exercised)",
-            "TSE Commission", "Breakeven", "Description", "Recommendation", "Liquidity", "Score"
+            "Rank", "Strategy", "Positions", "DTE", "Ticker", "Investor Profile", "Risk Level",
+            "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
+            "Expected Value", "Area Ratio", "POP %", "Delta", "Gamma", "Theta", "Vega", "Sharpe", "VaR 95%",
+            "Gross Max Profit", "Gross Max Loss",
+            "Breakeven", "Liquidity", "Score"
         ]
 
         main_cols = [col for col in main_cols if col in df.columns]
@@ -172,16 +157,6 @@ class ExcelExporter:
 
         self._write_to_styled_excel(df, file_path)
 
-    def _format_dynamic_range(self, dynamic_range: List[float], S0_stock: float) -> str:
-        if not dynamic_range or S0_stock <= 0:
-            return "No Safe Range"
-        formatted = []
-        for price in dynamic_range:
-            pct_deviation = ((price / S0_stock) - 1) * 100
-            closest_pct = min(self.pct_steps, key=lambda x: abs(x - pct_deviation))
-            formatted.append(f"{closest_pct:+.0f}%")
-        unique_pcts = sorted(list(set(formatted)), key=lambda x: float(x.replace('%', '')))
-        return " | ".join(unique_pcts) if len(unique_pcts) <= 4 else f"[{unique_pcts[0]} ... {unique_pcts[-1]}]"
 
     def _format_breakeven(self, breakeven_points: List[float]) -> str:
         if not breakeven_points:
@@ -204,10 +179,10 @@ class ExcelExporter:
                 cell.alignment = self.header_alignment
 
             numeric_cols = [
-                "Confidence", "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
+                "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
                 "Expected Value", "Area Ratio", "POP %", "Delta", "Gamma", "Theta", "Vega",
                 "Sharpe", "VaR 95%", "Gross Max Profit", "Gross Max Loss",
-                "Net Profit (Closed)", "Net Profit (Exercised)", "TSE Commission", "Liquidity", "Score"
+                "Liquidity", "Score"
             ]
             pct_cols = [f"{pct}%" for pct in self.pct_steps if f"{pct}%" in df.columns]
             columns_list = df.columns.tolist()
@@ -225,7 +200,6 @@ class ExcelExporter:
                         continue
 
                     if col_name in numeric_cols:
-                        cell.number_format = '0.0%' if col_name == "Confidence" else '#,##0.00'
                         cell.alignment = self.body_alignment_right
                     elif col_name in pct_cols:
                         cell.number_format = '0.00"%"'
@@ -258,7 +232,7 @@ class ExcelExporter:
 
     def _apply_conditional_formatting(self, worksheet, df: pd.DataFrame):
         pct_cols = [f"{pct}%" for pct in self.pct_steps if f"{pct}%" in df.columns]
-        target_cols = pct_cols + ["Gross Max Profit", "Expected Value", "Net Profit (Closed)", "Net Profit (Exercised)"]
+        target_cols = pct_cols + ["Gross Max Profit", "Expected Value"]
 
         for col_name in target_cols:
             if col_name not in df.columns:
@@ -301,8 +275,6 @@ class ExcelExporter:
             ("Expected Value", "میانگین ارزش مورد انتظار (EV)"),
             ("POP %", "میانگین احتمال موفقیت پوزیشن‌ها (POP)"),
             ("Sharpe", "میانگین نسبت شارپ سبد فرصت‌ها"),
-            ("Confidence", "میانگین ضریب اطمینان طبقه‌بندی مدل"),
-            ("Net Profit (Closed)", "میانگین سود خالص در پوزیشن‌های بسته‌شده"),
         ]
 
         for col_name, fa_label in numeric_cols:
@@ -315,12 +287,6 @@ class ExcelExporter:
 
         summary_ws.append(['', ''])
         summary_ws.append(['تفکیک و توزیع موقعیت‌ها بر اساس وضعیت روند بازار', 'تعداد پوزیشن'])
-
-        for col_target in ['Market Type', 'Risk Level', 'Investor Profile']:
-            if col_target in df.columns:
-                counts = df[col_target].value_counts()
-                for category, count in counts.items():
-                    summary_ws.append([f"تعداد پوزیشن در کلاس {category}", int(count)])
 
         # استایل‌دهی شیت خلاصه
         for row in summary_ws.iter_rows(min_row=1, max_row=summary_ws.max_row, min_col=1, max_col=2):
@@ -343,7 +309,7 @@ class ExcelExporter:
 
         scores_ws = workbook.create_sheet(title='Profile_Scores')
         score_cols = [
-            "Rank", "Strategy", "Positions", "Ticker", "Confidence",
+            "Rank", "Strategy", "Positions", "Ticker",
             "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score"
         ]
         score_cols = [col for col in score_cols if col in df.columns]
@@ -366,8 +332,7 @@ class ExcelExporter:
                 cell.font = self.body_font
 
                 col_name = score_cols[c_idx - 1]
-                if col_name in ["Confidence", "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score"]:
-                    cell.number_format = '0.0%' if col_name == "Confidence" else '#,##0.00'
+                if col_name in ["Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score"]:
                     cell.alignment = self.body_alignment_right
                 else:
                     cell.alignment = self.body_alignment_center
