@@ -20,7 +20,6 @@ logger = logging.getLogger("OptionScanner.Scoring.Ranker")
 @dataclass(slots=True)
 class RankingWeights:
     """وزن‌های امتیازدهی بر اساس مشخصات رفتاری سرمایه‌گذار"""
-    win_rate: float = 0.0
     risk_reward: float = 0.0
     rom: float = 0.0
     margin_efficiency: float = 0.0
@@ -31,19 +30,19 @@ class RankingWeights:
 # هماهنگ‌سازی ساختار پروفایل‌ها با دیتای ثابت سیستم
 PROFILES: Dict[RankingProfile, RankingWeights] = {
     RankingProfile.CONSERVATIVE: RankingWeights(
-        win_rate=0.35, risk_reward=0.10, rom=0.10, margin_efficiency=0.15, max_profit=0.05, max_loss=0.25
+        risk_reward=0.10, rom=0.10, margin_efficiency=0.15, max_profit=0.05, max_loss=0.25
     ),
     RankingProfile.BALANCED: RankingWeights(
-        win_rate=0.25, risk_reward=0.15, rom=0.20, margin_efficiency=0.15, max_profit=0.10, max_loss=0.15
+        risk_reward=0.15, rom=0.20, margin_efficiency=0.15, max_profit=0.10, max_loss=0.15
     ),
     RankingProfile.AGGRESSIVE: RankingWeights(
-        win_rate=0.10, risk_reward=0.15, rom=0.35, margin_efficiency=0.15, max_profit=0.15, max_loss=0.10
+        risk_reward=0.15, rom=0.35, margin_efficiency=0.15, max_profit=0.15, max_loss=0.10
     ),
     RankingProfile.INCOME: RankingWeights(
-        win_rate=0.30, risk_reward=0.10, rom=0.25, margin_efficiency=0.20, max_profit=0.05, max_loss=0.10
+        risk_reward=0.10, rom=0.25, margin_efficiency=0.20, max_profit=0.05, max_loss=0.10
     ),
     RankingProfile.VOLATILITY: RankingWeights(
-        win_rate=0.10, risk_reward=0.30, rom=0.15, margin_efficiency=0.05, max_profit=0.25, max_loss=0.15
+        risk_reward=0.30, rom=0.15, margin_efficiency=0.05, max_profit=0.25, max_loss=0.15
     ),
 }
 
@@ -70,7 +69,6 @@ class OpportunityRanker:
             try:
                 weights_dict = get_ranking_weights(profile.value)
                 self.profile_weights[profile] = RankingWeights(
-                    win_rate=weights_dict.get("win_rate", PROFILES[profile].win_rate),
                     risk_reward=weights_dict.get("risk_reward", PROFILES[profile].risk_reward),
                     rom=weights_dict.get("rom", PROFILES[profile].rom),
                     margin_efficiency=weights_dict.get("margin_efficiency", PROFILES[profile].margin_efficiency),
@@ -156,7 +154,6 @@ class OpportunityRanker:
         # ============================================================
         # ۳. نرمالایز کردن استاندارد فاکتورها (بازه صفر تا ۱۰۰)
         # ============================================================
-        win_rate_norm = metrics.win_rate * 100
         risk_reward_norm = min(metrics.risk_reward_ratio * 20, 100.0)
         rom_norm = min(metrics.rom * 10, 100.0)
         margin_eff_norm = min(metrics.margin_efficiency * 1000, 100.0)
@@ -170,7 +167,6 @@ class OpportunityRanker:
         for profile in RankingProfile:
             w = self.profile_weights[profile]
             score = (
-                win_rate_norm * w.win_rate +
                 risk_reward_norm * w.risk_reward +
                 rom_norm * w.rom +
                 margin_eff_norm * w.margin_efficiency +
@@ -204,7 +200,6 @@ class OpportunityRanker:
             
             # غنی‌سازی ساختار لایه دیکشنری داخلی متادیتا جهت استفاده شیت اکسل
             if hasattr(opp, 'metadata') and isinstance(opp.metadata, dict):
-                opp.metadata['win_rate'] = metrics.win_rate
                 opp.metadata['risk_reward_ratio'] = metrics.risk_reward_ratio
                 opp.metadata['rom'] = metrics.rom
                 opp.metadata['margin_efficiency'] = metrics.margin_efficiency

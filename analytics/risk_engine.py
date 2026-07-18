@@ -29,7 +29,6 @@ class RiskMetrics:
     معیارهای ریسک و بازده یک استراتژی بر اساس توزیع احتمالات سناریوها
     """
     expected_value: float = 0.0
-    pop: float = 0.0
     sharpe_ratio: float = 0.0
     profit_area: float = 0.0
     loss_area: float = 0.0
@@ -38,7 +37,6 @@ class RiskMetrics:
     profit_factor: float = 0.0
     avg_profit: float = 0.0
     avg_loss: float = 0.0
-    win_rate: float = 0.0
     curve_type: CurveType = CurveType.UNKNOWN
     probabilities: np.ndarray = field(default_factory=lambda: np.array([]))
     max_profit: float = 0.0
@@ -119,23 +117,7 @@ class RiskEngine:
         return {
             'profit_area': round(float(profit_area), 2),
             'loss_area': round(float(loss_area), 2),
-            'ratio': round(float(profit_area / (loss_area + 1e-6)), 4)
-        }
-
-    @staticmethod
-    def calculate_probability_of_profit(
-            net_pnl_profile: np.ndarray,
-            probabilities: np.ndarray,
-            threshold: float = 0.0) -> float:
-        """
-        محاسبه واقعی POP بر اساس مجموع احتمالات سناریوهای سودآور
-        """
-        if len(net_pnl_profile) == 0 or len(probabilities) == 0:
-            return 0.0
-
-        profitable_mask = net_pnl_profile > threshold
-        pop = np.sum(probabilities[profitable_mask]) * 100
-        return round(float(pop), 2)
+            'ratio': round(float(profit_area / (loss_area + 1e-6)), 4)}
 
     @staticmethod
     def calculate_weighted_sharpe_ratio(
@@ -275,8 +257,6 @@ class RiskEngine:
         area_metrics = cls.calculate_pnl_areas_and_ratio(
             net_pnl_profile, price_levels)
 
-        pop = cls.calculate_probability_of_profit(
-            net_pnl_profile, probabilities)
         sharpe = cls.calculate_weighted_sharpe_ratio(
             net_pnl_profile, probabilities, risk_free_rate)
 
@@ -296,7 +276,6 @@ class RiskEngine:
 
         return RiskMetrics(
             expected_value=expected_value,
-            pop=pop,
             sharpe_ratio=sharpe,
             profit_area=area_metrics['profit_area'],
             loss_area=area_metrics['loss_area'],
@@ -305,7 +284,6 @@ class RiskEngine:
             profit_factor=profit_factor,
             avg_profit=avg_profit,
             avg_loss=avg_loss,
-            win_rate=pop,
             curve_type=cls.detect_curve_type(pct_steps, net_pnl_profile),
             probabilities=probabilities,
             max_profit=round(float(np.max(net_pnl_profile)), 2),
@@ -370,7 +348,6 @@ class RiskEngine:
                 price_levels=price_levels)
 
             # 5. تزریق مستقیم به فیلدهای متناظر لایه مدل
-            opportunity.pop = metrics.pop
             opportunity.max_profit = metrics.max_profit
             opportunity.max_loss = metrics.max_loss
 
@@ -417,7 +394,6 @@ def print_risk_summary(risk_metrics: RiskMetrics) -> None:
         f"امید ریاضی واقعی (EV)       : {risk_metrics.expected_value:>12.2f}")
     print(f"نسبت شارپ وزنی              : {risk_metrics.sharpe_ratio:>12.4f}")
     print(f"حداکثر کاهش افت منحنی       : {risk_metrics.max_drawdown:>12.2f}%")
-    print(f"احتمال سوددهی واقعی (POP)   : {risk_metrics.pop:>12.2f}%")
     print(f"نوع منحنی استراتژی          : {risk_metrics.curve_type.value:>12}")
     print("=" * 55)
 

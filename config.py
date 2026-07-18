@@ -147,7 +147,7 @@ SYMBOL_INFO = {
 PRICE_RANGE_CONFIG = {
     "min_percent": -50,          # حداقل درصد تغییر قیمت
     "max_percent": 50,           # حداکثر درصد تغییر قیمت
-    "num_points": 21,            # تعداد نقاط (گام‌ها)
+    "num_points": 3,            # تعداد نقاط (گام‌ها)
     "step_size": None,           # اگر None باشد، بر اساس num_points محاسبه می‌شود
     "labels_format": "{:.0f}%",  # فرمت برچسب‌ها
 }
@@ -229,7 +229,6 @@ ACTIVE_STRATEGIES: List[str] = [
 
 RANKING_WEIGHTS: Dict[str, Dict[str, float]] = {
     "conservative": {
-        "win_rate": 0.35,
         "risk_reward": 0.10,
         "rom": 0.10,
         "margin_efficiency": 0.15,
@@ -237,7 +236,6 @@ RANKING_WEIGHTS: Dict[str, Dict[str, float]] = {
         "max_loss": 0.25,
     },
     "balanced": {
-        "win_rate": 0.25,
         "risk_reward": 0.15,
         "rom": 0.20,
         "margin_efficiency": 0.15,
@@ -245,7 +243,6 @@ RANKING_WEIGHTS: Dict[str, Dict[str, float]] = {
         "max_loss": 0.15,
     },
     "aggressive": {
-        "win_rate": 0.10,
         "risk_reward": 0.15,
         "rom": 0.35,
         "margin_efficiency": 0.15,
@@ -253,7 +250,6 @@ RANKING_WEIGHTS: Dict[str, Dict[str, float]] = {
         "max_loss": 0.10,
     },
     "income": {
-        "win_rate": 0.30,
         "risk_reward": 0.10,
         "rom": 0.25,
         "margin_efficiency": 0.20,
@@ -261,7 +257,6 @@ RANKING_WEIGHTS: Dict[str, Dict[str, float]] = {
         "max_loss": 0.10,
     },
     "volatility": {
-        "win_rate": 0.10,
         "risk_reward": 0.30,
         "rom": 0.15,
         "margin_efficiency": 0.05,
@@ -388,7 +383,7 @@ FEATURE_FLAGS = {
     # و در ستون‌های اکسل نمایش داده می‌شوند
     "calculate_greeks": False,
 
-    # اگر True باشد، Risk Metrics (POP, Sharpe, VaR, ...) محاسبه شود
+    # اگر True باشد، Risk Metrics (Sharpe, VaR, ...) محاسبه شود
     "calculate_risk_metrics": True,
 
     # نوع تسویه در سررسید: 'CASH' (نقدی) یا 'PHYSICAL' (فیزیکی)

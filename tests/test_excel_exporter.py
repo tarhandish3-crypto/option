@@ -241,7 +241,6 @@ def test_excel_exporter() -> None:
         for i, opp in enumerate(opportunities, 1):
             # Create metrics with sample values
             metrics = StrategyMetrics(
-                win_rate=75.0 + i * 2,
                 risk_reward_ratio=2.5 + i * 0.1,
                 rom=15.0 + i * 2,
                 margin_efficiency=0.05 + i * 0.01,
@@ -260,7 +259,6 @@ def test_excel_exporter() -> None:
                 days_to_maturity=opp.days_to_maturity,
                 metrics=metrics,
                 raw_scores={
-                    "win_rate": metrics.win_rate,
                     "risk_reward": metrics.risk_reward_ratio,
                     "rom": metrics.rom,
                 },

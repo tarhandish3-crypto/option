@@ -22,7 +22,6 @@ from reports.chart_plotter import ChartPlotter
 from scoring.ranker import OpportunityRanker, RankingProfile
 from strategies.core import _load_strategies
 from analytics.risk_engine import RiskEngine
-from analytics.strategy_classifier import StrategyClassifier
 from filters.strategy_filters import apply_strategy_filter
 
 logger = logging.getLogger("OptionScanner.Main")
@@ -77,7 +76,7 @@ class OptionScanner:
         self.parallel = parallel if parallel is not None else sys_config.get("parallel_enabled", True)
         self.max_workers = max_workers or sys_config.get("max_workers", 1)
 
-        cfg_max = sys_config.get("max_cycles", 0) or 0
+        cfg_max = sys_config.get("max_cycles", 0)
         self.max_cycles = max_cycles if max_cycles is not None else cfg_max
 
         self.is_running = True
@@ -89,16 +88,14 @@ class OptionScanner:
         self.data_manager = DataManager(
             cache_dir=str(config.CACHE_DIR),
             use_cache=True,
-            ttl_seconds=config.CACHE_TTL_SECONDS
-        )
+            ttl_seconds=config.CACHE_TTL_SECONDS)
 
         profile_map = {
             "conservative": RankingProfile.CONSERVATIVE,
             "balanced": RankingProfile.BALANCED,
             "aggressive": RankingProfile.AGGRESSIVE,
             "income": RankingProfile.INCOME,
-            "volatility": RankingProfile.VOLATILITY,
-        }
+            "volatility": RankingProfile.VOLATILITY,}
         profile_name = config.RANKING_CONFIG.get("default_profile", "balanced")
         profile = profile_map.get(profile_name, RankingProfile.BALANCED)
 

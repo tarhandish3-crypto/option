@@ -222,7 +222,6 @@ class OpportunityBuilder:
                 np.max(returns_pct)) if len(returns_pct) > 0 else 0.0),
             max_loss=metadata.get("max_loss", float(
                 np.min(returns_pct)) if len(returns_pct) > 0 else 0.0),
-            pop=metadata.get("pop", 0.0),
             risk_reward_ratio=metadata.get("risk_reward_ratio", 0.0),
             expected_return_pct=metadata.get("expected_return_pct", 0.0),
             liquidity_score=liquidity_score,

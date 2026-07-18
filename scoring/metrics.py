@@ -9,7 +9,6 @@ from core.models import Opportunity
 @dataclass
 class StrategyMetrics:
     """معیارهای یک استراتژی"""
-    win_rate: float = 0.0           # درصد سناریوهای سودآور
     risk_reward_ratio: float = 0.0  # نسبت ریسک به ریوارد
     rom: float = 0.0                # Return on Margin
     margin_efficiency: float = 0.0  # کارایی وجه تضمین
@@ -19,24 +18,6 @@ class StrategyMetrics:
     avg_loss: float = 0.0
     total_scenarios: int = 0
     profitable_scenarios: int = 0
-
-
-def calculate_win_rate(profits: List[float], threshold: float = 0) -> float:
-    """
-    محاسبه درصد سودآوری (Win Rate)
-    
-    Args:
-        profits: لیست سود در سناریوهای مختلف
-        threshold: آستانه سودآوری (پیش‌فرض 0)
-        
-    Returns:
-        درصد سودآوری (۰ تا ۱۰۰)
-    """
-    if not profits:
-        return 0.0
-    
-    profitable = sum(1 for p in profits if p > threshold)
-    return (profitable / len(profits)) * 100
 
 
 def calculate_risk_reward_ratio(profits: List[float]) -> float:
@@ -135,8 +116,7 @@ def calculate_all_metrics(
     """
     if not profits:
         return StrategyMetrics()
-    
-    win_rate = calculate_win_rate(profits)
+
     risk_reward = calculate_risk_reward_ratio(profits)
     rom = calculate_rom(expected_return_pct, required_margin, days_to_maturity)
     margin_eff = calculate_margin_efficiency(expected_return_pct, required_margin, days_to_maturity)
@@ -145,7 +125,6 @@ def calculate_all_metrics(
     losses = [p for p in profits if p < 0]
     
     return StrategyMetrics(
-        win_rate=round(win_rate, 2),
         risk_reward_ratio=round(risk_reward, 2),
         rom=round(rom, 2),
         margin_efficiency=round(margin_eff, 4),

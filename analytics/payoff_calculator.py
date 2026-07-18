@@ -131,13 +131,11 @@ class IranMarketPayoffCalculator:
             (l for l in legs if l.contract and l.contract.option_type != OptionType.STOCK), None)
         underlying_ticker = first_option_leg.contract.underlying_ticker if first_option_leg else ""
 
-        apply_commissions = FEATURE_FLAGS.get("apply_commissions", True)
-        apply_exercise_fee = FEATURE_FLAGS.get("apply_exercise_fee", True)
-
         option_fees = 0.0
         net_profits_expiry = gross_profits.copy()
 
         # ۲. اعمال کارمزد ثابت ورود (t0) با احتساب سقف مصوب جدید بورس (۲۰۰ میلیون ریال برای هر لگ)
+        apply_commissions = FEATURE_FLAGS.get("apply_commissions", True)
         if apply_commissions and underlying_ticker:
             strategy_costs = IranMarketCostCalculator.calculate_strategy_costs(
                 underlying_symbol=underlying_ticker,
@@ -150,6 +148,7 @@ class IranMarketPayoffCalculator:
             option_fees = strategy_costs.total_entry_cost
 
         # ۳. اعمال برداری ماتریس هزینه‌های اعمال و مالیات انتقال فیزیکی در سررسید (بدون سقف ریالی)
+        apply_exercise_fee = FEATURE_FLAGS.get("apply_exercise_fee", True)
         if apply_exercise_fee and underlying_ticker:
             exercise_costs_vector = IranMarketCostCalculator.generate_exercise_cost_vector(
                 underlying_symbol=underlying_ticker,

@@ -13,7 +13,6 @@
 
 from scoring.metrics import (
     StrategyMetrics,
-    calculate_win_rate,
     calculate_risk_reward_ratio,
     calculate_rom,
     calculate_margin_efficiency,)
@@ -28,7 +27,6 @@ from scoring.liquidity_score import LiquidityScorer
 __all__ = [
     # Metrics
     "StrategyMetrics",
-    "calculate_win_rate",
     "calculate_risk_reward_ratio",
     "calculate_rom",
     "calculate_margin_efficiency",

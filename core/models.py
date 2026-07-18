@@ -269,7 +269,6 @@ class Opportunity:
 
     # ===== معیارهای مالی و ماتریسی =====
     net_premium: float = 0.0
-    pop: float = 0.0
     max_profit: float = 0.0
     max_loss: float = 0.0
     break_even_points: List[float] = field(default_factory=list)
@@ -298,7 +297,7 @@ class Opportunity:
             'max_profit': self.max_profit, 'max_loss': self.max_loss, 'break_even_points': self.break_even_points,
             'required_margin': self.required_margin, 'total_premium': self.total_premium,
             'risk_reward_ratio': self.risk_reward_ratio, 'expected_return_pct': self.expected_return_pct,
-            'liquidity_score': self.liquidity_score, 'classification': self.classification.to_dict(),
+            'liquidity_score': self.liquidity_score,
             'profile_scores': self.profile_scores.to_dict(), 'final_score': self.final_score,
             'rank': self.rank, 'timestamp': self.timestamp.isoformat(), 'legs': [leg.to_dict() for leg in self.legs]
         }

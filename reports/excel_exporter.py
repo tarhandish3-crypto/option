@@ -86,14 +86,16 @@ class ExcelExporter:
             
             # بازسازی لایه گام‌های قیمت بر مبنای هماهنگی با Payoff Core
             price_levels = np.array(metadata.get('price_levels', []))
-            
-            classification = getattr(opp, 'classification', None)
 
             # یکپارچه‌سازی توصیف پوزیشن لگ‌ها
-            positions_desc = " | ".join([
-                f"{leg.contract.ticker if leg.contract else 'Stock'} ({leg.side.value})"
-                for leg in opp.legs
-            ]) if getattr(opp, 'legs', None) else metadata.get('positions_desc', 'Custom Leg')
+            positions_parts = []
+            for leg in opp.legs:
+                ticker = leg.contract.ticker if leg.contract else 'Stock'
+                side = leg.side.value
+                ratio = leg.ratio
+                positions_parts.append(f"{ticker} ({ratio}x{side})")
+            
+            positions_desc = " | ".join(positions_parts)
 
             base_info = {
                 "Rank": getattr(opp, 'rank'),
@@ -110,7 +112,6 @@ class ExcelExporter:
 
                 "Expected Value": metadata.get('expected_value', 0.0),
                 "Area Ratio": metadata.get('area_ratio', 0.0),
-                "POP %": metadata.get('pop', 0.0),
                 "Delta": metadata.get('delta', 0.0),
                 "Gamma": metadata.get('gamma', 0.0),
                 "Theta": metadata.get('theta', 0.0),
@@ -146,7 +147,7 @@ class ExcelExporter:
         main_cols = [
             "Rank", "Strategy", "Positions", "DTE", "Ticker", "Investor Profile", "Risk Level",
             "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
-            "Expected Value", "Area Ratio", "POP %", "Delta", "Gamma", "Theta", "Vega", "Sharpe", "VaR 95%",
+            "Expected Value", "Area Ratio", "Delta", "Gamma", "Theta", "Vega", "Sharpe", "VaR 95%",
             "Gross Max Profit", "Gross Max Loss",
             "Breakeven", "Liquidity", "Score"
         ]
@@ -180,7 +181,7 @@ class ExcelExporter:
 
             numeric_cols = [
                 "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
-                "Expected Value", "Area Ratio", "POP %", "Delta", "Gamma", "Theta", "Vega",
+                "Expected Value", "Area Ratio", "Delta", "Gamma", "Theta", "Vega",
                 "Sharpe", "VaR 95%", "Gross Max Profit", "Gross Max Loss",
                 "Liquidity", "Score"
             ]
@@ -273,7 +274,6 @@ class ExcelExporter:
 
         numeric_cols = [
             ("Expected Value", "میانگین ارزش مورد انتظار (EV)"),
-            ("POP %", "میانگین احتمال موفقیت پوزیشن‌ها (POP)"),
             ("Sharpe", "میانگین نسبت شارپ سبد فرصت‌ها"),
         ]
 

@@ -8,7 +8,6 @@ from typing import Dict, Any, List, Optional
 
 from config import (
     EXERCISE_TAX_RATE,
-    get_symbol_info,
     get_symbol_market,
     get_symbol_kind,
     get_commission_rate,
@@ -176,12 +175,13 @@ class IranMarketCostCalculator:
 
             total_leg_at_exercise = leg_exercise_fee + leg_tax
 
-            # اعمال مشروط برداری: هزینه تنها زمانی فعال می‌شود که آپشن در سررسید در سود (ITM) باشد
-            if contract.option_type == OptionType.CALL:
-                exercise_costs_vector += np.where(price_levels >
-                                                  K, total_leg_at_exercise, 0.0)
-            elif contract.option_type == OptionType.PUT:
-                exercise_costs_vector += np.where(price_levels <
-                                                  K, total_leg_at_exercise, 0.0)
+            # # اعمال مشروط برداری: هزینه تنها زمانی فعال می‌شود که آپشن در سررسید در سود (ITM) باشد
+            # if contract.option_type == OptionType.CALL:
+            #     exercise_costs_vector += np.where(price_levels >
+            #                                       K, total_leg_at_exercise, 0.0)
+            # elif contract.option_type == OptionType.PUT:
+            #     exercise_costs_vector += np.where(price_levels <
+            #                                       K, total_leg_at_exercise, 0.0)
+            exercise_costs_vector += total_leg_at_exercise
 
         return exercise_costs_vector

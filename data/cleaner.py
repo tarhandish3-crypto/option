@@ -47,9 +47,9 @@ class DataCleaner:
         df = DataCleaner._filter_maturity(df, DaysToMaturity)
 
         # DEBUG_SYMBOls = ['اهرم', 'اخابر']
-        # DEBUG_SYMBOls = ['اهرم']
-        # df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
-        # df = df[df['Ticker'].isin(['ضهرم4024', 'ضهرم4033', 'طهرم4032'])]
+        DEBUG_SYMBOls = ['اهرم']
+        df = df[df['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
+        df = df[df['Ticker'].isin(['ضهرم6047', 'ضهرم6046'])]
 
         # فيلتر سقف موقعيت هاي باز
         EXCLUDED_UNDERLYING = ["اهرم"]
