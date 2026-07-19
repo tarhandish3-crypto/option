@@ -3,7 +3,7 @@
 
 import numpy as np
 from numba import njit
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from config import FEATURE_FLAGS
 from core.models import LegDefinition, PayoffAnalysis
@@ -11,17 +11,21 @@ from core.enums import Side, OptionType
 from analytics.cost_calculator import IranMarketCostCalculator
 
 
-# @njit(cache=True, fastmath=True)
+# ============================================================
+# بخش ۱: محاسبه سود/زیان ناخالص (Numba)
+# ============================================================
+
+@njit(cache=True, fastmath=True)
 def calc_pure_gross_payoff_numba(
         price_levels: np.ndarray,
         weights: np.ndarray,
         strikes: np.ndarray,
         entry_prices: np.ndarray,
         option_types: np.ndarray,  # 0: STOCK, 1: CALL, 2: PUT
-        sides: np.ndarray,         # 1: BUY, -1: SELL
+        sides: np.ndarray,          # 1: BUY, -1: SELL
         contract_sizes: np.ndarray) -> np.ndarray:
     """
-    محاسبه سود/زیان ناخالص با استفاده از Numba و وکتوریزاسیون پیشرفته به صورت کاملاً کامپایل‌شده
+    محاسبه سود/زیان ناخالص در سررسید برای تمام سطوح قیمتی
     """
     num_points = len(price_levels)
     num_legs = len(weights)
@@ -37,6 +41,8 @@ def calc_pure_gross_payoff_numba(
                 continue
 
             opt_type = option_types[j]
+
+            # محاسبه ارزش در سررسید بر اساس نوع لگ
             if opt_type == 0:    # OptionType.STOCK
                 val_at_expiry = S
             elif opt_type == 1:  # OptionType.CALL
@@ -44,6 +50,7 @@ def calc_pure_gross_payoff_numba(
             else:                # OptionType.PUT
                 val_at_expiry = max(strikes[j] - S, 0.0)
 
+            # سود/زیان این لگ
             pnl = sides[j] * (val_at_expiry - entry_prices[j])
             total_pnl += w * pnl * contract_sizes[j]
 
@@ -52,9 +59,54 @@ def calc_pure_gross_payoff_numba(
     return gross_profits
 
 
+# ============================================================
+# بخش ۲: محاسبه جریان نقدی اولیه و سرمایه درگیر (Numba)
+# ============================================================
+
+@njit(cache=True, fastmath=True)
+def calculate_initial_cash_flow_and_capital(
+        weights: np.ndarray,
+        entry_prices: np.ndarray,
+        option_types: np.ndarray,
+        sides: np.ndarray,
+        contract_sizes: np.ndarray,
+        has_contract: np.ndarray,) -> Tuple[float, float, float]:
+    """
+    محاسبه جریان نقدی اولیه و سرمایه درگیر واقعی استراتژی در زمان ورود (t₀)
+    """
+    net_option_premium = 0.0
+    stock_investment = 0.0
+    num_legs = len(weights)
+
+    # ۱. تفکیک و محاسبه جریانات نقدی آپشن‌ها و سهم پایه
+    for idx in range(num_legs):
+        if has_contract[idx] == 1:
+            # محاسبه ارزش لنگه معامله
+            leg_val = entry_prices[idx] * contract_sizes[idx] * weights[idx]
+
+            if option_types[idx] != 0:  # این لنگه آپشن است
+                # خرید آپشن (خروج نقدینگی = مثبت)، فروش آپشن (ورود نقدینگی = منفی)
+                net_option_premium += leg_val if sides[idx] == 1 else -leg_val
+            else:  # این لنگه سهم پایه (Stock) است
+                # اگر سهم خریده شده، هزینه آن به سرمایه درگیر اضافه می‌شود
+                if sides[idx] == 1:
+                    stock_investment += leg_val
+
+    # ۲. محاسبه سرمایه پایه (Premium Capital)
+    if net_option_premium < 0:
+        net_option_premium = 0.0
+
+    return net_option_premium, stock_investment
+
+
+# ============================================================
+# بخش ۳: کلاس اصلی محاسبه‌گر
+# ============================================================
+
 class IranMarketPayoffCalculator:
     """
-    محاسبه‌گر ماتریس P&L استراتژی‌های آپشن در سررسید بر اساس ساختار واقعی هزینه‌های بورس ایران
+    محاسبه‌گر ماتریس P&L استراتژی‌های آپشن در سررسید
+    بر اساس ساختار واقعی هزینه‌های بورس ایران
     """
 
     @classmethod
@@ -67,12 +119,15 @@ class IranMarketPayoffCalculator:
             days_to_maturity: float,
             base_option_size: float) -> PayoffAnalysis:
         """
-        محاسبه بازدهی خالص با کسر دقیق هزینه ثابت ورود و ماتریس متغیر هزینه‌های اعمال سررسید (بدون سقف)
+        محاسبه بازدهی خالص با کسر دقیق هزینه‌های ورود و سررسید و احتساب دارایی پایه
         """
+        # ── اعتبارسنجی ──────────────────────────────────────────────────────
         if price_levels is None or len(price_levels) == 0:
             return PayoffAnalysis()
 
         num_legs = len(legs)
+
+        # ── آرایه‌های عددی برای Numba ──────────────────────────────────────
         weights = np.zeros(num_legs, dtype=np.float64)
         strikes = np.zeros(num_legs, dtype=np.float64)
         entry_prices = np.zeros(num_legs, dtype=np.float64)
@@ -84,7 +139,7 @@ class IranMarketPayoffCalculator:
         use_fallback = FEATURE_FLAGS.get(
             "use_theoretical_price_fallback", False)
 
-        # استخراج اطلاعات لگ‌ها به آرایه‌های عددی همگن جهت ارسال به هسته Numba
+        # ── استخراج اطلاعات لگ‌ها ────────────────────────────────────────────
         for idx, leg in enumerate(legs):
             weights[idx] = leg.ratio
             sides[idx] = 1 if leg.side == Side.BUY else -1
@@ -92,7 +147,7 @@ class IranMarketPayoffCalculator:
 
             if contract is not None:
                 strikes[idx] = contract.strike_price
-                has_contract[idx] = 1
+                has_contract[idx] = 1  # لگ دارای قرارداد معتبر است
 
                 if contract.option_type == OptionType.STOCK:
                     option_types[idx] = 0
@@ -104,7 +159,7 @@ class IranMarketPayoffCalculator:
                     option_types[idx] = 2
                     contract_sizes[idx] = contract.contract_size
 
-                # اولویت‌بندی استخراج قیمت مبنای ورود (بند ۴)
+                # اولویت‌بندی استخراج قیمت ورود
                 if leg.entry_price and leg.entry_price > 0:
                     entry_prices[idx] = leg.entry_price
                 else:
@@ -118,23 +173,28 @@ class IranMarketPayoffCalculator:
                     else:
                         entry_prices[idx] = spot_price
             else:
-                entry_prices[idx] = spot_price
+                # این لگ قرارداد آپشن ندارد و مستقیماً خود سهم پایه است (مانند لگ خرید سهم در Covered Call)
+                entry_prices[idx] = leg.entry_price if (
+                    leg.entry_price and leg.entry_price > 0) else spot_price
                 option_types[idx] = 0
                 contract_sizes[idx] = base_option_size
+                # اصلاح کلیدی: فعال کردن این پرچم تا تابع Numba هزینه خرید سهم را در محاسبات سرمایه لحاظ کند
+                has_contract[idx] = 1
 
-        # ۱. محاسبه سود ناخالص پایه در لحظه سررسید
+        # ── ۱. محاسبه سود ناخالص ──────────────────────────────────────────────
         gross_profits = calc_pure_gross_payoff_numba(
             price_levels, weights, strikes, entry_prices,
             option_types, sides, contract_sizes)
 
+        # ── ۲. تشخیص نماد پایه ─────────────────────────────────────────────────
         first_option_leg = next(
             (l for l in legs if l.contract and l.contract.option_type != OptionType.STOCK), None)
         underlying_ticker = first_option_leg.contract.underlying_ticker if first_option_leg else ""
 
+        # ── ۳. اعمال کارمزد ورود (t₀) ─────────────────────────────────────────
         option_fees = 0.0
         net_profits_expiry = gross_profits.copy()
 
-        # ۲. اعمال کارمزد ثابت ورود (t0) با احتساب سقف مصوب جدید بورس (۲۰۰ میلیون ریال برای هر لگ)
         apply_commissions = FEATURE_FLAGS.get("apply_commissions", True)
         if apply_commissions and underlying_ticker:
             strategy_costs = IranMarketCostCalculator.calculate_strategy_costs(
@@ -142,12 +202,10 @@ class IranMarketPayoffCalculator:
                 legs=legs,
                 spot_price=spot_price,
                 contract_sizes=contract_sizes)
-
-            # کسر هزینه قطعی ورود اولیه از ماتریس سود نهایی
             net_profits_expiry -= strategy_costs.total_entry_cost
             option_fees = strategy_costs.total_entry_cost
 
-        # ۳. اعمال برداری ماتریس هزینه‌های اعمال و مالیات انتقال فیزیکی در سررسید (بدون سقف ریالی)
+        # ── ۴. اعمال کارمزد اعمال و مالیات در سررسید ────────────────────────
         apply_exercise_fee = FEATURE_FLAGS.get("apply_exercise_fee", True)
         if apply_exercise_fee and underlying_ticker:
             exercise_costs_vector = IranMarketCostCalculator.generate_exercise_cost_vector(
@@ -155,53 +213,38 @@ class IranMarketPayoffCalculator:
                 legs=legs,
                 price_levels=price_levels,
                 include_exercise_fee=True)
-
-            # کسر مشروط هزینه‌های پایاپای سررسید بر اساس وضعیت ITM
             net_profits_expiry -= exercise_costs_vector
 
-        # محاسبه جریانات نقدی خالص پرمیوم (Debit / Credit)
-        # ۱. تفکیک و محاسبه جریانات نقدی آپشن‌ها و سهم پایه
-        net_option_premium = 0.0
-        stock_investment = 0.0
-        for idx in range(num_legs):
-            if has_contract[idx] == 1:
-                # محاسبه ارزش لنگه معامله
-                leg_val = entry_prices[idx] * \
-                    contract_sizes[idx] * weights[idx]
+        # ── ۵. محاسبه جریان نقدی اولیه و سرمایه درگیر ────────────────────────
+        net_option_premium, stock_investment = calculate_initial_cash_flow_and_capital(
+            weights=weights,
+            entry_prices=entry_prices,
+            option_types=option_types,
+            sides=sides,
+            contract_sizes=contract_sizes,
+            has_contract=has_contract,)
 
-                if option_types[idx] != 0:  # این لنگه آپشن است
-                    # خرید آپشن (خروج نقدینگی = مثبت)، فروش آپشن (ورود نقدینگی = منفی)
-                    net_option_premium += leg_val if sides[idx] == 1 else -leg_val
-                else:  # این لنگه سهم پایه (Stock) است
-                    # اگر سهم خریده شده، هزینه آن به سرمایه درگیر اضافه می‌شود
-                    if sides[idx] == 1:
-                        stock_investment += leg_val
+        # ── ۶. محاسبه سرمایه درگیر واقعی ───────────────────────────────────────
+        # اکنون به لطف اصلاح بلاک else، هزینه خرید سهام (stock_investment) نیز به درستی جمع می‌شود
+        capital_base = required_margin + net_option_premium + stock_investment + option_fees
 
-        # ۲. محاسبه سرمایه درگیر واقعی (Capital Base)
-        # اگر آپشن‌ها خالص دریافتی (منفی) باشند، از وجه تضمین کم می‌شوند تا سرمایه درگیر واقعی به دست آید
-        if net_option_premium < 0:
-            # استراتژی اعتباری (Credit): سرمایه = وجه تضمین - پرمیوم دریافتی
-            premium_capital = max(required_margin + net_option_premium, 0.0)
-        else:
-            # استراتژی بدهی (Debit): سرمایه = پرمیوم پرداختی + وجه تضمین
-            premium_capital = net_option_premium + required_margin
+        # جلوگیری از تقسیم بر صفر
+        if capital_base <= 0:
+            capital_base = 1.0
 
-        # مخرج کسر نهایی شامل: هزینه آپشن‌ها + وجه تضمین + هزینه خرید سهم پایه + کارمزدها
-        capital_base = premium_capital + stock_investment + option_fees
-
-        # محاسبه درصد بازدهی کل دوره و اسکیل کردن زمانی به ۳۰ روز (سود ماهانه واقعی)
-        returns_pct_period = (net_profits_expiry / capital_base) * \
-            100.0 if capital_base > 0 else np.zeros_like(net_profits_expiry)
+        # ── ۷. محاسبه درصد بازدهی و سود ماهانه ───────────────────────────────
+        returns_pct_period = (net_profits_expiry / capital_base) * 100.0
         dte_factor = 30.0 / max(days_to_maturity, 1.0)
-        monthly_returns = returns_pct_period * dte_factor
+        monthly_returns = np.round(returns_pct_period * dte_factor, 1)
 
+        # ── ۸. استخراج شاخص‌های نهایی ─────────────────────────────────────────
         max_profit_total = float(np.max(net_profits_expiry))
         max_loss_total = float(np.min(net_profits_expiry))
 
-        # استخراج دقیق نقاط سر‌به‌سر پس از اعمال تمام هزینه‌ها و مالیات‌ها
         break_even_points = cls._find_break_even_points(
             price_levels, net_profits_expiry)
 
+        # ── ۹. بازگشت نتیجه ────────────────────────────────────────────────────
         return PayoffAnalysis(
             returns_pct=monthly_returns,
             net_premium=round(float(net_option_premium), 2),
@@ -209,9 +252,17 @@ class IranMarketPayoffCalculator:
             max_loss=round(abs(max_loss_total), 2),
             break_even_points=break_even_points)
 
+    # ============================================================
+    # بخش ۴: توابع کمکی
+    # ============================================================
+
     @staticmethod
-    def _find_break_even_points(price_levels: np.ndarray, profits: np.ndarray) -> List[float]:
-        """یافتن دقیق نقاط سربه‌سر استراتژی با درون‌یابی خطی روی بردار سود خالص"""
+    def _find_break_even_points(
+            price_levels: np.ndarray,
+            profits: np.ndarray) -> List[float]:
+        """
+        یافتن دقیق نقاط سربه‌سر استراتژی با درون‌یابی خطی روی بردار سود خالص
+        """
         break_even_points = []
         sign_changes = np.where(np.diff(np.sign(profits)))[0]
 

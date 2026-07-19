@@ -145,9 +145,9 @@ SYMBOL_INFO = {
 # =====================================================
 
 PRICE_RANGE_CONFIG = {
-    "min_percent": -50,          # حداقل درصد تغییر قیمت
-    "max_percent": 50,           # حداکثر درصد تغییر قیمت
-    "num_points": 3,            # تعداد نقاط (گام‌ها)
+    "min_percent": -45,          # حداقل درصد تغییر قیمت
+    "max_percent": 45,           # حداکثر درصد تغییر قیمت
+    "num_points": 21,            # تعداد نقاط (گام‌ها)
     "step_size": None,           # اگر None باشد، بر اساس num_points محاسبه می‌شود
     "labels_format": "{:.0f}%",  # فرمت برچسب‌ها
 }
@@ -181,176 +181,6 @@ MAX_CACHE_SIZE = 10000           # حداکثر تعداد آیتم‌های ک�
 CACHE_ENABLED = True             # فعال/غیرفعال کردن کش
 
 # =====================================================
-# تنظیمات دانلود داده (Download Settings)
-# =====================================================
-
-DOWNLOAD_CONFIG = {
-    "use_dns_bypass": True,
-    "max_attempts": 3,
-    "retry_delay": 5,
-    "timeout": 30,
-}
-
-# =====================================================
-# تنظیمات موتور اسکنر (Scanner Settings)
-# =====================================================
-
-SCANNER_CONFIG = {
-    "min_volume": MIN_VOLUME,
-    "min_open_interest": MIN_OPEN_INTEREST,
-    "max_spread_pct": MAX_SPREAD_PCT,
-    "min_liquidity_score": LIQUIDITY_SCORE_THRESHOLD,
-    "ignore_frozen_underlying": True
-}
-
-# =====================================================
-# استراتژی‌های هدف برای اسکن (Target Strategies)
-# =====================================================
-
-ACTIVE_STRATEGIES: List[str] = [
-    "bull_call_spread",
-    "bear_put_spread",
-    "collar",
-    "conversion",
-    "covered_call",
-    "iron_condor",
-    "long_box",
-    "long_guts",
-    "long_straddle",
-    "long_strangle",
-    "married_put",
-    "strip",
-    "strap",
-]
-
-# =====================================================
-# پروفایل‌های رتبه‌بندی (Ranking Profiles)
-# =====================================================
-
-RANKING_WEIGHTS: Dict[str, Dict[str, float]] = {
-    "conservative": {
-        "risk_reward": 0.10,
-        "rom": 0.10,
-        "margin_efficiency": 0.15,
-        "max_profit": 0.05,
-        "max_loss": 0.25,
-    },
-    "balanced": {
-        "risk_reward": 0.15,
-        "rom": 0.20,
-        "margin_efficiency": 0.15,
-        "max_profit": 0.10,
-        "max_loss": 0.15,
-    },
-    "aggressive": {
-        "risk_reward": 0.15,
-        "rom": 0.35,
-        "margin_efficiency": 0.15,
-        "max_profit": 0.15,
-        "max_loss": 0.10,
-    },
-    "income": {
-        "risk_reward": 0.10,
-        "rom": 0.25,
-        "margin_efficiency": 0.20,
-        "max_profit": 0.05,
-        "max_loss": 0.10,
-    },
-    "volatility": {
-        "risk_reward": 0.30,
-        "rom": 0.15,
-        "margin_efficiency": 0.05,
-        "max_profit": 0.25,
-        "max_loss": 0.15,
-    },
-}
-
-DEFAULT_PROFILE = "balanced"
-
-# =====================================================
-# تنظیمات رتبه‌بندی (Ranking Settings)
-# =====================================================
-
-RANKING_CONFIG = {
-    "default_profile": DEFAULT_PROFILE,
-    "min_score_threshold": 20.0,
-    "min_profit_threshold": 0.0,
-    "top_n_results": 20,
-}
-
-# =====================================================
-# تنظیمات خروجی Excel (Excel Output Settings)
-# =====================================================
-
-EXCEL_CONFIG = {
-    "top_n": 40,
-    "min_score_threshold": 30.0,
-    "include_chart_data": True,
-    "include_help_sheet": True,
-    "show_liquidity_score": True,
-    "currency_format": "#,##0;[Red](#,##0);\"-\"",
-    "percent_format": "0.0%",
-    "decimal_format": "0.00",
-    "integer_format": "#,##0",
-}
-
-# =====================================================
-# تنظیمات خروجی (Output Settings)
-# =====================================================
-
-OUTPUT_CONFIG = {
-    "top_n": 250,
-    "min_score_threshold": 5.0,
-    "include_chart_data": False,
-    "excel_filename": "opportunities",
-}
-
-# =====================================================
-# تنظیمات گزارش و نمودار (Report & Chart Settings)
-# =====================================================
-
-CHART_CONFIG = {
-    "dpi": 150,
-    "style": "seaborn-v0_8-whitegrid",
-    "figsize": (11, 7),
-}
-
-# =====================================================
-# تنظیمات عمومی سیستم (Logging & Environment)
-# =====================================================
-
-LOGGING_CONFIG = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "standard": {
-            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-        },
-        "detailed": {
-            "format": "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d: %(message)s"
-        }
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "standard",
-            "level": "INFO",
-        },
-        "file": {
-            "class": "logging.FileHandler",
-            "filename": str(LOGS_DIR / "scanner_execution.log"),
-            "encoding": "utf-8",
-            "formatter": "detailed",
-            "level": "DEBUG",
-        }
-    },
-    "root": {
-        "handlers": ["console", "file"],
-        "level": "INFO",
-    },
-}
-
-# =====================================================
 # تنظیمات عمومی سیستم (General Settings)
 # =====================================================
 
@@ -359,8 +189,7 @@ SYSTEM_CONFIG = {
     "max_cycles": 1,                # تعداد دفعات اجرا (0 = بی‌نهایت)
     "parallel_enabled": False,
     "max_workers": 3,
-    "debug_mode": False,
-}
+    "debug_mode": False,}
 
 # =====================================================
 # تنظیمات ویژگی‌های محاسباتی (Feature Flags)
@@ -387,22 +216,171 @@ FEATURE_FLAGS = {
     "calculate_risk_metrics": True,
 
     # نوع تسویه در سررسید: 'CASH' (نقدی) یا 'PHYSICAL' (فیزیکی)
-    # در حالت PHYSICAL، مالیات واگذاری (۰.۵٪) به صورت خودکار اعمال می‌شود.
-    # در حالت CASH، مالیات واگذاری به صورت خودکار صفر در نظر گرفته می‌شود.
-    "exercise_settlement_type": "PHYSICAL",
+    # در حالت PHYSICAL ، مالیات واگذاری (۰.۵٪) به صورت خودکار اعمال می‌شود.
+    # در حالت CASH ، مالیات واگذاری به صورت خودکار صفر در نظر گرفته می‌شود.
+    "exercise_settlement_type": "CASH",
 
     # فعال‌سازی فالبک به قیمت نظری در صورت عدم وجود معامله در روز (ماده ۲۴)
     "use_theoretical_price_fallback": False,
 }
 
+# =====================================================
+# تنظیمات دانلود داده (Download Settings)
+# =====================================================
 
-def get_feature_flags() -> Dict[str, bool]:
-    """دریافت تنظیمات ویژگی‌های محاسباتی"""
-    return FEATURE_FLAGS.copy()
+DOWNLOAD_CONFIG = {
+    "use_dns_bypass": True,
+    "max_attempts": 3,
+    "retry_delay": 5,
+    "timeout": 30,}
+
+# =====================================================
+# تنظیمات موتور اسکنر (Scanner Settings)
+# =====================================================
+
+SCANNER_CONFIG = {
+    "min_volume": MIN_VOLUME,
+    "min_open_interest": MIN_OPEN_INTEREST,
+    "max_spread_pct": MAX_SPREAD_PCT,
+    "min_liquidity_score": LIQUIDITY_SCORE_THRESHOLD,
+    "ignore_frozen_underlying": True}
+
+# =====================================================
+# استراتژی‌های هدف برای اسکن (Target Strategies)
+# =====================================================
+
+ACTIVE_STRATEGIES: List[str] = [
+    "bull_call_spread",
+    "bear_put_spread",
+    "collar",
+    "conversion",
+    "covered_call",
+    "iron_condor",
+    "long_box",
+    "long_guts",
+    "long_straddle",
+    "long_strangle",
+    "married_put",
+    "strip",
+    "strap",]
+
+# =====================================================
+# پروفایل‌های رتبه‌بندی (Ranking Profiles)
+# =====================================================
+
+RANKING_WEIGHTS: Dict[str, Dict[str, float]] = {
+    "conservative": {
+        "risk_reward": 0.10,
+        "rom": 0.10,
+        "margin_efficiency": 0.15,
+        "max_profit": 0.05,
+        "max_loss": 0.25,},
+    "balanced": {
+        "risk_reward": 0.15,
+        "rom": 0.20,
+        "margin_efficiency": 0.15,
+        "max_profit": 0.10,
+        "max_loss": 0.15,},
+    "aggressive": {
+        "risk_reward": 0.15,
+        "rom": 0.35,
+        "margin_efficiency": 0.15,
+        "max_profit": 0.15,
+        "max_loss": 0.10,},
+    "income": {
+        "risk_reward": 0.10,
+        "rom": 0.25,
+        "margin_efficiency": 0.20,
+        "max_profit": 0.05,
+        "max_loss": 0.10,},
+    "volatility": {
+        "risk_reward": 0.30,
+        "rom": 0.15,
+        "margin_efficiency": 0.05,
+        "max_profit": 0.25,
+        "max_loss": 0.15,},}
+
+DEFAULT_PROFILE = "balanced"
+
+# =====================================================
+# تنظیمات رتبه‌بندی (Ranking Settings)
+# =====================================================
+
+RANKING_CONFIG = {
+    "default_profile": DEFAULT_PROFILE,
+    "min_score_threshold": 20.0,
+    "min_profit_threshold": 0.0,
+    "top_n_results": 20,}
+
+# =====================================================
+# تنظیمات خروجی Excel (Excel Output Settings)
+# =====================================================
+
+EXCEL_CONFIG = {
+    "top_n": 40,
+    "min_score_threshold": 30.0,
+    "include_chart_data": True,
+    "include_help_sheet": True,
+    "show_liquidity_score": True,
+    "currency_format": "#,##0;[Red](#,##0);\"-\"",
+    "percent_format": "0.0%",
+    "decimal_format": "0.00",
+    "integer_format": "#,##0",}
+
+# =====================================================
+# تنظیمات خروجی (Output Settings)
+# =====================================================
+
+OUTPUT_CONFIG = {
+    "top_n": 250,
+    "min_score_threshold": 5.0,
+    "include_chart_data": False,
+    "excel_filename": "opportunities",}
+
+# =====================================================
+# تنظیمات گزارش و نمودار (Report & Chart Settings)
+# =====================================================
+
+CHART_CONFIG = {
+    "dpi": 150,
+    "style": "seaborn-v0_8-whitegrid",
+    "figsize": (11, 7),}
+
+# =====================================================
+# تنظیمات عمومی سیستم (Logging & Environment)
+# =====================================================
+
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"},
+        "detailed": {
+            "format": "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d: %(message)s"}},
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+            "level": "INFO",},
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": str(LOGS_DIR / "scanner_execution.log"),
+            "encoding": "utf-8",
+            "formatter": "detailed",
+            "level": "DEBUG",}},
+    "root": {
+        "handlers": ["console", "file"],
+        "level": "INFO",},}
+
 
 # =====================================================
 # توابع کمکی (Helper Functions)
 # =====================================================
+
+def get_feature_flags() -> Dict[str, bool]:
+    """دریافت تنظیمات ویژگی‌های محاسباتی"""
+    return FEATURE_FLAGS.copy()
 
 
 def get_ranking_weights(profile: str = DEFAULT_PROFILE) -> Dict[str, float]:
