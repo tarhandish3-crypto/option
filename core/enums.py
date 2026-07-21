@@ -27,7 +27,7 @@ class OptionStatus(Enum):
     OTM = "OTM"      # Out of The Money (خارج از پول)
 
 
-# ✅ اضافه کردن مجدد جهت همخوانی با لایه models.py
+# اضافه کردن مجدد جهت همخوانی با لایه models.py
 class ExchangeType(Enum):
     """نوع بورس / بازار ساختاری"""
     TSE = "tse"      # بورس تهران

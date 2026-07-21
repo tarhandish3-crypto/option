@@ -11,7 +11,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Union
 
-from core.enums import ExchangeType, AssetType, OptionType, Side, MarketType, RiskLevel, InvestorProfile
+from core.enums import ExchangeType, AssetType, OptionType, Side
 from config import get_price_levels, get_price_steps
 
 # تنظیم logger برای این ماژول
@@ -177,8 +177,7 @@ class LegDefinition:
             'is_stock_leg': self.is_stock_leg,
             'option_type': self.option_type.value if self.option_type else None,
             'contract': self.contract.to_dict() if self.contract else None,
-            'entry_price': self.entry_price
-        }
+            'entry_price': self.entry_price}
 
 
 # =====================================================
@@ -292,14 +291,23 @@ class Opportunity:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            'strategy_name': self.strategy_name, 'underlying_ticker': self.underlying_ticker,
-            'days_to_maturity': self.days_to_maturity, 'net_premium': self.net_premium,
-            'max_profit': self.max_profit, 'max_loss': self.max_loss, 'break_even_points': self.break_even_points,
-            'required_margin': self.required_margin, 'total_premium': self.total_premium,
-            'risk_reward_ratio': self.risk_reward_ratio, 'expected_return_pct': self.expected_return_pct,
-            'liquidity_score': self.liquidity_score,
-            'profile_scores': self.profile_scores.to_dict(), 'final_score': self.final_score,
-            'rank': self.rank, 'timestamp': self.timestamp.isoformat(), 'legs': [leg.to_dict() for leg in self.legs]
+            "strategy_name": self.strategy_name,
+            "underlying_ticker": self.underlying_ticker,
+            "days_to_maturity": self.days_to_maturity,
+            "net_premium": self.net_premium,
+            "max_profit": self.max_profit,
+            "max_loss": self.max_loss,
+            "break_even_points": self.break_even_points,
+            "required_margin": self.required_margin,
+            "total_premium": self.total_premium,
+            "risk_reward_ratio": self.risk_reward_ratio,
+            "expected_return_pct": self.expected_return_pct,
+            "liquidity_score": self.liquidity_score,
+            "profile_scores": self.profile_scores.to_dict(),
+            "final_score": self.final_score,
+            "rank": self.rank,
+            "timestamp": self.timestamp.isoformat(),
+            "legs": [leg.to_dict() for leg in self.legs],
         }
 
     @classmethod
@@ -356,12 +364,20 @@ class ScanResult:
         records = []
         for opp in self.opportunities:
             record = {
-                'Strategy': opp.strategy_name, 'Ticker': opp.underlying_ticker, 'DaysToMaturity': opp.days_to_maturity,
-                'RiskLevel': opp.classification.risk_level, 'NetPremium': round(opp.net_premium, 2),
-                'MaxProfit': round(opp.max_profit, 2), 'MaxLoss': round(opp.max_loss, 2),
-                'RiskReward': round(opp.risk_reward_ratio, 2), 'ExpectedReturn': round(opp.expected_return_pct, 2),
-                'Margin': round(opp.required_margin, 2), 'LiquidityScore': round(opp.liquidity_score, 2),
-                'FinalScore': round(opp.final_score, 2), 'Rank': opp.rank, 'Timestamp': opp.timestamp
+                "Strategy": opp.strategy_name,
+                "Ticker": opp.underlying_ticker,
+                "DaysToMaturity": opp.days_to_maturity,
+                "RiskLevel": opp.classification.risk_level,
+                "NetPremium": round(opp.net_premium, 2),
+                "MaxProfit": round(opp.max_profit, 2),
+                "MaxLoss": round(opp.max_loss, 2),
+                "RiskReward": round(opp.risk_reward_ratio, 2),
+                "ExpectedReturn": round(opp.expected_return_pct, 2),
+                "Margin": round(opp.required_margin, 2),
+                "LiquidityScore": round(opp.liquidity_score, 2),
+                "FinalScore": round(opp.final_score, 2),
+                "Rank": opp.rank,
+                "Timestamp": opp.timestamp,
             }
             for i, leg in enumerate(opp.legs, 1):
                 if leg.contract:

@@ -13,10 +13,10 @@ from typing import Optional, Type, Dict
 
 from strategies.base import StrategyDefinition, GeneratorType
 from strategies.generators.base import BaseGenerator
+from strategies.generators.single_leg import SingleLegGenerator
 from strategies.generators.two_leg import TwoLegGenerator
 from strategies.generators.three_leg import ThreeLegGenerator
 from strategies.generators.four_leg import FourLegGenerator
-from strategies.generators.stock_option import TwoLegGenerator
 
 # Logger در لایه کانفیگ و استارت‌آپ (نه در Hot Path)
 logger = logging.getLogger("OptionScanner.Strategies.Generators")
@@ -24,7 +24,7 @@ logger = logging.getLogger("OptionScanner.Strategies.Generators")
 # استفاده از Type[BaseGenerator] برای اطمینان از نوع کلاس‌های نقشه
 GENERATOR_MAP: Dict[GeneratorType, Optional[Type[BaseGenerator]]] = {
     GeneratorType.STOCK_OPTION: TwoLegGenerator,
-    GeneratorType.SINGLE_LEG: None,
+    GeneratorType.SINGLE_LEG: SingleLegGenerator,
     GeneratorType.TWO_LEG: TwoLegGenerator,
     GeneratorType.THREE_LEG: ThreeLegGenerator,
     GeneratorType.FOUR_LEG: FourLegGenerator,
@@ -62,6 +62,7 @@ def get_generator(strategy_def: StrategyDefinition) -> Optional[BaseGenerator]:
 
 __all__ = [
     "BaseGenerator",
+    "SingleLegGenerator",
     "TwoLegGenerator",
     "ThreeLegGenerator",
     "FourLegGenerator",

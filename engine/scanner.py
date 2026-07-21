@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 from typing import List, Dict, Any, Iterator, Optional
 
-from config import MIN_VOLUME
 from core.models import MarketSnapshot, Opportunity, OptionContract
 from strategies.core import get_all_strategies
 from strategies.generators import get_generator
