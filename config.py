@@ -15,6 +15,8 @@ CACHE_DIR = DATA_DIR / "cache"
 OUTPUT_DIR = BASE_DIR / "output"
 CHARTS_DIR = OUTPUT_DIR / "charts"
 LOGS_DIR = BASE_DIR / "logs"
+# مسیر پوشه کانفیگ‌ها
+CONFIG_DIR = BASE_DIR / "config"
 
 # تضمین ایجاد پوشه‌های حیاتی در بدو اجرای برنامه
 for directory in [DATA_DIR, CACHE_DIR, OUTPUT_DIR, CHARTS_DIR, LOGS_DIR]:
