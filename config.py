@@ -45,9 +45,6 @@ EXERCISE_FEE_RATE: Dict[tuple, float] = {
 # ===== مالیات واگذاری =====
 EXERCISE_TAX_RATE = 0.005         # ۰.۵٪ مالیات واگذاری سهم (فقط فروشنده)
 
-# ===== کارمزد اختیار معامله =====
-OPTION_BUY_COMMISSION = 0.00103   # ۰.۱۰۳٪ کارمزد خرید اختیار
-OPTION_SELL_COMMISSION = 0.00103  # ۰.۱۰۳٪ کارمزد فروش اختیار
 
 # =====================================================
 # دیکشنری کارمزدها (Commission Dictionary)
@@ -96,11 +93,11 @@ COMMISSION_DICT = {
     ('ifb', 'etf-mix', False): 0.001323,   # اصلاح شده: فروش ETF مختلط فرابورس
 
     # ===== اختیار معامله (Option) =====
-    ('tse', 'option', True): 0.00103,      # خرید اختیار بورس
-    ('tse', 'option', False): 0.00103,     # فروش اختیار بورس
+    ('tse', 'option', True): 0.001,      # خرید اختیار بورس
+    ('tse', 'option', False): 0.001,     # فروش اختیار بورس
     # اصلاح شده: خرید اختیار فرابورس (طبق جیسون: 0.00102)
-    ('ifb', 'option', True): 0.00102,
-    ('ifb', 'option', False): 0.00103,     # فروش اختیار فرابورس
+    ('ifb', 'option', True): 0.001,
+    ('ifb', 'option', False): 0.001,     # فروش اختیار فرابورس
 }
 
 # =====================================================
@@ -469,8 +466,6 @@ def get_fee_config() -> Dict[str, Any]:
     return {
         "exercise_fee_rate": EXERCISE_FEE_RATE,
         "exercise_tax_rate": EXERCISE_TAX_RATE,
-        "option_buy_commission": OPTION_BUY_COMMISSION,
-        "option_sell_commission": OPTION_SELL_COMMISSION,
     }
 
 

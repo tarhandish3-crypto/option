@@ -18,6 +18,9 @@ from ui.workers import ScannerWorker, AutoScannerWorker
 from ui.symbol_filter_dialog import SymbolFilterDialog
 from ui.settings_dialog import SettingsDialog
 
+# دریافت تنظیمات از config
+import config
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,16 +44,23 @@ class MainWindow(QMainWindow):
     
     status_update_signal = Signal(str)
     
-    def __init__(self, scanner_engine: Any, config: Optional[Dict] = None):
+    def __init__(self, scanner_engine: Any, config_dict: Optional[Dict] = None):
         super().__init__()
         
         self.scanner_engine = scanner_engine
-        self.config = config or {}
+        self.config = config_dict or {}
+        
+        # دریافت تنظیمات بازه درصدی قیمت از config.py
+        self.price_range_config = self.config.get(
+            'price_range', 
+            config.PRICE_RANGE_CONFIG  # استفاده از تنظیمات config.py
+        )
         
         # متغیرهای مدیریتی
         self.worker: Optional[ScannerWorker] = None
         self.auto_worker: Optional[AutoScannerWorker] = None
         self.current_results: List = []
+        self.price_steps: List[float] = []
         
         # ۱. راه‌اندازی UI و StatusBar
         self.init_ui()
@@ -64,15 +74,50 @@ class MainWindow(QMainWindow):
         
         self.load_settings()
         
-        # اسکن اولیه
-        QTimer.singleShot(500, self.start_scan)
+        # نمایش پیام خوش‌آمدگویی
+        self.status_bar.showMessage("✅ آماده به کار - برای شروع اسکن، دکمه '🔄 اسکن دستی' را بزنید")
         
-        logger.info("پنجره اصلی راه‌اندازی شد")
+        # نمایش حالت خالی در جدول
+        self._show_empty_state()
+        
+        logger.info("پنجره اصلی با ساختار ستون‌های جدید راه‌اندازی شد (بدون اسکن خودکار)")
+
+    def _generate_price_step_columns(self) -> List[str]:
+        """
+        تولید پویا لیست عناوین ستون‌های درصدی تغییر قیمت
+        با استفاده از تنظیمات config.PRICE_RANGE_CONFIG
+        """
+        cfg = self.price_range_config
+        min_p = cfg.get("min_percent", -45.0)
+        max_p = cfg.get("max_percent", 45.0)
+        num_pts = cfg.get("num_points", 21)
+        step_sz = cfg.get("step_size", None)
+        fmt = cfg.get("labels_format", "{:.1f}%")
+
+        if step_sz is not None and step_sz > 0:
+            steps = []
+            curr = min_p
+            while curr <= max_p + 1e-9:
+                steps.append(curr)
+                curr += step_sz
+            self.price_steps = steps
+        else:
+            if num_pts <= 1:
+                self.price_steps = [min_p]
+            else:
+                step = (max_p - min_p) / (num_pts - 1)
+                self.price_steps = [min_p + i * step for i in range(num_pts)]
+
+        headers = []
+        for val in self.price_steps:
+            headers.append(fmt.format(val))
+            
+        return headers
 
     def init_ui(self):
         """راه‌اندازی رابط کاربری"""
         self.setWindowTitle("Option Strategy Scanner - دستیار هوشمند اختیار معامله")
-        self.resize(1200, 700)
+        self.resize(1350, 750)
         
         self.setStyleSheet(self._get_global_style())
         
@@ -103,7 +148,7 @@ class MainWindow(QMainWindow):
         # ۵. نوار وضعیت
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("✅ آماده به کار - برای شروع اسکن، دکمه 'اسکن دستی' را بزنید")
+        self.status_bar.showMessage("✅ آماده به کار - برای شروع اسکن، دکمه '🔄 اسکن دستی' را بزنید")
 
     def _get_global_style(self) -> str:
         """استایل کلی برنامه"""
@@ -118,14 +163,15 @@ class MainWindow(QMainWindow):
             selection-background-color: #cfe2ff;
         }
         QTableWidget::item {
-            padding: 5px;
+            padding: 4px;
         }
         QHeaderView::section {
-            background-color: #4a6fa5;
+            background-color: #3b5998;
             color: white;
-            padding: 8px;
-            border: 1px solid #3d5f8a;
+            padding: 6px;
+            border: 1px solid #2d4373;
             font-weight: bold;
+            font-size: 11px;
         }
         QPushButton {
             background-color: #4a6fa5;
@@ -227,30 +273,41 @@ class MainWindow(QMainWindow):
         return separator
 
     def _create_table(self) -> QTableWidget:
-        """ساخت و تنظیم جدول اصلی"""
+        """ساخت و تنظیم جدول اصلی با ستون‌های جدید و پویا"""
         table = QTableWidget()
         
-        headers = [
-            "انتخاب", 
-            "نوع استراتژی", 
-            "نماد پایه", 
-            "بازدهی (%)", 
-            "حد ریسک", 
-            "وجه تضمین", 
-            "امتیاز", 
-            "جزئیات Legها",
-            "وضعیت"
-        ]
-        table.setColumnCount(len(headers))
-        table.setHorizontalHeaderLabels(headers)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
+        # ۱. ستون‌های ثابت
+        fixed_headers = ["Rank", "Strategy", "Positions", "DTE", "Ticker", "Breakeven"]
+        
+        # ۲. ستون‌های درصدی پویا (از config)
+        dynamic_price_headers = self._generate_price_step_columns()
+        
+        # ترکیب ستون‌ها
+        all_headers = fixed_headers + dynamic_price_headers
+        
+        table.setColumnCount(len(all_headers))
+        table.setHorizontalHeaderLabels(all_headers)
+        
+        # تنظیم اندازه ستون‌ها
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        
+        # ستون‌های ثابت اندازه مشخص‌تری می‌گیرند
+        table.setColumnWidth(0, 50)   # Rank
+        table.setColumnWidth(1, 130)  # Strategy
+        table.setColumnWidth(2, 220)  # Positions
+        table.setColumnWidth(3, 50)   # DTE
+        table.setColumnWidth(4, 90)   # Ticker
+        table.setColumnWidth(5, 90)   # Breakeven
+
+        # ستون‌های پویا
+        for col_idx in range(len(fixed_headers), len(all_headers)):
+            table.setColumnWidth(col_idx, 70)
+
         table.setSortingEnabled(True)
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         table.setSelectionMode(QTableWidget.ExtendedSelection)
-        
-        table.setColumnWidth(0, 60)
         
         return table
 
@@ -267,7 +324,7 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(toolbar)
         layout.setContentsMargins(10, 5, 10, 5)
 
-        self.lbl_stats = QLabel("📊 ۰ استراتژی | ۰ انتخاب‌شده")
+        self.lbl_stats = QLabel("📊 ۰ استراتژی یافت شد")
         layout.addWidget(self.lbl_stats)
 
         layout.addStretch()
@@ -348,7 +405,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFormat(f"{percent}% - {status}")
 
     def populate_table(self, results: List):
-        """پر کردن جدول با داده‌های دریافتی"""
+        """پر کردن جدول بر اساس ساختار ستون‌های جدید"""
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
 
@@ -358,87 +415,82 @@ class MainWindow(QMainWindow):
 
         for row_idx, strat in enumerate(results):
             self.table.insertRow(row_idx)
-            self._add_checkbox(row_idx)
             self._populate_row(row_idx, strat)
 
         self.table.setSortingEnabled(True)
         self._update_stats()
 
-    def _add_checkbox(self, row: int):
-        """افزودن چک‌باکس به سطر"""
-        chk_box = QCheckBox()
-        chk_box.checkStateChanged.connect(lambda: self._on_selection_changed())
-        
-        chk_widget = QWidget()
-        layout = QHBoxLayout(chk_widget)
-        layout.addWidget(chk_box)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.table.setCellWidget(row, 0, chk_widget)
-
     def _populate_row(self, row: int, strategy: Any):
-        """پر کردن یک سطر از جدول و ذخیره شیء استراتژی"""
-        data = {
-            'name': getattr(strategy, 'name', 'N/A'),
-            'symbol': getattr(strategy, 'ua_symbol', getattr(strategy, 'symbol', 'N/A')),
-            'return_pct': float(getattr(strategy, 'return_pct', 0)),
-            'risk': getattr(strategy, 'risk', 'N/A'),
-            'margin': float(getattr(strategy, 'margin', 0)),
-            'score': float(getattr(strategy, 'score', 0)),
-            'legs': getattr(strategy, 'legs_summary', 'N/A'),
-            'status': getattr(strategy, 'status', 'جدید')
-        }
+        """پر کردن سطر بر اساس ساختار جدید: Rank, Strategy, Positions, DTE, Ticker, Breakeven, [درصدهای تغییر قیمت]"""
         
-        # ستون ۱: نوع استراتژی (ذخیره کامل شیء strategy جهت استخراج امن هنگام سورت)
-        item_name = QTableWidgetItem(str(data['name']))
-        font = item_name.font()
+        # ۱. رتبه (Rank)
+        rank_val = getattr(strategy, 'rank', row + 1)
+        rank_item = NumericTableWidgetItem(str(rank_val))
+        rank_item.setData(Qt.UserRole, int(rank_val))
+        rank_item.setTextAlignment(Qt.AlignCenter)
+        rank_item.setData(Qt.UserRole + 1, strategy)  # ذخیره کامپوننت استراتژی
+        self.table.setItem(row, 0, rank_item)
+
+        # ۲. نوع استراتژی (Strategy)
+        strat_name = str(getattr(strategy, 'name', getattr(strategy, 'strategy_type', 'N/A')))
+        item_strat = QTableWidgetItem(strat_name)
+        font = item_strat.font()
         font.setBold(True)
-        item_name.setFont(font)
-        item_name.setData(Qt.UserRole, strategy)
-        self.table.setItem(row, 1, item_name)
+        item_strat.setFont(font)
+        self.table.setItem(row, 1, item_strat)
+
+        # ۳. موقعیت‌ها (Positions)
+        positions = str(getattr(strategy, 'positions', getattr(strategy, 'legs_summary', 'N/A')))
+        self._set_item(row, 2, positions)
+
+        # ۴. روز تا سررسید (DTE)
+        try:
+            dte_val = int(getattr(strategy, 'dte', 0))
+        except (ValueError, TypeError):
+            dte_val = 0
+        dte_item = NumericTableWidgetItem(str(dte_val))
+        dte_item.setData(Qt.UserRole, dte_val)
+        dte_item.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, 3, dte_item)
+
+        # ۵. نماد پایه (Ticker)
+        ticker = str(getattr(strategy, 'ticker', getattr(strategy, 'ua_symbol', 'N/A')))
+        self._set_item(row, 4, ticker, bold=True)
+
+        # ۶. نقطه بزنگاه (Breakeven)
+        be_val = getattr(strategy, 'breakeven', 'N/A')
+        self._set_item(row, 5, str(be_val))
+
+        # ۷. پر کردن ستون‌های پویا درصدی (Payoff Matrix)
+        payoff_data = getattr(strategy, 'payoff_matrix', getattr(strategy, 'matrix', {}))
         
-        # ستون ۲: نماد پایه
-        self._set_item(row, 2, data['symbol'])
-        
-        # ستون ۳: بازدهی (عددی)
-        item_ret = NumericTableWidgetItem(f"{data['return_pct']:.2f}%")
-        item_ret.setData(Qt.UserRole, data['return_pct'])
-        if data['return_pct'] > 0:
-            item_ret.setForeground(QBrush(QColor(0, 128, 0)))
-        elif data['return_pct'] < 0:
-            item_ret.setForeground(QBrush(QColor(200, 0, 0)))
-        self.table.setItem(row, 3, item_ret)
-        
-        # ستون ۴: حد ریسک
-        self._set_item(row, 4, str(data['risk']))
-        
-        # ستون ۵: وجه تضمین (عددی)
-        item_margin = NumericTableWidgetItem(f"{int(data['margin']):,}")
-        item_margin.setData(Qt.UserRole, data['margin'])
-        self.table.setItem(row, 5, item_margin)
-        
-        # ستون ۶: امتیاز (عددی)
-        score_item = NumericTableWidgetItem(f"{data['score']:.2f}")
-        score_item.setData(Qt.UserRole, data['score'])
-        if data['score'] > 0.7:
-            score_item.setBackground(QBrush(QColor(144, 238, 144)))
-        elif data['score'] > 0.4:
-            score_item.setBackground(QBrush(QColor(255, 255, 150)))
-        else:
-            score_item.setBackground(QBrush(QColor(255, 200, 200)))
-        self.table.setItem(row, 6, score_item)
-        
-        # ستون ۷: جزئیات Legها
-        self._set_item(row, 7, data['legs'])
-        
-        # ستون ۸: وضعیت
-        status_item = QTableWidgetItem(data['status'])
-        if str(data['status']).lower() == 'جدید':
-            status_item.setForeground(QBrush(QColor(0, 100, 200)))
-        elif str(data['status']).lower() == 'اجرا شده':
-            status_item.setForeground(QBrush(QColor(0, 128, 0)))
-        self.table.setItem(row, 8, status_item)
+        fixed_col_offset = 6
+        for i, step_pct in enumerate(self.price_steps):
+            col_idx = fixed_col_offset + i
+            
+            val = None
+            if isinstance(payoff_data, dict):
+                val = payoff_data.get(step_pct, payoff_data.get(f"{step_pct:.1f}%", None))
+            elif isinstance(payoff_data, (list, tuple)) and i < len(payoff_data):
+                val = payoff_data[i]
+
+            if val is not None:
+                try:
+                    num_val = float(val)
+                    item_pnl = NumericTableWidgetItem(f"{num_val:,.0f}")
+                    item_pnl.setData(Qt.UserRole, num_val)
+                    item_pnl.setTextAlignment(Qt.AlignCenter)
+                    
+                    if num_val > 0:
+                        item_pnl.setForeground(QBrush(QColor(0, 128, 0)))  # سبز
+                    elif num_val < 0:
+                        item_pnl.setForeground(QBrush(QColor(200, 0, 0)))  # قرمز
+                        
+                    self.table.setItem(row, col_idx, item_pnl)
+                except (ValueError, TypeError):
+                    self._set_item(row, col_idx, str(val))
+            else:
+                self._set_item(row, col_idx, "-")
 
     def _set_item(self, row: int, col: int, text: str, bold: bool = False):
         """تنظیم یک آیتم متنی ساده در جدول"""
@@ -451,36 +503,38 @@ class MainWindow(QMainWindow):
 
     def _show_empty_state(self):
         """نمایش حالت بدون داده"""
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(1)
-        empty_item = QTableWidgetItem("هیچ استراتژی‌ای یافت نشد")
+        
+        # پاک کردن تمام سلول‌ها و تنظیم یک سلول یکپارچه
+        for col in range(self.table.columnCount()):
+            item = QTableWidgetItem("")
+            self.table.setItem(0, col, item)
+        
+        # تنظیم پیام در ستون اول با Span
+        empty_item = QTableWidgetItem("🔍 برای شروع اسکن، دکمه '🔄 اسکن دستی' را بزنید")
         empty_item.setTextAlignment(Qt.AlignCenter)
-        self.table.setSpan(0, 0, 1, self.table.columnCount())
+        empty_item.setForeground(QBrush(QColor(150, 150, 150)))
+        font = empty_item.font()
+        font.setPointSize(12)
+        empty_item.setFont(font)
+        
         self.table.setItem(0, 0, empty_item)
-
-    def _on_selection_changed(self):
-        """تغییر در انتخاب سطرها"""
-        self._update_stats()
+        self.table.setSpan(0, 0, 1, self.table.columnCount())
+        self.table.setSortingEnabled(True)
 
     def _update_stats(self):
         """به‌روزرسانی آمار"""
-        if self.table.rowCount() == 1 and self.table.item(0, 0) and self.table.item(0, 0).text() == "هیچ استراتژی‌ای یافت نشد":
-            total = 0
+        if self.table.rowCount() == 1 and self.table.item(0, 0):
+            text = self.table.item(0, 0).text()
+            if "برای شروع اسکن" in text or "هیچ استراتژی‌ای یافت نشد" in text:
+                total = 0
+            else:
+                total = self.table.rowCount()
         else:
             total = self.table.rowCount()
             
-        selected = self._get_selected_rows()
-        self.lbl_stats.setText(f"📊 {total} استراتژی | {len(selected)} انتخاب‌شده")
-
-    def _get_selected_rows(self) -> List[int]:
-        """دریافت ایندکس سطرهای انتخاب‌شده"""
-        selected = []
-        for row in range(self.table.rowCount()):
-            cell_widget = self.table.cellWidget(row, 0)
-            if cell_widget:
-                chk_box = cell_widget.findChild(QCheckBox)
-                if chk_box and chk_box.isChecked():
-                    selected.append(row)
-        return selected
+        self.lbl_stats.setText(f"📊 {total} استراتژی یافت شد")
 
     def _set_controls_enabled(self, enabled: bool):
         """فعال/غیرفعال کردن کنترل‌ها"""
@@ -494,7 +548,7 @@ class MainWindow(QMainWindow):
 
     def toggle_auto_scan(self, state: int):
         """فعال/غیرفعال‌سازی اسکن دوره‌ای"""
-        is_checked = (state == Qt.CheckState.Checked.value or state == True)
+        is_checked = (state == Qt.CheckState.Checked.value or state is True)
         if is_checked:
             interval = self.spin_interval.value()
             interval_ms = interval * 60 * 1000
@@ -523,7 +577,8 @@ class MainWindow(QMainWindow):
                 filters = dialog.get_filters()
                 self.config['symbol_filters'] = filters
                 logger.info("فیلتر نمادها به‌روزرسانی شد")
-        except (ImportError, NameError, AttributeError):
+        except Exception as e:
+            logger.warning(f"عدم امکان باز کردن SymbolFilterDialog: {e}")
             QMessageBox.information(
                 self, 
                 "اطلاعات", 
@@ -537,8 +592,14 @@ class MainWindow(QMainWindow):
             if dialog.exec():
                 new_config = dialog.get_settings()
                 self.config.update(new_config)
+                # در صورت تغییر تنظیمات بازه درصدی، جدول مجدداً تنظیم می‌شود
+                if 'price_range' in new_config:
+                    self.price_range_config = new_config['price_range']
+                    self.table = self._create_table()
+                    self._show_empty_state()
                 logger.info("تنظیمات سیستم به‌روزرسانی شد")
-        except (ImportError, NameError, AttributeError):
+        except Exception as e:
+            logger.warning(f"عدم امکان باز کردن SettingsDialog: {e}")
             QMessageBox.information(
                 self, 
                 "اطلاعات", 
@@ -547,43 +608,29 @@ class MainWindow(QMainWindow):
 
     def send_selected_to_broker(self):
         """ارسال استراتژی‌های انتخاب‌شده به کارگزاری"""
-        selected_rows = self._get_selected_rows()
-        
-        if not selected_rows:
+        selected_items = self.table.selectedItems()
+        if not selected_items:
             QMessageBox.warning(
                 self, 
                 "هشدار", 
-                "لطفاً حداقل یک استراتژی را از جدول انتخاب (تیک) کنید."
+                "لطفاً حداقل یک سطر از جدول را برای ارسال انتخاب کنید."
             )
             return
 
-        selected_strategies = []
-        for row in selected_rows:
-            item_name = self.table.item(row, 1)
-            strategy_obj = item_name.data(Qt.UserRole) if item_name else None
-            
-            strategy_summary = {
-                'row': row,
-                'obj': strategy_obj,
-                'name': item_name.text() if item_name else '',
-                'symbol': self.table.item(row, 2).text() if self.table.item(row, 2) else '',
-                'return': self.table.item(row, 3).text() if self.table.item(row, 3) else '',
-                'risk': self.table.item(row, 4).text() if self.table.item(row, 4) else '',
-                'margin': self.table.item(row, 5).text() if self.table.item(row, 5) else '',
-            }
-            selected_strategies.append(strategy_summary)
+        selected_rows = list(set([item.row() for item in selected_items]))
 
         reply = QMessageBox.question(
             self,
             "تأیید ارسال به کارگزاری",
-            f"آیا از ارسال {len(selected_strategies)} استراتژی به کارگزاری اطمینان دارید؟",
+            f"آیا از ارسال {len(selected_rows)} استراتژی انتخابی به کارگزاری اطمینان دارید؟",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
 
         if reply == QMessageBox.Yes:
-            self.status_update_signal.emit(f"🚀 در حال ارسال {len(selected_strategies)} استراتژی به کارگزاری...")
-            logger.info(f"ارسال {len(selected_strategies)} استراتژی به کارگزاری")
+            self.status_update_signal.emit(f"🚀 در حال ارسال {len(selected_rows)} استراتژی به کارگزاری...")
+            logger.info(f"ارسال {len(selected_rows)} استراتژی به کارگزاری")
+            QMessageBox.information(self, "موفقیت", "استراتژی‌های انتخابی با موفقیت ارسال شدند.")
 
     def clear_results(self):
         """پاک کردن نتایج جدول"""
@@ -596,8 +643,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.No
             )
             if reply == QMessageBox.Yes:
+                self.table.setSortingEnabled(False)
                 self.table.setRowCount(0)
                 self.current_results = []
+                self._show_empty_state()
                 self._update_stats()
                 self.status_update_signal.emit("🗑️ نتایج پاک شد")
                 logger.info("نتایج جدول پاک شد")

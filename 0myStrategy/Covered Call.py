@@ -2,6 +2,13 @@
 # -*- coding: utf-8 -*-
 
 # تنظیم مسیر پروژه
+from pathlib import Path
+import sys
+current_file_path = Path(__file__).resolve()
+current_dir = current_file_path.parent
+root_dir = current_dir.parent
+sys.path.append(str(root_dir))
+
 from scipy.optimize import brentq
 from scipy.stats import norm
 import warnings
@@ -17,10 +24,6 @@ from config import (
     get_symbol_kind,
     get_commission_rate,
     get_exercise_fee_rate)
-from pathlib import Path
-import sys
-BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.append(str(BASE_DIR))
 
 # ایمپورت ماژول‌های پروژه
 warnings.filterwarnings('ignore')
