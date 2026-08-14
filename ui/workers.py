@@ -286,3 +286,60 @@ class StrategyExecutorWorker(QThread):
                 logger.error(f"فیلد {field} در داده‌های استراتژی وجود ندارد")
                 return False
         return True
+
+
+class BrokerLoginWorker(QThread):
+    """
+    ورکر پس‌زمینه برای باز کردن مرورگر کارگزاری و انتظار برای ورود کاربر.
+    UI را بلاک نمی‌کند.
+
+    Signals:
+        login_success:  پس از ورود موفق کاربر emit می‌شود
+        login_failed:   پس از خطا یا timeout emit می‌شود (پیام خطا)
+        status_changed: پیام وضعیت برای نوار status
+    """
+
+    login_success  = Signal()       # ورود موفق
+    login_failed   = Signal(str)    # پیام خطا
+    status_changed = Signal(str)    # وضعیت
+
+    def __init__(self, broker, parent=None):
+        """
+        Args:
+            broker: نمونه OmexKhobreganBroker
+        """
+        super().__init__(parent)
+        self.broker = broker
+        self._should_stop = False
+
+    def stop(self) -> None:
+        self._should_stop = True
+
+    def run(self) -> None:
+        try:
+            self.status_changed.emit("🌐 در حال باز کردن مرورگر...")
+
+            if not self.broker.open_browser():
+                self.login_failed.emit("خطا در باز کردن مرورگر. Firefox نصب است؟")
+                return
+
+            if self._should_stop:
+                return
+
+            self.status_changed.emit(
+                "⌨️ لطفاً کپچا را حل کرده و وارد سامانه شوید..."
+            )
+
+            success = self.broker.wait_for_login(timeout=180)
+
+            if self._should_stop:
+                return
+
+            if success:
+                self.status_changed.emit("✅ اتصال به کارگزاری برقرار شد")
+                self.login_success.emit()
+            else:
+                self.login_failed.emit("زمان انتظار برای ورود به پایان رسید")
+
+        except Exception as e:
+            self.login_failed.emit(f"خطا در اتصال به کارگزاری: {e}")

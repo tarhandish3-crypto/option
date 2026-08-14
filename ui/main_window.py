@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QBrush, QFont
 
-from ui.workers import ScannerWorker, AutoScannerWorker
+from ui.workers import ScannerWorker, AutoScannerWorker, BrokerLoginWorker
 from ui.symbol_filter_dialog import SymbolFilterDialog
 from ui.settings_dialog import SettingsDialog
 from ui.settings_manager import settings_manager
@@ -85,6 +85,11 @@ class MainWindow(QMainWindow):
         )
         self._bale_enabled = bale_cfg.get("enabled", False)
         self._bale_top_n   = bale_cfg.get("top_n", 2)
+
+        # ۴. اتصال به کارگزاری (Omex Khobregan)
+        self._broker = None           # نمونه OmexKhobreganBroker (lazy init)
+        self._broker_connected = False
+        self._login_worker: Optional[BrokerLoginWorker] = None
 
         self.load_settings()
         
@@ -375,8 +380,19 @@ class MainWindow(QMainWindow):
 
         self.btn_send_to_broker = QPushButton("🚀 ارسال موقعیت‌های انتخابی به کارگزاری")
         self.btn_send_to_broker.setObjectName("btn_send_broker")
+        self.btn_send_to_broker.setEnabled(False)   # تا زمان اتصال غیرفعال است
         self.btn_send_to_broker.clicked.connect(self.send_selected_to_broker)
         layout.addWidget(self.btn_send_to_broker)
+
+        self.btn_broker_connect = QPushButton("🔌 اتصال به کارگزاری")
+        self.btn_broker_connect.setObjectName("btn_broker_connect")
+        self.btn_broker_connect.setStyleSheet(
+            "QPushButton#btn_broker_connect { background-color: #5d4037; }"
+            "QPushButton#btn_broker_connect:hover { background-color: #4e342e; }"
+            "QPushButton#btn_broker_connect[connected='true'] { background-color: #1b5e20; }"
+        )
+        self.btn_broker_connect.clicked.connect(self.connect_to_broker)
+        layout.addWidget(self.btn_broker_connect)
 
         self.btn_send_to_bale = QPushButton("📱 ارسال انتخابی به بله")
         self.btn_send_to_bale.setObjectName("btn_send_bale")
@@ -767,33 +783,56 @@ class MainWindow(QMainWindow):
         logger.info(f"📱 ارسال {min(self._bale_top_n, len(opportunities))} نتیجه به بله آغاز شد")
 
     def send_selected_to_broker(self):
-        """ارسال استراتژی‌های تیک‌شده به کارگزاری"""
+        """ارسال استراتژی انتخاب‌شده به کارگزاری از طریق مرورگر"""
+        if not self._broker_connected or not self._broker:
+            QMessageBox.warning(self, "هشدار",
+                                "ابتدا با دکمه «🔌 اتصال به کارگزاری» وارد سامانه شوید.")
+            return
+
         checked_rows = [
             r for r in range(self.table.rowCount())
             if self.table.item(r, 0) and
             self.table.item(r, 0).checkState() == Qt.CheckState.Checked
         ]
-        
+
         if not checked_rows:
-            QMessageBox.warning(
-                self, 
-                "هشدار", 
-                "لطفاً حداقل یک سطر را با تیک انتخاب کنید."
-            )
+            QMessageBox.warning(self, "هشدار", "لطفاً یک سطر را با تیک انتخاب کنید.")
             return
+
+        # خواندن متن Positions از ستون ۳ سطر انتخابی
+        row = checked_rows[0]
+        positions_item = self.table.item(row, 3)
+        if not positions_item or not positions_item.text():
+            QMessageBox.warning(self, "خطا", "متن موقعیت‌ها یافت نشد.")
+            return
+        positions_text = positions_item.text()
 
         reply = QMessageBox.question(
             self,
             "تأیید ارسال به کارگزاری",
-            f"آیا از ارسال {len(checked_rows)} استراتژی انتخابی به کارگزاری اطمینان دارید؟",
+            f"ارسال استراتژی زیر به کارگزاری:\n\n{positions_text}\n\nادامه می‌دهید؟",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            QMessageBox.StandardButton.No,
         )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
 
-        if reply == QMessageBox.StandardButton.Yes:
-            self.status_update_signal.emit(f"🚀 در حال ارسال {len(checked_rows)} استراتژی به کارگزاری...")
-            logger.info(f"ارسال {len(checked_rows)} استراتژی به کارگزاری")
-            QMessageBox.information(self, "موفقیت", "استراتژی‌های انتخابی با موفقیت ارسال شدند.")
+        self.status_update_signal.emit("� در حال استخراج موقعیت‌های باز...")
+        try:
+            existing = self._broker.extract_open_positions()
+            result   = self._broker.submit_strategy(positions_text, existing)
+
+            if result['success']:
+                self.status_update_signal.emit(f"✅ {result['message']}")
+                QMessageBox.information(self, "موفق", result['message'])
+            else:
+                self.status_update_signal.emit(f"❌ {result['message']}")
+                QMessageBox.critical(self, "خطا در ارسال", result['message'])
+
+        except Exception as e:
+            self.status_update_signal.emit(f"❌ خطا: {e}")
+            QMessageBox.critical(self, "خطا", f"خطا در ارتباط با کارگزاری:\n{e}")
+            logger.error(f"خطا در ارسال به کارگزاری: {e}", exc_info=True)
 
     def send_selected_to_bale(self):
         """ارسال سطر انتخاب‌شده به پیام‌رسان بله"""
@@ -865,11 +904,132 @@ class MainWindow(QMainWindow):
                 self.status_update_signal.emit("🗑️ نتایج پاک شد")
                 logger.info("نتایج جدول پاک شد")
 
+    def connect_to_broker(self):
+        """باز کردن مرورگر و انتظار برای ورود کاربر به سامانه کارگزاری"""
+        # اگر قبلاً متصل است، قطع اتصال
+        if self._broker_connected:
+            reply = QMessageBox.question(
+                self, "قطع اتصال",
+                "آیا می‌خواهید اتصال به کارگزاری را قطع کنید؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._disconnect_broker()
+            return
+
+        # اگر login worker در حال اجراست، کاری نکن
+        if self._login_worker and self._login_worker.isRunning():
+            self.status_update_signal.emit("⌨️ در انتظار ورود کاربر به سامانه...")
+            return
+
+        # ساخت broker با تنظیمات فعلی
+        try:
+            from automation.brokers.Omex_khobregan import OmexKhobreganBroker
+            broker_cfg = self.config.get('broker', {})
+            self._broker = OmexKhobreganBroker(
+                username=broker_cfg.get('username', ''),
+                password=broker_cfg.get('password', ''),
+            )
+        except ImportError as e:
+            QMessageBox.critical(
+                self, "خطای ماژول",
+                f"ماژول کارگزاری بارگذاری نشد:\n{e}\n\n"
+                "مطمئن شوید selenium نصب است:\n  pip install selenium"
+            )
+            return
+
+        # تغییر ظاهر دکمه به حالت «در حال اتصال»
+        self.btn_broker_connect.setText("⏳ در حال اتصال...")
+        self.btn_broker_connect.setEnabled(False)
+        self.status_update_signal.emit("🌐 در حال باز کردن مرورگر کارگزاری...")
+
+        # شروع worker
+        self._login_worker = BrokerLoginWorker(self._broker)
+        self._login_worker.login_success.connect(self._on_broker_login_success)
+        self._login_worker.login_failed.connect(self._on_broker_login_failed)
+        self._login_worker.status_changed.connect(self.status_update_signal.emit)
+        self._login_worker.finished.connect(self._login_worker.deleteLater)
+        self._login_worker.start()
+
+    def _on_broker_login_success(self):
+        """پس از ورود موفق کاربر به سامانه کارگزاری"""
+        self._broker_connected = True
+
+        # تغییر ظاهر دکمه به «✅ به مرورگر وصل است»
+        self.btn_broker_connect.setText("✅ به مرورگر وصل است")
+        self.btn_broker_connect.setEnabled(True)
+        self.btn_broker_connect.setStyleSheet(
+            "QPushButton { background-color: #1b5e20; color: white; "
+            "font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #145214; }"
+        )
+
+        # فعال کردن دکمه ارسال به کارگزاری
+        self.btn_send_to_broker.setEnabled(True)
+
+        self.status_update_signal.emit("✅ اتصال به کارگزاری برقرار شد — آماده ارسال")
+        logger.info("اتصال به کارگزاری برقرار شد")
+
+    def _on_broker_login_failed(self, error_msg: str):
+        """پس از شکست اتصال"""
+        self._broker_connected = False
+        self._broker = None
+
+        # بازگشت دکمه به حالت اولیه
+        self.btn_broker_connect.setText("🔌 اتصال به کارگزاری")
+        self.btn_broker_connect.setEnabled(True)
+        self.btn_broker_connect.setStyleSheet(
+            "QPushButton { background-color: #5d4037; color: white; "
+            "font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #4e342e; }"
+        )
+
+        # غیرفعال نگه داشتن دکمه ارسال
+        self.btn_send_to_broker.setEnabled(False)
+
+        self.status_update_signal.emit(f"❌ اتصال ناموفق: {error_msg}")
+        QMessageBox.warning(self, "اتصال به کارگزاری", f"اتصال ناموفق:\n{error_msg}")
+        logger.warning(f"اتصال به کارگزاری ناموفق: {error_msg}")
+
+    def _disconnect_broker(self):
+        """قطع اتصال از کارگزاری"""
+        if self._broker:
+            try:
+                self._broker.close_browser()
+            except Exception:
+                pass
+            self._broker = None
+
+        self._broker_connected = False
+        self.btn_broker_connect.setText("🔌 اتصال به کارگزاری")
+        self.btn_broker_connect.setEnabled(True)
+        self.btn_broker_connect.setStyleSheet(
+            "QPushButton { background-color: #5d4037; color: white; "
+            "font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #4e342e; }"
+        )
+        self.btn_send_to_broker.setEnabled(False)
+        self.status_update_signal.emit("🔌 اتصال به کارگزاری قطع شد")
+        logger.info("اتصال به کارگزاری قطع شد")
+
     def closeEvent(self, event):
         """هنگام بستن برنامه"""
         if self.auto_scan_timer.isActive():
             self.auto_scan_timer.stop()
-        
+
+        # توقف login worker در صورت اجرا
+        if self._login_worker and self._login_worker.isRunning():
+            self._login_worker.stop()
+            self._login_worker.wait(2000)
+
+        # بستن مرورگر کارگزاری
+        if self._broker_connected:
+            try:
+                self._broker.close_browser()
+            except Exception:
+                pass
+
         for w in (self.worker, self.auto_worker):
             if w and w.isRunning():
                 if hasattr(w, 'stop'):
@@ -877,6 +1037,6 @@ class MainWindow(QMainWindow):
                 else:
                     w.quit()
                 w.wait(3000)
-        
+
         event.accept()
         logger.info("برنامه بسته شد")
