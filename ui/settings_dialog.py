@@ -294,13 +294,13 @@ class SettingsDialog(QDialog):
         form.addRow(self.chk_bale_enabled)
 
         self.txt_bale_token = QLineEdit()
-        self.txt_bale_token.setPlaceholderText("0000000000:xxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+        self.txt_bale_token.setPlaceholderText("token")
         self.txt_bale_token.setEchoMode(QLineEdit.EchoMode.Password)
         self.txt_bale_token.textChanged.connect(self._on_changed)
         form.addRow("🔑 توکن ربات:", self.txt_bale_token)
 
         self.txt_bale_chat_id = QLineEdit()
-        self.txt_bale_chat_id.setPlaceholderText("@channel_name یا عدد chat_id")
+        self.txt_bale_chat_id.setPlaceholderText("@chat_id")
         self.txt_bale_chat_id.textChanged.connect(self._on_changed)
         form.addRow("💬 Chat ID:", self.txt_bale_chat_id)
 

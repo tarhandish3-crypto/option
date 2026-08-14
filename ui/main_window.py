@@ -1,7 +1,6 @@
 # ui/main_window.py
 # -*- coding: utf-8 -*-
 
-import sys
 import logging
 from typing import Optional, List, Dict, Any
 
