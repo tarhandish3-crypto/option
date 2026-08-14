@@ -13,14 +13,14 @@ from typing import List, Set, Optional, Dict, Any
 from pathlib import Path
 from datetime import datetime
 
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QPushButton, QGroupBox,
     QMessageBox, QDialogButtonBox, QFileDialog,
     QComboBox, QGridLayout
 )
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 
 logger = logging.getLogger("OptionScanner.UI.SymbolFilter")
 
@@ -34,8 +34,8 @@ class SymbolFilterDialog(QDialog):
         categories_updated: ارسال دسته‌بندی‌های به‌روزرسانی‌شده
     """
 
-    symbols_updated = pyqtSignal(list)      # لیست نمادهای استثنا شده
-    categories_updated = pyqtSignal(dict)   # دسته‌بندی‌های به‌روزرسانی‌شده
+    symbols_updated = Signal(list)      # لیست نمادهای استثنا شده
+    categories_updated = Signal(dict)   # دسته‌بندی‌های به‌روزرسانی‌شده
 
     def __init__(
         self, 
@@ -180,17 +180,19 @@ class SymbolFilterDialog(QDialog):
         # ۵. دکمه‌های تایید / انصراف
         # =============================================
         self.button_box = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Reset,
-            Qt.Horizontal, self
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel |
+            QDialogButtonBox.StandardButton.Reset,
+            Qt.Orientation.Horizontal, self
         )
-        self.button_box.button(QDialogButtonBox.Ok).setText("✅ تایید و ذخیره")
-        self.button_box.button(QDialogButtonBox.Ok).setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
-        self.button_box.button(QDialogButtonBox.Cancel).setText("❌ انصراف")
-        self.button_box.button(QDialogButtonBox.Reset).setText("↩️ بازنشانی اولیه")
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("✅ تایید و ذخیره")
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
+        self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
+        self.button_box.button(QDialogButtonBox.StandardButton.Reset).setText("↩️ بازنشانی اولیه")
         
         self.button_box.accepted.connect(self._save_and_accept)
         self.button_box.rejected.connect(self.reject)
-        self.button_box.button(QDialogButtonBox.Reset).clicked.connect(self._reset_to_initial)
+        self.button_box.button(QDialogButtonBox.StandardButton.Reset).clicked.connect(self._reset_to_initial)
 
         main_layout.addWidget(self.button_box)
 
@@ -297,11 +299,11 @@ class SymbolFilterDialog(QDialog):
             self,
             "تأیید حذف",
             f"آیا از حذف نماد '{symbol}' مطمئن هستید؟",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
         
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             self.excluded_symbols.discard(symbol)
             if symbol in self.available_symbols:
                 self.available_symbols.remove(symbol)
@@ -457,11 +459,11 @@ class SymbolFilterDialog(QDialog):
             self,
             "تأیید پاک کردن",
             f"آیا از پاک کردن تمام {len(self.excluded_symbols)} استثنا اطمینان دارید؟",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
         
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             self.excluded_symbols.clear()
             self._populate_list()
 
@@ -498,9 +500,9 @@ class SymbolFilterDialog(QDialog):
 
     def keyPressEvent(self, event) -> None:
         """مدیریت میانبرهای کیبورد"""
-        if event.key() == Qt.Key_Escape:
+        if event.key() == Qt.Key.Key_Escape:
             self.reject()
-        elif event.key() == Qt.Key_Return and event.modifiers() & Qt.ControlModifier:
+        elif event.key() == Qt.Key.Key_Return and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._save_and_accept()
         else:
             super().keyPressEvent(event)

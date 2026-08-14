@@ -218,21 +218,76 @@ def save_results_to_excel(result_df, filename="result_long_call.xlsx"):
                     cell.font = body_font
                 cell.alignment = alignment
 
+        # ========== هایلایت کردن ماکزیمم و مینیمم ستون‌های خاص ==========
+        # ستون‌هایی که باید هایلایت شوند
+        highlight_columns = [
+            'profit_percent',
+            'break_even_percent',
+            'monthly_return_%',
+        ]
+        
+        # رنگ‌ها
+        max_fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')  # سبز
+        min_fill = PatternFill(start_color='FF9999', end_color='FF9999', fill_type='solid')  # قرمز
+        
+        # پیدا کردن اندیس ستون‌ها
+        col_indices = {}
+        for col_idx, col_name in enumerate(columns_list, start=1):
+            if col_name in highlight_columns:
+                col_indices[col_name] = col_idx
+        
+        # برای هر ستون، ماکزیمم و مینیمم را پیدا کن
+        for col_name, col_idx in col_indices.items():
+            # استخراج مقادیر عددی از ستون (رد کردن ردیف اول که هدر است)
+            values = []
+            for row_idx in range(2, len(result_df) + 2):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                if cell.value is not None and cell.value != "-":
+                    try:
+                        values.append(float(cell.value))
+                    except:
+                        pass
+            
+            if values:
+                max_val = max(values)
+                min_val = min(values)
+                
+                # اعمال رنگ به سلول‌های ماکزیمم و مینیمم
+                for row_idx in range(2, len(result_df) + 2):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    if cell.value is not None and cell.value != "-":
+                        try:
+                            val = float(cell.value)
+                            if val == max_val:
+                                cell.fill = max_fill
+                            elif val == min_val:
+                                cell.fill = min_fill
+                        except:
+                            pass
+
         # اعمال فیلتر و Freeze Panes
         worksheet.auto_filter.ref = f"A1:{get_column_letter(len(result_df.columns))}{len(result_df) + 1}"
         worksheet.freeze_panes = 'A2'
 
-        # تنظیم خودکار عرض ستون‌ها
+        # ========== تنظیم خودکار عرض ستون‌ها ==========
         for col in worksheet.columns:
-            max_len = 0
+            max_length = 0
+            column = col[0].column_letter
+
             for cell in col:
-                val = str(cell.value or '')
-                actual_len = sum(2 if ord(c) > 128 else 1 for c in val)
-                if actual_len > max_len:
-                    max_len = actual_len
-            col_letter = get_column_letter(col[0].column)
-            worksheet.column_dimensions[col_letter].width = min(
-                (max_len + 4), 50)
+                if cell.value:
+                    text = str(cell.value)
+                    if '\n' in text:
+                        lines = text.split('\n')
+                        line_length = max(len(line) for line in lines)
+                    else:
+                        line_length = len(text)
+
+                    if line_length > max_length:
+                        max_length = line_length
+
+            adjusted_width = min(max_length + 5, 50)
+            worksheet.column_dimensions[column].width = adjusted_width
 
     print(f"result {filename_with_time}  save")
     return filename_with_time

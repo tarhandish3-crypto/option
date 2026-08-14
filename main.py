@@ -14,7 +14,6 @@ import threading
 import sqlite3
 from datetime import datetime
 from typing import Optional, Callable, List, Any, Dict, Tuple
-from pathlib import Path
 import json
 from dataclasses import dataclass
 
@@ -94,8 +93,8 @@ class OptionScanner:
         # تنظیمات سبک و سریع برای عدم معطل کردن UI
         self.is_running = True
         self._is_initialized = False
-        self._cache_ttl = config.FEATURE_FLAGS.get("cache_ttl", 60)
-        self._scan_timeout = config.FEATURE_FLAGS.get("scan_timeout", 300)
+        self._cache_ttl = config.CACHE_TTL_SECONDS
+        self._scan_timeout = 300
         self._cache: Optional[ScanCacheEntry] = None
         self._cancel_event = threading.Event()
         self._db_lock = threading.Lock()
@@ -105,7 +104,7 @@ class OptionScanner:
         self._total_opportunities = 0
         self._last_scan_time: Optional[datetime] = None
 
-        self._db_enabled = config.FEATURE_FLAGS.get("database_enabled", False)
+        self._db_enabled = False  # دیتابیس SQLite در این نسخه غیرفعال است
         self._db_path = config.DATA_DIR / "scans.db"
         self._user_filters: Dict[str, Any] = {}
 
@@ -197,7 +196,7 @@ class OptionScanner:
             logger.warning(f"⚠️ Failed to save to database: {e}")
 
     def _load_user_filters(self) -> None:
-        filters_path = config.CONFIG_DIR / "user_filters.json"
+        filters_path = config.DATA_DIR / "user_filters.json"
         if filters_path.exists():
             try:
                 with open(filters_path, 'r', encoding='utf-8') as f:
@@ -207,13 +206,12 @@ class OptionScanner:
 
     def update_user_filters(self, new_filters: Dict[str, Any]) -> None:
         self._user_filters.update(new_filters)
-        filters_path = config.CONFIG_DIR / "user_filters.json"
-        filters_path.parent.mkdir(parents=True, exist_ok=True)
+        filters_path = config.DATA_DIR / "user_filters.json"
         try:
             with open(filters_path, 'w', encoding='utf-8') as f:
                 json.dump(self._user_filters, f, indent=4, ensure_ascii=False)
             self.invalidate_cache()
-            logger.info(f"✅ User filters updated from UI: {len(self._user_filters)} filters active")
+            logger.info(f"✅ User filters updated: {len(self._user_filters)} filters active")
         except Exception as e:
             logger.error(f"❌ Failed to save user filters: {e}")
 

@@ -14,15 +14,15 @@ import json
 from typing import Dict, Any, Optional
 from pathlib import Path
 
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QCheckBox, QPushButton, QGroupBox, QFormLayout,
     QFileDialog, QMessageBox, QDialogButtonBox, QTextEdit,
     QInputDialog, QFrame
 )
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 
 import config
 
@@ -37,17 +37,22 @@ class SettingsDialog(QDialog):
         settings_saved: سیگنال ارسال تنظیمات جدید پس از ذخیره
     """
 
-    settings_saved = pyqtSignal(dict)
+    settings_saved = Signal(dict)
 
-    def __init__(self, parent=None):
+    def __init__(self, config_dict: Optional[Dict[str, Any]] = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("تنظیمات سیستم")
         self.resize(650, 620)
         self.setMinimumSize(580, 550)
         self.setLayoutDirection(Qt.RightToLeft)
 
-        # دریافت تنظیمات از config.py
-        self.settings: Dict[str, Any] = config.get_ui_settings()
+        # دریافت تنظیمات: اول از config_dict پاس شده، بعد از config.py
+        if config_dict is not None:
+            self.settings: Dict[str, Any] = config_dict.copy()
+        elif hasattr(config, 'get_ui_settings'):
+            self.settings = config.get_ui_settings()
+        else:
+            self.settings = self._get_default_settings()
         self._initial_settings = self.settings.copy()
         self._has_changes = False
 
@@ -154,26 +159,28 @@ class SettingsDialog(QDialog):
         # دکمه‌های پایین دیالوگ
         # ---------------------------------------------
         self.button_box = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel |
-            QDialogButtonBox.RestoreDefaults | QDialogButtonBox.Reset,
-            Qt.Horizontal, self
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel |
+            QDialogButtonBox.StandardButton.RestoreDefaults |
+            QDialogButtonBox.StandardButton.Reset,
+            Qt.Orientation.Horizontal, self
         )
 
-        self.button_box.button(QDialogButtonBox.Ok).setText("💾 ذخیره تنظیمات")
-        self.button_box.button(QDialogButtonBox.Ok).setStyleSheet(
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("💾 ذخیره تنظیمات")
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(
             "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 16px;"
         )
-        self.button_box.button(QDialogButtonBox.Cancel).setText("❌ انصراف")
+        self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
         self.button_box.button(
-            QDialogButtonBox.RestoreDefaults).setText("🔄 پیش‌فرض اولیه")
-        self.button_box.button(QDialogButtonBox.Reset).setText(
+            QDialogButtonBox.StandardButton.RestoreDefaults).setText("🔄 پیش‌فرض اولیه")
+        self.button_box.button(QDialogButtonBox.StandardButton.Reset).setText(
             "↩️ بازگشت به قبلی")
 
         self.button_box.accepted.connect(self._save_and_accept)
         self.button_box.rejected.connect(self.reject)
-        self.button_box.button(QDialogButtonBox.RestoreDefaults).clicked.connect(
+        self.button_box.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
             self._restore_defaults)
-        self.button_box.button(QDialogButtonBox.Reset).clicked.connect(
+        self.button_box.button(QDialogButtonBox.StandardButton.Reset).clicked.connect(
             self._reset_to_previous)
 
         main_layout.addWidget(self.button_box)
@@ -538,13 +545,44 @@ class SettingsDialog(QDialog):
     def _restore_defaults(self) -> None:
         reply = QMessageBox.question(
             self, "بازنشانی", "آیا می‌خواهید تنظیمات به پیش‌فرض اولیه برگردند؟",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             if hasattr(config, "get_default_settings"):
                 self.settings = config.get_default_settings()
+            else:
+                self.settings = self._get_default_settings()
             self._load_settings_into_ui()
             self._on_setting_changed()
+
+    @staticmethod
+    def _get_default_settings() -> Dict[str, Any]:
+        """مقادیر پیش‌فرض در صورت عدم وجود در config"""
+        return {
+            "api_timeout": 10,
+            "api_max_retries": 3,
+            "request_delay_ms": 200,
+            "risk_free_rate": 0.24,
+            "min_open_interest": 50,
+            "min_days_to_maturity": 2,
+            "max_days_to_maturity": 365,
+            "volatility_step_percent": 5.0,
+            "volatility_range_min": -45.0,
+            "volatility_range_max": 45.0,
+            "auto_refresh_enabled": False,
+            "auto_refresh_interval_sec": 120,
+            "theme": "روشن (Light)",
+            "log_level": "INFO",
+            "export_dir": str(Path.home() / "OptionScanner_Exports"),
+            "enable_parallel_processing": False,
+            "max_parallel_workers": 3,
+            "cache_enabled": True,
+            "cache_ttl_seconds": 6,
+        }
+
+    def get_settings(self) -> Dict[str, Any]:
+        """دریافت تنظیمات نهایی برای استفاده در main_window"""
+        return self._get_settings_from_ui()
 
     def _save_and_accept(self) -> None:
         if self.spin_min_dte.value() >= self.spin_max_dte.value():
@@ -555,11 +593,11 @@ class SettingsDialog(QDialog):
 
         new_settings = self._get_settings_from_ui()
 
-        # ذخیره نهایی در config.py
+        # ذخیره نهایی در config.py (در صورت وجود)
         if hasattr(config, "update_ui_settings"):
             config.update_ui_settings(new_settings)
 
         self.settings = new_settings
         self.settings_saved.emit(self.settings)
-        logger.info("💾 Settings saved successfully via config.py integration")
+        logger.info("💾 Settings saved successfully")
         self.accept()
