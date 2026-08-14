@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
         """راه‌اندازی رابط کاربری"""
         self.setWindowTitle("Option Strategy Scanner - دستیار هوشمند اختیار معامله")
         self.resize(1350, 750)
+        self.showMaximized()
         
         self.setStyleSheet(self._get_global_style())
         
