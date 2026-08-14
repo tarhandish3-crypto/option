@@ -542,7 +542,7 @@ class SettingsDialog(QDialog):
         self._load_settings_into_ui(new_settings)
         self._update_title()
         self.btn_delete_profile.setEnabled(name != _DEFAULT_PROFILE_NAME)
-        logger.info(f"پروفایل '{name}' بارگذاری شد.")
+        logger.info(f"Profile '{name}' loaded.")
 
     def _save_profile(self) -> None:
         """ذخیره تنظیمات فعلی با یک نام (جدید یا بازنویسی)."""
@@ -585,7 +585,7 @@ class SettingsDialog(QDialog):
 
         QMessageBox.information(self, "ذخیره شد",
                                 f"✅ پروفایل '{name}' با موفقیت ذخیره شد.")
-        logger.info(f"پروفایل '{name}' ذخیره شد.")
+        logger.info(f"Profile '{name}' saved.")
 
     def _delete_profile(self) -> None:
         name = settings_manager.get_active_profile_name()
@@ -646,7 +646,7 @@ class SettingsDialog(QDialog):
             # اگر No: بدون ذخیره، فقط signal ارسال می‌کنیم
 
         self.settings_saved.emit(settings)
-        logger.info(f"تنظیمات اعمال شد — پروفایل: '{settings_manager.get_active_profile_name()}'")
+        logger.info(f"Settings applied -- profile: '{settings_manager.get_active_profile_name()}'")
         self.accept()
 
     def _discard_changes(self) -> None:
@@ -677,7 +677,7 @@ class SettingsDialog(QDialog):
         self._load_settings_into_ui(defaults)
         self._refresh_profile_combo()
         self._update_title()
-        logger.info("تنظیمات به پیش‌فرض config.py بازگردانده شد.")
+        logger.info("Settings restored to defaults from config.py.")
 
     def _browse_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(

@@ -22,14 +22,14 @@ __all__ = [
 try:
     from ui.main_window import MainWindow
 except ImportError as e:
-    logger.warning(f"دسترسی به MainWindow امکان‌پذیر نیست: {e}")
+    logger.warning(f"MainWindow is not accessible: {e}")
     MainWindow = None
 
 # ۲. وارد کردن ورکرهای پس‌زمینه (Multithreading)
 try:
     from ui.workers import ScannerWorker, AutoScannerWorker
 except ImportError as e:
-    logger.warning(f"دسترسی به ورکرهای پس‌زمینه امکان‌پذیر نیست: {e}")
+    logger.warning(f"Background workers are not accessible: {e}")
     ScannerWorker = None
     AutoScannerWorker = None
 

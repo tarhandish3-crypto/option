@@ -58,7 +58,7 @@ class ScannerWorker(QThread):
         with QMutexLocker(self._mutex):
             self._should_stop = True
         self.status_changed.emit("⏹️ توقف درخواست شد...")
-        logger.info("درخواست توقف اسکن ثبت شد")
+        logger.info("Scan stop request registered")
     
     def run(self) -> None:
         """اجرای اصلی اسکن در ترد پس‌زمینه"""
@@ -66,13 +66,13 @@ class ScannerWorker(QThread):
         
         with QMutexLocker(self._mutex):
             if self._is_running:
-                logger.warning("اسکن قبلاً در حال اجراست")
+                logger.warning("Scan is already running")
                 return
             self._is_running = True
             self._should_stop = False
         
         try:
-            logger.info("🚀 فرایند اسکن در پس‌زمینه شروع شد...")
+            logger.info("Background scan process started")
             self.status_changed.emit("🔄 اسکن بازار در حال انجام...")
             self.progress_updated.emit(0, "آماده‌سازی برای اسکن...")
             
@@ -94,12 +94,12 @@ class ScannerWorker(QThread):
             exec_time = self.execution_time or 0.0
             
             if results is not None and len(results) > 0:
-                logger.info(f"✅ اسکن کامل شد - {len(results)} نتیجه یافت شد")
+                logger.info(f"Scan complete - {len(results)} result(s) found")
                 self.status_changed.emit(f"✅ اسکن کامل شد ({len(results)} نتیجه)")
                 self.progress_updated.emit(100, f"اسکن کامل شد - {exec_time:.1f} ثانیه")
                 self.scan_finished.emit(results)
             else:
-                logger.warning("⚠️ اسکن کامل شد، اما هیچ نتیجه‌ای یافت نشد")
+                logger.warning("Scan complete, but no results found")
                 self.status_changed.emit("⚠️ هیچ نتیجه‌ای یافت نشد")
                 self.scan_finished.emit([])
                 
@@ -108,7 +108,7 @@ class ScannerWorker(QThread):
         finally:
             with QMutexLocker(self._mutex):
                 self._is_running = False
-            logger.info("🏁 فرایند اسکن پایان یافت")
+            logger.info("Background scan process finished")
     
     def _run_with_progress(self) -> Any:
         """اجرای اسکن بر اساس متدهای موجود در موتور اسکنر"""
@@ -137,7 +137,7 @@ class ScannerWorker(QThread):
     
     def _handle_stop_request(self) -> None:
         """مدیریت درخواست توقف"""
-        logger.info("⏹️ اسکن توسط کاربر متوقف شد")
+        logger.info("Scan stopped by user")
         self.status_changed.emit("⏹️ اسکن متوقف شد")
         self.scan_failed.emit("اسکن توسط کاربر متوقف شد")
     
@@ -146,7 +146,7 @@ class ScannerWorker(QThread):
         error_msg = str(error)
         error_trace = traceback.format_exc()
         
-        logger.error(f"❌ خطا در اسکن: {error_msg}")
+        logger.error(f"Error during scan: {error_msg}")
         logger.debug(f"Traceback: {error_trace}")
         
         friendly_error = self._get_friendly_error(error)
@@ -194,7 +194,7 @@ class AutoScannerWorker(QThread):
             self._is_running = True
             self._should_stop = False
         
-        logger.info(f"⏱️ تایمر خودکار شروع شد - هر {self.interval_minutes} دقیقه")
+        logger.info(f"Auto-scan timer started - every {self.interval_minutes} minute(s)")
         self.status_changed.emit(f"⏱️ اسکن خودکار هر {self.interval_minutes} دقیقه")
         
         while True:
@@ -215,7 +215,7 @@ class AutoScannerWorker(QThread):
                 self.msleep(100)
                 elapsed += 100
         
-        logger.info("⏹️ تایمر خودکار متوقف شد")
+        logger.info("Auto-scan timer stopped")
         self.status_changed.emit("⏹️ اسکن خودکار غیرفعال شد")
     
     def stop(self) -> None:
@@ -223,7 +223,7 @@ class AutoScannerWorker(QThread):
         with QMutexLocker(self._mutex):
             self._should_stop = True
             self._is_running = False
-        logger.info("درخواست توقف تایمر خودکار ثبت شد")
+        logger.info("Auto-scan timer stop request registered")
 
 
 class StrategyExecutorWorker(QThread):
@@ -248,7 +248,7 @@ class StrategyExecutorWorker(QThread):
         """اجرای استراتژی در کارگزاری"""
         try:
             strat_name = self.strategy_data.get('name', self.strategy_data.get('strategy_name', 'Unknown'))
-            logger.info(f"🚀 اجرای استراتژی در کارگزاری: {strat_name}")
+            logger.info(f"Executing strategy at broker: {strat_name}")
             self.progress_updated.emit(0, "آماده‌سازی برای اجرا...")
             
             if not self._validate_strategy():
@@ -260,16 +260,16 @@ class StrategyExecutorWorker(QThread):
             result = self.broker_adapter.execute_strategy(self.strategy_data)
             
             if isinstance(result, dict) and result.get('success', False):
-                logger.info("✅ استراتژی با موفقیت اجرا شد")
+                logger.info("Strategy executed successfully")
                 self.progress_updated.emit(100, "تکمیل اجرا")
                 self.execution_finished.emit(True, "استراتژی با موفقیت اجرا شد")
             else:
                 error_msg = result.get('error', 'خطای ناشناخته در کارگزاری') if isinstance(result, dict) else str(result)
-                logger.error(f"❌ خطا در اجرا: {error_msg}")
+                logger.error(f"Execution error: {error_msg}")
                 self.execution_finished.emit(False, f"خطا: {error_msg}")
                 
         except Exception as e:
-            logger.error(f"❌ خطا در اجرای استراتژی: {str(e)}")
+            logger.error(f"Failed to execute strategy: {str(e)}") 
             self.execution_finished.emit(False, f"خطا: {str(e)}")
     
     def _validate_strategy(self) -> bool:
@@ -283,7 +283,7 @@ class StrategyExecutorWorker(QThread):
                 # چک کردن نام‌های جایگزین مانند strategy_name
                 if field == 'name' and 'strategy_name' in self.strategy_data:
                     continue
-                logger.error(f"فیلد {field} در داده‌های استراتژی وجود ندارد")
+                logger.error(f"Required field '{field}' is missing from strategy data")
                 return False
         return True
 

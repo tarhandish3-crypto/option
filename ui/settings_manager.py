@@ -117,17 +117,17 @@ class SettingsManager:
                 self._active_profile = data.get("active_profile", _DEFAULT_PROFILE_NAME)
                 self._excluded_symbols = sorted(data.get("excluded_symbols", []))
                 logger.info(
-                    f"✅ تنظیمات بارگذاری شد — پروفایل فعال: '{self._active_profile}'"
-                    f" | پروفایل‌ها: {len(self._profiles)}"
-                    f" | نمادهای بلاک: {len(self._excluded_symbols)}"
+                    f"Settings loaded -- active profile: '{self._active_profile}'"
+                    f" | profiles: {len(self._profiles)}"
+                    f" | blocked symbols: {len(self._excluded_symbols)}"
                 )
             except Exception as e:
-                logger.warning(f"⚠️ خطا در بارگذاری تنظیمات: {e} — استفاده از پیش‌فرض")
+                logger.warning(f"Failed to load settings: {e} -- using defaults")
                 self._profiles = {}
                 self._active_profile = _DEFAULT_PROFILE_NAME
                 self._excluded_symbols = []
         else:
-            logger.info("📄 فایل تنظیمات وجود ندارد — استفاده از پیش‌فرض config.py")
+            logger.info("Settings file not found -- using defaults from config.py")
 
     def _save(self) -> None:
         """ذخیره‌سازی کل وضعیت در فایل JSON."""
@@ -139,9 +139,9 @@ class SettingsManager:
             }
             with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4, ensure_ascii=False)
-            logger.info(f"💾 تنظیمات ذخیره شد — پروفایل: '{self._active_profile}'")
+            logger.info(f"Settings saved -- profile: '{self._active_profile}'")
         except Exception as e:
-            logger.error(f"❌ خطا در ذخیره تنظیمات: {e}")
+            logger.error(f"Failed to save settings: {e}")
 
     # =====================================================
     # دریافت تنظیمات
@@ -163,7 +163,7 @@ class SettingsManager:
         profile_data = self._profiles.get(self._active_profile)
         if profile_data is None:
             logger.warning(
-                f"⚠️ پروفایل '{self._active_profile}' یافت نشد — بازگشت به پیش‌فرض"
+                f"Profile '{self._active_profile}' not found -- falling back to defaults"
             )
             self._active_profile = _DEFAULT_PROFILE_NAME
             return self.get_defaults()
@@ -201,7 +201,7 @@ class SettingsManager:
         نام 'پیش‌فرض' رزرو است و قابل ذخیره نیست.
         """
         if name == _DEFAULT_PROFILE_NAME:
-            logger.warning("⛔ نام 'پیش‌فرض' رزرو است و قابل ذخیره نیست.")
+            logger.warning("Name 'default' is reserved and cannot be saved.")
             return False
 
         name = name.strip()
@@ -211,7 +211,7 @@ class SettingsManager:
         self._profiles[name] = deepcopy(settings)
         self._active_profile = name
         self._save()
-        logger.info(f"✅ پروفایل '{name}' ذخیره شد و فعال گردید.")
+        logger.info(f"Profile '{name}' saved and activated.")
         return True
 
     def set_active_profile(self, name: str) -> bool:
@@ -222,18 +222,18 @@ class SettingsManager:
             return True
 
         if name not in self._profiles:
-            logger.warning(f"⚠️ پروفایل '{name}' یافت نشد.")
+            logger.warning(f"Profile '{name}' not found.")
             return False
 
         self._active_profile = name
         self._save()
-        logger.info(f"🔄 پروفایل فعال تغییر یافت: '{name}'")
+        logger.info(f"Active profile changed to: '{name}'")
         return True
 
     def delete_profile(self, name: str) -> bool:
         """حذف یک پروفایل. 'پیش‌فرض' حذف نمی‌شود."""
         if name == _DEFAULT_PROFILE_NAME:
-            logger.warning("⛔ پروفایل 'پیش‌فرض' قابل حذف نیست.")
+            logger.warning("Default profile cannot be deleted.")
             return False
 
         if name not in self._profiles:
@@ -246,7 +246,7 @@ class SettingsManager:
             self._active_profile = _DEFAULT_PROFILE_NAME
 
         self._save()
-        logger.info(f"🗑️ پروفایل '{name}' حذف شد.")
+        logger.info(f"Profile '{name}' deleted.")
         return True
 
     def restore_defaults(self) -> None:
@@ -256,7 +256,7 @@ class SettingsManager:
         """
         self._active_profile = _DEFAULT_PROFILE_NAME
         self._save()
-        logger.info("🔄 پروفایل فعال به 'پیش‌فرض' بازگردانده شد.")
+        logger.info("Active profile reset to 'default'.")
 
     def rename_profile(self, old_name: str, new_name: str) -> bool:
         """تغییر نام یک پروفایل."""
@@ -272,7 +272,7 @@ class SettingsManager:
         if self._active_profile == old_name:
             self._active_profile = new_name
         self._save()
-        logger.info(f"✏️ پروفایل '{old_name}' به '{new_name}' تغییر نام یافت.")
+        logger.info(f"Profile '{old_name}' renamed to '{new_name}'.")
         return True
 
     # =====================================================
@@ -290,7 +290,7 @@ class SettingsManager:
         """ذخیره لیست نمادهای بلاک‌شده و ثبت دائمی در فایل."""
         self._excluded_symbols = sorted(set(symbols))
         self._save()
-        logger.info(f"🚫 نمادهای بلاک‌شده به‌روز شد: {len(self._excluded_symbols)} نماد")
+        logger.info(f"Blocked symbols updated: {len(self._excluded_symbols)} symbol(s)")
 
     # =====================================================
     # تنظیمات بله (Bale Notifier)
@@ -332,7 +332,7 @@ class SettingsManager:
         self._profiles[active] = current
         self._active_profile = active
         self._save()
-        logger.info(f"📱 تنظیمات بله ذخیره شد — پروفایل: '{active}'")
+        logger.info(f"Bale settings saved -- profile: '{active}'")
 
 
 # =====================================================

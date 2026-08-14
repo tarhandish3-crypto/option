@@ -98,7 +98,7 @@ class MainWindow(QMainWindow):
         # نمایش حالت خالی در جدول
         self._show_empty_state()
         
-        logger.info("پنجره اصلی با ساختار ستون‌های جدید راه‌اندازی شد (بدون اسکن خودکار)")
+        logger.info("Main window initialized with new column layout (no auto-scan)")
 
     def _generate_price_step_columns(self) -> List[str]:
         """
@@ -449,7 +449,7 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self._on_worker_finished)
         self.worker.start()
 
-        logger.info("اسکن دستی شروع شد")
+        logger.info("Manual scan started")
 
     def _on_worker_finished(self):
         """همیشه بعد از پایان worker — چه موفق چه ناموفق — اجرا می‌شود"""
@@ -473,7 +473,7 @@ class MainWindow(QMainWindow):
                 if getattr(opp, 'underlying_ticker', '') not in excluded
             ]
             if before - len(all_results):
-                logger.info(f"🚫 {before - len(all_results)} استراتژی بلاک‌شده حذف شد")
+                logger.info(f"{before - len(all_results)} blocked strategy(ies) removed")
 
         self.current_results = all_results
         # کنترل‌ها در _on_worker_finished فعال می‌شوند
@@ -482,7 +482,7 @@ class MainWindow(QMainWindow):
         self.status_update_signal.emit(f"✅ اسکن با موفقیت انجام شد - {count} استراتژی یافت شد")
         self.populate_table(self.current_results)
         self._update_stats()
-        logger.info(f"اسکن کامل شد - {count} نتیجه")
+        logger.info(f"Scan complete - {count} result(s)")
 
         # ارسال نتایج برتر به بله (async — UI بلاک نمی‌شود)
         self._send_bale_alert(self.current_results)
@@ -496,7 +496,7 @@ class MainWindow(QMainWindow):
             "خطا در اسکن",
             f"خطایی در حین اسکن رخ داد:\n\n{error_msg}\n\nلطفاً تنظیمات را بررسی کرده و دوباره تلاش کنید."
         )
-        logger.error(f"خطا در اسکن: {error_msg}")
+        logger.error(f"Scan error: {error_msg}")
 
     def on_progress_updated(self, percent: int, status: str):
         """به‌روزرسانی پیشرفت اسکن"""
@@ -703,12 +703,12 @@ class MainWindow(QMainWindow):
             self.auto_scan_timer.start(interval_ms)
             self.spin_interval.setEnabled(True)
             self.status_update_signal.emit(f"⏱️ اسکن خودکار هر {interval} دقیقه فعال شد")
-            logger.info(f"اسکن خودکار فعال شد - هر {interval} دقیقه")
+            logger.info(f"Auto-scan enabled - every {interval} minute(s)")
         else:
             self.auto_scan_timer.stop()
             self.spin_interval.setEnabled(False)
             self.status_update_signal.emit("⏹️ اسکن خودکار غیرفعال شد")
-            logger.info("اسکن خودکار غیرفعال شد")
+            logger.info("Auto-scan disabled")
 
     def _on_interval_changed(self, value: int):
         """در صورت تغییر بازه زمانی اسکن خودکار"""
@@ -730,7 +730,7 @@ class MainWindow(QMainWindow):
             dialog.symbols_updated.connect(self._on_excluded_symbols_changed)
             dialog.exec()
         except Exception as e:
-            logger.warning(f"عدم امکان باز کردن SymbolFilterDialog: {e}")
+            logger.warning(f"Cannot open SymbolFilterDialog: {e}")
             QMessageBox.information(
                 self, 
                 "اطلاعات", 
@@ -743,7 +743,7 @@ class MainWindow(QMainWindow):
         count = len(excluded)
         msg = f"🚫 {count} نماد بلاک شد" if count else "✅ هیچ نمادی بلاک نیست"
         self.status_update_signal.emit(msg)
-        logger.info(f"نمادهای بلاک‌شده به‌روز شد: {excluded}")
+        logger.info(f"Blocked symbols updated: {excluded}")
 
     def open_settings_dialog(self):
         """باز کردن پنجره تنظیمات سیستم"""
@@ -752,7 +752,7 @@ class MainWindow(QMainWindow):
             dialog.settings_saved.connect(self._on_settings_saved)
             dialog.exec()
         except Exception as e:
-            logger.warning(f"عدم امکان باز کردن SettingsDialog: {e}")
+            logger.warning(f"Cannot open SettingsDialog: {e}")
             QMessageBox.information(
                 self,
                 "اطلاعات",
@@ -770,17 +770,17 @@ class MainWindow(QMainWindow):
             bot_token=new_settings.get("bale_bot_token", ""),
             chat_id=new_settings.get("bale_chat_id", ""),
         )
-        logger.info("تنظیمات سیستم به‌روزرسانی شد")
+        logger.info("System settings updated")
 
     def _send_bale_alert(self, opportunities: List) -> None:
         """ارسال n سطر اول نتایج به پیام‌رسان بله (async)"""
         if not self._bale_enabled:
             return
         if not self._bale_notifier.is_configured:
-            logger.debug("BaleNotifier: توکن یا chat_id تنظیم نشده")
+            logger.debug("BaleNotifier: token or chat_id not configured")
             return
         self._bale_notifier.send_scan_results(opportunities, top_n=self._bale_top_n)
-        logger.info(f"📱 ارسال {min(self._bale_top_n, len(opportunities))} نتیجه به بله آغاز شد")
+        logger.info(f"Sending top {min(self._bale_top_n, len(opportunities))} result(s) to Bale")
 
     def send_selected_to_broker(self):
         """ارسال استراتژی انتخاب‌شده به کارگزاری از طریق مرورگر"""
@@ -832,7 +832,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_update_signal.emit(f"❌ خطا: {e}")
             QMessageBox.critical(self, "خطا", f"خطا در ارتباط با کارگزاری:\n{e}")
-            logger.error(f"خطا در ارسال به کارگزاری: {e}", exc_info=True)
+            logger.error(f"Error sending to broker: {e}", exc_info=True)
 
     def send_selected_to_bale(self):
         """ارسال سطر انتخاب‌شده به پیام‌رسان بله"""
@@ -883,7 +883,7 @@ class MainWindow(QMainWindow):
         # ارسال با همان فرمت استاندارد (top_n=len تا فقط انتخابی‌ها ارسال شوند)
         self._bale_notifier.send_scan_results(selected_opps, top_n=len(selected_opps))
         self.status_update_signal.emit(f"📱 ارسال {len(selected_opps)} استراتژی به بله آغاز شد...")
-        logger.info(f"ارسال دستی {len(selected_opps)} استراتژی به بله")
+        logger.info(f"Manual send of {len(selected_opps)} strategy(ies) to Bale")
 
     def clear_results(self):
         """پاک کردن نتایج جدول"""
@@ -902,7 +902,7 @@ class MainWindow(QMainWindow):
                 self._show_empty_state()
                 self._update_stats()
                 self.status_update_signal.emit("🗑️ نتایج پاک شد")
-                logger.info("نتایج جدول پاک شد")
+                logger.info("Table results cleared")
 
     def connect_to_broker(self):
         """باز کردن مرورگر و انتظار برای ورود کاربر به سامانه کارگزاری"""
@@ -969,7 +969,7 @@ class MainWindow(QMainWindow):
         self.btn_send_to_broker.setEnabled(True)
 
         self.status_update_signal.emit("✅ اتصال به کارگزاری برقرار شد — آماده ارسال")
-        logger.info("اتصال به کارگزاری برقرار شد")
+        logger.info("Broker connection established")
 
     def _on_broker_login_failed(self, error_msg: str):
         """پس از شکست اتصال"""

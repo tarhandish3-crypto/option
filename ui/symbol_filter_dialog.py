@@ -69,8 +69,8 @@ class SymbolFilterDialog(QDialog):
         self._update_stats()
         
         logger.info(
-            f"SymbolFilterDialog باز شد: {len(self.available_symbols)} نماد موجود، "
-            f"{len(self.excluded_symbols)} نماد بلاک‌شده"
+            f"SymbolFilterDialog opened: {len(self.available_symbols)} available symbol(s), "
+            f"{len(self.excluded_symbols)} blocked symbol(s)"
         )
 
     def _init_ui(self) -> None:
@@ -316,7 +316,7 @@ class SymbolFilterDialog(QDialog):
             if symbol in self.available_symbols:
                 self.available_symbols.remove(symbol)
             self._populate_list()
-            logger.info(f"🗑️ Removed symbol: {symbol}")
+            logger.info(f"Removed symbol: {symbol}")
 
     def _add_custom_symbol(self) -> None:
         """افزودن نماد دستی به لیست بلاک‌شده‌ها با پشتیبانی کامل از زبان فارسی"""
@@ -361,7 +361,7 @@ class SymbolFilterDialog(QDialog):
             self.symbol_list_widget.scrollToItem(items[0])
             self.symbol_list_widget.setCurrentItem(items[0])
 
-        logger.info(f"➕ Added custom symbol: {symbol}")
+        logger.info(f"Added custom symbol: {symbol}")
 
     def _import_list(self) -> None:
         """بارگذاری لیست نمادها از فایل"""
@@ -483,7 +483,7 @@ class SymbolFilterDialog(QDialog):
             self.search_input.clear()
         if self.category_combo:
             self.category_combo.setCurrentIndex(0)
-        logger.info("↩️ Reset to initial state")
+        logger.info("Reset to initial state")
 
     def _save_and_accept(self) -> None:
         """ذخیره در settings_manager و ارسال سیگنال"""
@@ -492,7 +492,7 @@ class SymbolFilterDialog(QDialog):
         # ذخیره دائمی در user_settings.json
         settings_manager.set_excluded_symbols(final_list)
         
-        logger.info(f"💾 نمادهای بلاک‌شده ذخیره شد: {len(final_list)} نماد")
+        logger.info(f"Blocked symbols saved: {len(final_list)} symbol(s)")
         
         self.symbols_updated.emit(final_list)
         if self.symbol_categories:
