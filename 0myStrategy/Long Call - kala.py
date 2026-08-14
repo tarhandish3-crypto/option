@@ -1,7 +1,14 @@
 # Long Call - kala.py
 # -*- coding: utf-8 -*-
 
-
+import warnings
+import logging
+import requests
+import pandas as pd
+import re
+import jdatetime
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
 import sys
 from pathlib import Path
 
@@ -11,14 +18,6 @@ current_dir = current_file_path.parent
 root_dir = current_dir.parent
 sys.path.append(str(root_dir))
 
-import warnings
-import logging
-import requests
-import pandas as pd
-import re
-import jdatetime
-from openpyxl.styles import PatternFill, Font, Alignment
-from openpyxl.utils import get_column_letter
 
 # =====================================================================
 # بخش 1: تنظیمات اولیه
@@ -27,10 +26,104 @@ from openpyxl.utils import get_column_letter
 warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
 
-RISK_FREE_RATE = 0.30  # ۳۰ درصد
 
 # =====================================================================
-# بخش 2: توابع استخراج داده از بورس کالا
+# بخش 2: نگاشت‌ها و کارمزدهای بورس کالا
+# =====================================================================
+
+# نگاشت نام‌های صندوق‌ها در بورس کالا به نام‌های دقیق در بورس
+FUND_MAPPING = {
+    'صندوق طلای کهربا': 'صندوق س. كالاي كهربا',
+    'صندوق طلای درخشان آبان': 'صندوق س.كالاي آبان',
+    'صندوق طلای دنای زاگرس': 'صندوق س.كالاي دناي زاگرس',
+    'صندوق طلای کارآمد': 'صندوق س.كالاي كارآمد',
+    'صندوق طلای پارسیان': 'صندوق س. كالاي پارسيان',
+    'شمش طلا': 'شمش طلا',
+    'شمش نقره': 'شمش نقره',
+}
+
+# نگاشت نام AssetName به نوع دارایی برای دریافت کارمزد
+ASSET_TYPE_MAPPING = {
+    'صندوق طلای کهربا': 'صندوق طلا',
+    'صندوق طلای درخشان آبان': 'صندوق طلا',
+    'صندوق طلای دنای زاگرس': 'صندوق طلا',
+    'صندوق طلای کارآمد': 'صندوق طلا',
+    'صندوق طلای پارسیان': 'صندوق طلا',
+    'شمش طلا': 'شمش طلا',
+    'شمش نقره': 'شمش نقره',
+}
+
+# =====================================================================
+# بخش 3: کارمزدهای بورس کالا
+# =====================================================================
+
+# کارمزد معاملات قراردادهای اختیار معامله بورس کالا
+# بر اساس ارزش هر قرارداد (قیمت معامله شده × اندازه قرارداد)
+IME_COMMISSION = {
+    # کارمزد معامله
+    'trade_buyer': 0.0012,      # 0.0008 + 0.0004
+    'trade_seller': 0.0012,     # 0.0008 + 0.0004
+    # کارمزد تسویه و تحویل
+    'exercise_buyer': 0.0014,   # 0.0004 + 0.001
+    'exercise_seller': 0.0014,  # 0.0004 + 0.001
+}
+
+# کارمزد بر اساس نوع دارایی پایه (برای موارد خاص)
+IME_COMMISSION_BY_ASSET = {
+    'سکه طلا': {
+        'trade_buyer': 0.00136,     # 0.0008 + 0.0004 + 0.00016
+        'trade_seller': 0.00136,    # 0.0008 + 0.0004 + 0.00016
+        'exercise_buyer': 0.0014,
+        'exercise_seller': 0.0014,
+    },
+    'صندوق طلا': {
+        'trade_buyer': 0.0012,
+        'trade_seller': 0.0012,
+        'exercise_buyer': 0.0014,
+        'exercise_seller': 0.0014,
+    },
+    'شمش طلا': {
+        'trade_buyer': 0.0012,
+        'trade_seller': 0.0012,
+        'exercise_buyer': 0.0014,
+        'exercise_seller': 0.0014,
+    },
+    'شمش نقره': {
+        'trade_buyer': 0.0012,
+        'trade_seller': 0.0012,
+        'exercise_buyer': 0.0014,
+        'exercise_seller': 0.0014,
+    },
+    'default': {
+        'trade_buyer': 0.0012,
+        'trade_seller': 0.0012,
+        'exercise_buyer': 0.0014,
+        'exercise_seller': 0.0014,
+    }
+}
+
+
+def get_ime_commission(asset_type: str, is_buy: bool = True, is_exercise: bool = False):
+    """
+    دریافت نرخ کارمزد بورس کالا
+    """
+    side = 'buyer' if is_buy else 'seller'
+
+    if is_exercise:
+        key = f'exercise_{side}'
+    else:
+        key = f'trade_{side}'
+
+    # اگر نوع دارایی در دیکشنری باشد، از آن استفاده کن
+    if asset_type in IME_COMMISSION_BY_ASSET:
+        return IME_COMMISSION_BY_ASSET[asset_type].get(key, IME_COMMISSION[key])
+
+    # در غیر این صورت از مقدار پیش‌فرض استفاده کن
+    return IME_COMMISSION_BY_ASSET['default'].get(key, IME_COMMISSION[key])
+
+
+# =====================================================================
+# بخش 4: توابع استخراج داده از بورس کالا
 # =====================================================================
 
 
@@ -181,14 +274,10 @@ def fetch_kala_data(from_date='1405/05/15', to_date='1406/5/22'):
         'ot': '0',
         'lang': '8',
         'order': 'asc',
-        'offset': '0',
-    }
+        'offset': '0', }
 
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0',
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'Pragma': 'no-cache',
-    }
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0', }
 
     # درخواست GET با استفاده از Session برای حفظ کوکی‌ها
     session = requests.Session()
@@ -222,7 +311,7 @@ def fetch_kala_data(from_date='1405/05/15', to_date='1406/5/22'):
 
     # خلاصه‌سازی هر قرارداد
     df_rows = df_rows.groupby('ContractCode', group_keys=False).apply(
-        lambda g: summarize_contract(g, last_market_date), include_groups=False).reset_index(drop=True)
+        lambda g: summarize_contract(g, last_market_date), include_groups=False).reset_index()
 
     # حذف قراردادهای بدون معامله
     df_rows = df_rows[df_rows['AvgTradesVolume'] > 0]
@@ -232,21 +321,92 @@ def fetch_kala_data(from_date='1405/05/15', to_date='1406/5/22'):
         ['AssetName', 'OptionType', 'StrikePrice'],
         ascending=[True, True, True]).reset_index(drop=True)
 
-    print(f"Total records: {len(df_rows)}")
-    print(f"Unique assets: {len(df_rows['AssetName'].unique())}")
-
     return df_rows
 
 
 # =====================================================================
-# بخش 3: تابع محاسبه Long Call برای بورس کالا (هماهنگ با نسخه اصلی)
+# بخش 5: توابع دریافت قیمت پایه از بورس
+# =====================================================================
+
+def fetch_underlying_prices():
+    """
+    دریافت قیمت پایه صندوق‌های طلا از بورس
+    """
+    print("Fetching underlying prices from TSE...")
+
+    url = 'https://old.tsetmc.com/tsev2/data/MarketWatchInit.aspx?h=0&r=0'
+    darkhast = requests.get(url, timeout=30)
+    main_text = darkhast.text
+    csvs = main_text.split('@')
+    main_csv = csvs[2]
+    csv = main_csv.split(';')
+    rows = [row.split(',') for row in csv]
+
+    columns = ['ID', 'ISO', 'nemad', 'name', '4', 'open', 'payani',
+               'last', "NumberOfTrades", 'Volume', 'arzesh_trade',
+               'baze_min_rooz', 'baze_max_rooz', 'Yesterday_Price',
+               'EPS', 'Base_Volume', '16', '17', '18', 'geymat_mojaz_max',
+               'geymat_mojaz_min', 'Number_saham', 'group_code', 'extra1', 'extra2', 'extra3']
+
+    df_rows_bourse = pd.DataFrame(rows, columns=columns)
+    df_rows_bourse = df_rows_bourse[df_rows_bourse['group_code'] == '380'].reset_index(
+        drop=True)
+
+    # فقط نمادهای فعال (QS) را نگه دار
+    df_rows_bourse_filtered = df_rows_bourse[df_rows_bourse['extra3'] == 'QS'].copy(
+    )
+
+    # تغییر: ایجاد دیکشنری با کلید name و مقدار nemad
+    fund_nemad = df_rows_bourse_filtered.set_index('name')['nemad'].to_dict()
+    # دیکشنری قیمت‌ها
+    fund_prices = df_rows_bourse_filtered.set_index('name')['last'].to_dict()
+
+    return fund_nemad, fund_prices
+
+
+def add_underlying_prices_to_kala(df_kala, fund_nemad, fund_prices):
+    """
+    تزریق قیمت پایه به دیتافریم بورس کالا
+    """
+
+    def get_underlying_price(asset_name):
+        if asset_name in FUND_MAPPING:
+            symbol = FUND_MAPPING[asset_name]
+            if symbol and symbol in fund_prices:
+                try:
+                    return float(fund_prices[symbol])
+                except:
+                    return 0.0
+        return 0.0
+
+    def get_underlying_nemad(asset_name):
+        if asset_name in FUND_MAPPING:
+            symbol = FUND_MAPPING[asset_name]
+            if symbol and symbol in fund_nemad:
+                return fund_nemad[symbol]
+        return asset_name
+
+    df_kala['UnderlyingPrice'] = df_kala['AssetName'].apply(
+        get_underlying_price)
+    df_kala['UnderlyingNemad'] = df_kala['AssetName'].apply(
+        get_underlying_nemad)
+
+    # نمایش آمار قیمت‌های تزریق شده
+    price_count = (df_kala['UnderlyingPrice'] > 0).sum()
+    print(
+        f"Underlying price added for {price_count} out of {len(df_kala)} records")
+
+    return df_kala
+
+
+# =====================================================================
+# بخش 6: تابع محاسبه Long Call برای بورس کالا
 # =====================================================================
 
 def long_call_with_fees_kala(premium_call, stock_price, strike_price, contract_size,
                              opt_buy_commission, exercise_fee_rate, days):
     """
     محاسبه بازده استراتژی Long Call برای بورس کالا با احتساب کارمزدها
-    (هماهنگ با تابع long_call_with_fees در نسخه اصلی)
     """
     # ========== 1. محاسبه هزینه‌های ورود ==========
     premium_total = -round(premium_call * contract_size, 0)
@@ -284,6 +444,34 @@ def long_call_with_fees_kala(premium_call, stock_price, strike_price, contract_s
     else:
         break_even_percent = 0
 
+    # ========== 9. بیشترین ضرر ممکن ==========
+
+    # درصد بیشترین ضرر نسبت به قیمت فعلی سهام پایه
+    # نشان می‌دهد که قیمت پایه چند درصد باید کاهش یابد تا به نقطه بیشترین ضرر برسد
+    # بیشترین ضرر زمانی رخ می‌دهد که قیمت پایه به زیر قیمت اعمال برسد
+    if stock_price > 0 and strike_price > 0:
+        # فاصله قیمت فعلی تا قیمت اعمال (به درصد)
+        distance_to_strike = ((stock_price - strike_price) / stock_price) * 100
+        # اگر قیمت فعلی بالاتر از قیمت اعمال باشد، باید چند درصد کاهش یابد تا به قیمت اعمال برسد
+        if distance_to_strike > 0:
+            max_loss_price_percent = round(distance_to_strike, 2)
+        else:
+            # اگر قیمت فعلی پایین‌تر از قیمت اعمال باشد، در حال حاضر در منطقه بیشترین ضرر هستیم
+            max_loss_price_percent = 0.0
+    else:
+        max_loss_price_percent = 0.0
+
+    # ========== 10. درصد ریسک نسبت به اختلاف قیمت (حاشیه امنیت) ==========
+    if stock_price > strike_price:
+        price_difference = stock_price - strike_price
+        if price_difference > 0:
+            total_premium_cost = premium_call * contract_size + abs(entry_fee)
+            risk_percent = round((total_premium_cost / (price_difference * contract_size)) * 100, 2)
+        else:
+            risk_percent = 100.0
+    else:
+        risk_percent = 100.
+
     return {
         'net_profit': net_profit,
         'profit_percent': profit_percent,
@@ -291,18 +479,19 @@ def long_call_with_fees_kala(premium_call, stock_price, strike_price, contract_s
         'break_even_price': break_even_price,
         'break_even_percent': break_even_percent,
         'intrinsic_value': intrinsic_value,
-        'fees_total': entry_fee + exercise_fee
+        'fees_total': entry_fee + exercise_fee,
+        'max_loss_price_percent': max_loss_price_percent,
+        'risk_percent': risk_percent,
     }
 
 
 # =====================================================================
-# بخش 4: توابع اصلی اجرای استراتژی (هماهنگ با نسخه اصلی)
+# بخش 7: توابع اصلی اجرای استراتژی
 # =====================================================================
 
 def load_and_filter_kala_data(from_date='1405/05/15', to_date='1406/5/22'):
     """
-    بارگذاری و فیلتر کردن داده‌های بورس کالا
-    (هماهنگ با تابع load_and_filter_data در نسخه اصلی)
+    بارگذاری و فیلتر کردن داده‌های بورس کالا با تزریق قیمت پایه
     """
     # 1. دریافت داده از بورس کالا
     df_kala = fetch_kala_data(from_date, to_date)
@@ -311,7 +500,13 @@ def load_and_filter_kala_data(from_date='1405/05/15', to_date='1406/5/22'):
         print("No data received from IME.")
         return pd.DataFrame()
 
-    # 2. فیلتر کردن CALL
+    # 2. دریافت قیمت پایه از بورس
+    fund_nemad, fund_prices = fetch_underlying_prices()
+
+    # 3. تزریق قیمت پایه به دیتافریم بورس کالا
+    df_kala = add_underlying_prices_to_kala(df_kala, fund_nemad, fund_prices)
+
+    # 4. فیلتر کردن CALL
     df_call = df_kala[df_kala['OptionType'] == 'Call'].copy()
 
     # فیلتر بر اساس روز تا سررسید
@@ -320,72 +515,88 @@ def load_and_filter_kala_data(from_date='1405/05/15', to_date='1406/5/22'):
     # حذف قراردادهای بدون قیمت معتبر
     df_call = df_call[df_call['LastPrice'] > 0].copy()
     df_call = df_call[df_call['StrikePrice'] > 0].copy()
-
-    print(f"Call options after filtering: {len(df_call)}")
+    # فقط قراردادهایی که قیمت پایه دارند
+    df_call = df_call[df_call['UnderlyingPrice'] > 0].copy()
 
     return df_call
 
 
-def run_long_call_kala_strategy(df_options, max_break_even_percent=12):
+def run_long_call_kala_strategy(df_options, max_break_even_percent=25):
     """
     اجرای استراتژی Long Call روی داده‌های بورس کالا
-    (هماهنگ با تابع run_long_call_strategy در نسخه اصلی)
     """
     print("Running Long Call strategy for Kala...")
-
-    # نرخ‌های کارمزد (برای بورس کالا)
-    OPT_BUY_COMMISSION = 0.0003  # 0.03%
-    EXERCISE_FEE_RATE = 0.0003   # 0.03%
 
     results_fee = []
 
     for _, item in df_options.iterrows():
         # استخراج اطلاعات
-        ticker = item.get('ContractCode', '')
+        contract_description = item.get('ContractDescription', '')
+        ContractCode = item.get('ContractCode', '')
         strike_price = item.get('StrikePrice', 0)
         premium_call = item.get('LastPrice', 0)  # قیمت آخرین معامله
         stock_price = item.get('UnderlyingPrice', 0)
         contract_size = 1  # اندازه قرارداد در بورس کالا معمولاً 1 است
         days = item.get('DaysToMaturity', 0)
         asset_name = item.get('AssetName', '')
+        underlying_nemad = item.get('UnderlyingNemad', '')
 
         if premium_call <= 0 or stock_price <= 0 or days <= 0:
             continue
 
-        # محاسبات با کارمزد (همانند نسخه اصلی)
+        # دریافت نام نماد بورس از FUND_MAPPING
+        symbol = FUND_MAPPING.get(asset_name, asset_name)
+        # ========== دریافت کارمزد بر اساس نوع دارایی ==========
+        asset_type = ASSET_TYPE_MAPPING.get(asset_name, 'default')
+
+        # کارمزد خرید اختیار (برای استراتژی Long Call ما خریدار هستیم)
+        opt_buy_commission = get_ime_commission(
+            asset_type, is_buy=True, is_exercise=False)
+        exercise_fee_rate = get_ime_commission(
+            asset_type, is_buy=True, is_exercise=True)
+
+        # محاسبات با کارمزد
         results = long_call_with_fees_kala(
             premium_call, stock_price, strike_price, contract_size,
-            OPT_BUY_COMMISSION, EXERCISE_FEE_RATE, days)
+            opt_buy_commission, exercise_fee_rate, days)
 
-        # ذخیره نتایج (همانند نسخه اصلی)
+        max_loss_price_percent_scale = results['max_loss_price_percent'] * (
+            30 / days)**0.5
+
+        break_even_percent_scale = results['break_even_percent'] * (
+                    30 / days)**0.5
+
+        # ذخیره نتایج
         results_fee.append({
             'underlying': asset_name,
+            'underlying_TSE': underlying_nemad,
+            'ContractCode': ContractCode,
             'stock_price': round(stock_price, 0),
-            'option_symbol': ticker,
+            'option_symbol': contract_description,
             'strike': strike_price,
             'premium': round(premium_call, 0),
-            'stock_price': round(stock_price, 0),
             'net_profit': results['net_profit'],
             'profit_percent': results['profit_percent'],
             'monthly_return_%': results['monthly_return'],
             'break_even_price': results['break_even_price'],
             'break_even_percent': results['break_even_percent'],
+            'break_even_percent_scale' : round(break_even_percent_scale, 2),
+            'max_loss_price_percent': results['max_loss_price_percent'],
+            'max_loss_price_percent_scale': round(max_loss_price_percent_scale, 2),
+            'risk_percent': results['risk_percent'],
             'days_to_maturity': days,
-            'volume': int(item.get('AvgTradesVolume', 0))
+            'volume': int(item.get('AvgTradesVolume', 0)),
         })
 
     result_df = pd.DataFrame(results_fee)
-    print(f"Initial results: {len(result_df)}")
 
-    # فیلتر بر اساس درصد فاصله تا نقطه سربه‌سر (همانند نسخه اصلی)
+    # فیلتر بر اساس درصد فاصله تا نقطه سربه‌سر
     if not result_df.empty:
-        result_df_filtered = result_df[result_df['break_even_percent']
+        result_df_filtered = result_df[result_df['break_even_percent_scale']
                                        <= max_break_even_percent].copy()
         result_df_filtered = result_df_filtered.sort_values(
             ['break_even_percent', 'monthly_return_%'],
-            ascending=[True, True]
-        ).reset_index(drop=True)
-        print(f"Filtered results: {len(result_df_filtered)}")
+            ascending=[True, True]).reset_index(drop=True)
     else:
         result_df_filtered = result_df
 
@@ -395,7 +606,6 @@ def run_long_call_kala_strategy(df_options, max_break_even_percent=12):
 def save_kala_results_to_excel(result_df, filename="result_long_call_kala.xlsx"):
     """
     ذخیره نتایج بورس کالا در فایل اکسل
-    (هماهنگ با تابع save_results_to_excel در نسخه اصلی)
     """
     # تنظیمات استایل
     header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
@@ -406,10 +616,21 @@ def save_kala_results_to_excel(result_df, filename="result_long_call_kala.xlsx")
     body_font = Font(name='Segoe UI', size=10)
     gray_font = Font(color='808080', italic=True, name='Segoe UI', size=10)
 
+    # ========== تغییر نام ستون‌ها به فارسی (قبل از ذخیره) ==========
+    result_df = result_df.rename(columns={
+        'stock_price': 'قیمت نماد پایه',
+        'monthly_return_%': 'درصد سود ماهانه',
+        'break_even_price': 'قیمت سربه‌سر',
+        'break_even_percent': 'درصد فاصله تا نقطه سربه‌سر\n(هرچه کمتر = بهتر)',
+        'break_even_percent_scale' : 'مقیاس درصد فاصله تا نقطه سربه‌سر\n(هرچه کمتر = بهتر)(به نسبت 30 روز)',
+        'max_loss_price_percent': 'درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)',
+        'max_loss_price_percent_scale': 'مقیاس درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)(به نسبت 30 روز)',
+        'volume': 'حجم معاملات',
+        'risk_percent': 'درصد ریسک نسبت به حاشیه امنیت\n(هرچه کمتر = بهتر)'
+    })
+
     # ذخیره در پوشه 0myStrategy
     filepath = Path(__file__).parent / filename
-
-    print(f"Saving results to: {filepath}")
 
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
         result_df.to_excel(writer, sheet_name='long_call_kala', index=False)
@@ -436,21 +657,77 @@ def save_kala_results_to_excel(result_df, filename="result_long_call_kala.xlsx")
                     cell.font = body_font
                 cell.alignment = alignment
 
-        # تنظیم خودکار عرض ستون‌ها
-        for col in worksheet.columns:
-            max_len = 0
-            for cell in col:
-                val = str(cell.value or '')
-                actual_len = sum(2 if ord(c) > 128 else 1 for c in val)
-                if actual_len > max_len:
-                    max_len = actual_len
-            col_letter = get_column_letter(col[0].column)
-            worksheet.column_dimensions[col_letter].width = min(
-                (max_len + 4), 50)
+        # ========== هایلایت کردن ماکزیمم و مینیمم ستون‌های خاص ==========
+        # ستون‌هایی که باید هایلایت شوند
+        highlight_columns = [
+            'درصد سود ماهانه',
+            'مقیاس درصد فاصله تا نقطه سربه‌سر\n(هرچه کمتر = بهتر)(به نسبت 30 روز)',
+            'مقیاس درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)(به نسبت 30 روز)',
+            'درصد ریسک نسبت به حاشیه امنیت\n(هرچه کمتر = بهتر)',
+        ]
+        
+        # رنگ‌ها
+        max_fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')  # سبز
+        min_fill = PatternFill(start_color='FF9999', end_color='FF9999', fill_type='solid')  # قرمز
+        
+        # پیدا کردن اندیس ستون‌ها
+        col_indices = {}
+        for col_idx, col_name in enumerate(columns_list, start=1):
+            if col_name in highlight_columns:
+                col_indices[col_name] = col_idx
+        
+        # برای هر ستون، ماکزیمم و مینیمم را پیدا کن
+        for col_name, col_idx in col_indices.items():
+            # استخراج مقادیر عددی از ستون (رد کردن ردیف اول که هدر است)
+            values = []
+            for row_idx in range(2, len(result_df) + 2):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                if cell.value is not None and cell.value != "-":
+                    try:
+                        values.append(float(cell.value))
+                    except:
+                        pass
+            
+            if values:
+                max_val = max(values)
+                min_val = min(values)
+                
+                # اعمال رنگ به سلول‌های ماکزیمم و مینیمم
+                for row_idx in range(2, len(result_df) + 2):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    if cell.value is not None and cell.value != "-":
+                        try:
+                            val = float(cell.value)
+                            if val == max_val:
+                                cell.fill = max_fill
+                            elif val == min_val:
+                                cell.fill = min_fill
+                        except:
+                            pass
 
         # اعمال فیلتر و Freeze Panes
         worksheet.auto_filter.ref = f"A1:{get_column_letter(len(result_df.columns))}{len(result_df) + 1}"
         worksheet.freeze_panes = 'A2'
+
+        # ========== تنظیم خودکار عرض ستون‌ها ==========
+        for col in worksheet.columns:
+            max_length = 0
+            column = col[0].column_letter
+
+            for cell in col:
+                if cell.value:
+                    text = str(cell.value)
+                    if '\n' in text:
+                        lines = text.split('\n')
+                        line_length = max(len(line) for line in lines)
+                    else:
+                        line_length = len(text)
+
+                    if line_length > max_length:
+                        max_length = line_length
+
+            adjusted_width = min(max_length + 5, 50)
+            worksheet.column_dimensions[column].width = adjusted_width
 
     print(f"Result saved: {filepath}")
     return str(filepath)
@@ -459,10 +736,9 @@ def save_kala_results_to_excel(result_df, filename="result_long_call_kala.xlsx")
 def main():
     """
     تابع اصلی اجرای استراتژی Long Call برای بورس کالا
-    (هماهنگ با تابع main در نسخه اصلی)
     """
     try:
-        # 1. بارگذاری و فیلتر داده‌ها
+        # 1. بارگذاری و فیلتر داده‌ها (با تزریق قیمت پایه)
         filtered_data = load_and_filter_kala_data(
             from_date='1405/05/15',
             to_date='1406/5/22')
