@@ -3,14 +3,10 @@
 
 """
 دیالوگ تنظیمات جامع سیستم (Settings Dialog)
-مدیریت پارامترهای API، پارامترهای پیش‌فرض اسکنر و تنظیمات عمومی UI.
-
-این دیالوگ با config.py یکپارچه شده و تمام تنظیمات را از طریق
-توابع config.get_ui_settings() و config.update_ui_settings() مدیریت می‌کند.
+تمام عملیات ذخیره/بارگذاری از طریق SettingsManager انجام می‌شود.
 """
 
 import logging
-import json
 from typing import Dict, Any, Optional
 from pathlib import Path
 
@@ -24,580 +20,558 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
-import config
+from ui.settings_manager import settings_manager, _DEFAULT_PROFILE_NAME
 
 logger = logging.getLogger("OptionScanner.UI.Settings")
 
 
 class SettingsDialog(QDialog):
     """
-    دیالوگ تنظیمات نرم‌افزار با قابلیت تب‌بندی، ذخیره‌سازی و مدیریت پروفایل‌ها
+    دیالوگ تنظیمات با مدیریت کامل پروفایل از طریق SettingsManager.
 
     Signals:
-        settings_saved: سیگنال ارسال تنظیمات جدید پس از ذخیره
+        settings_saved: تنظیمات جدید پس از ذخیره ارسال می‌شود
     """
 
     settings_saved = Signal(dict)
 
-    def __init__(self, config_dict: Optional[Dict[str, Any]] = None, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("تنظیمات سیستم")
-        self.resize(650, 620)
-        self.setMinimumSize(580, 550)
-        self.setLayoutDirection(Qt.RightToLeft)
+        self.resize(680, 650)
+        self.setMinimumSize(580, 560)
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
-        # دریافت تنظیمات: اول از config_dict پاس شده، بعد از config.py
-        if config_dict is not None:
-            self.settings: Dict[str, Any] = config_dict.copy()
-        elif hasattr(config, 'get_ui_settings'):
-            self.settings = config.get_ui_settings()
-        else:
-            self.settings = self._get_default_settings()
-        self._initial_settings = self.settings.copy()
+        # تنظیمات جاری از manager
+        self._current_settings: Dict[str, Any] = settings_manager.get_active_settings()
+        self._initial_settings: Dict[str, Any] = dict(self._current_settings)
         self._has_changes = False
 
         self._init_ui()
-        self._load_settings_into_ui()
+        self._refresh_profile_combo()
+        self._load_settings_into_ui(self._current_settings)
         self._update_preview()
-        self._update_window_title()
+        self._update_title()
 
-        logger.info("⚙️ SettingsDialog initialized with config.py integration")
-
-    # =============================================
-    # ساخت UI اصلی
-    # =============================================
+    # =====================================================
+    # ساخت UI
+    # =====================================================
 
     def _init_ui(self) -> None:
-        """راه‌اندازی ساختار گرافیکی دیالوگ"""
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(12)
         main_layout.setContentsMargins(15, 15, 15, 15)
 
-        # ---------------------------------------------
-        # بخش پروفایل‌ها
-        # ---------------------------------------------
+        # ── نوار پروفایل ──────────────────────────────
         profile_frame = QFrame()
-        profile_frame.setStyleSheet("""
-            QFrame {
-                background-color: #f0f2f5;
-                border-radius: 8px;
-                padding: 8px;
-            }
-        """)
-        profile_layout = QHBoxLayout(profile_frame)
-        profile_layout.addWidget(QLabel("📂 پروفایل:"))
+        profile_frame.setStyleSheet(
+            "QFrame { background:#f0f2f5; border-radius:8px; padding:6px; }"
+        )
+        pl = QHBoxLayout(profile_frame)
+        pl.setContentsMargins(8, 4, 8, 4)
+
+        pl.addWidget(QLabel("📂 پروفایل فعال:"))
 
         self.combo_profiles = QComboBox()
-        self.combo_profiles.setMinimumWidth(150)
+        self.combo_profiles.setMinimumWidth(160)
+        self.combo_profiles.currentTextChanged.connect(self._on_profile_selected)
+        pl.addWidget(self.combo_profiles)
 
-        # بارگذاری لیست پروفایل‌ها
-        profile_names = config.get_all_profiles() if hasattr(
-            config, "get_all_profiles") else ["پیش‌فرض"]
-        self.combo_profiles.addItems(profile_names)
-        self.combo_profiles.addItem("سفارشی")
-        self.combo_profiles.currentTextChanged.connect(self._load_profile)
-        self.combo_profiles.setToolTip(
-            "انتخاب پروفایل تنظیمات برای استراتژی‌های متفاوت.")
-        profile_layout.addWidget(self.combo_profiles)
-
-        self.btn_save_profile = QPushButton("💾 ذخیره")
-        self.btn_save_profile.setToolTip(
-            "ذخیره تنظیمات فعلی به عنوان پروفایل جدید")
+        self.btn_save_profile = QPushButton("💾 ذخیره با نام...")
+        self.btn_save_profile.setToolTip("ذخیره تنظیمات فعلی به عنوان پروفایل جدید یا بازنویسی")
         self.btn_save_profile.clicked.connect(self._save_profile)
-        profile_layout.addWidget(self.btn_save_profile)
+        pl.addWidget(self.btn_save_profile)
 
         self.btn_delete_profile = QPushButton("🗑️ حذف")
         self.btn_delete_profile.setToolTip("حذف پروفایل انتخاب‌شده")
         self.btn_delete_profile.clicked.connect(self._delete_profile)
-        profile_layout.addWidget(self.btn_delete_profile)
+        pl.addWidget(self.btn_delete_profile)
 
-        profile_layout.addStretch()
+        pl.addStretch()
 
         self.lbl_changes = QLabel("")
-        self.lbl_changes.setStyleSheet("color: #e67e22; font-weight: bold;")
-        profile_layout.addWidget(self.lbl_changes)
+        self.lbl_changes.setStyleSheet("color:#e67e22; font-weight:bold;")
+        pl.addWidget(self.lbl_changes)
 
         main_layout.addWidget(profile_frame)
 
-        # ---------------------------------------------
-        # ساخت تب‌ها
-        # ---------------------------------------------
+        # ── تب‌ها ────────────────────────────────────
         self.tab_widget = QTabWidget()
-        self.tab_widget.setFont(QFont("Vazir", 9))
         self.tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #d0d7de;
-                border-radius: 6px;
-                padding: 10px;
-            }
-            QTabBar::tab {
-                padding: 8px 16px;
-                margin-right: 4px;
-                border-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #4a6fa5;
-                color: white;
-            }
+            QTabWidget::pane { border:1px solid #d0d7de; border-radius:6px; padding:10px; }
+            QTabBar::tab { padding:8px 16px; margin-right:4px; border-radius:4px; }
+            QTabBar::tab:selected { background:#4a6fa5; color:white; }
         """)
 
-        self.tab_api = self._create_api_tab()
-        self.tab_scanner = self._create_scanner_tab()
-        self.tab_general = self._create_general_tab()
-        self.tab_advanced = self._create_advanced_tab()
-        self.tab_preview = self._create_preview_tab()
-
-        self.tab_widget.addTab(self.tab_api, "🌐 شبکه و API")
-        self.tab_widget.addTab(self.tab_scanner, "📊 محاسبات اسکنر")
-        self.tab_widget.addTab(self.tab_general, "⚙️ عمومی و UI")
-        self.tab_widget.addTab(self.tab_advanced, "🔧 پیشرفته")
-        self.tab_widget.addTab(self.tab_preview, "📋 پیش‌نمایش")
-
+        self.tab_widget.addTab(self._create_api_tab(),      "🌐 شبکه و API")
+        self.tab_widget.addTab(self._create_scanner_tab(),  "📊 اسکنر")
+        self.tab_widget.addTab(self._create_general_tab(),  "⚙️ عمومی")
+        self.tab_widget.addTab(self._create_advanced_tab(), "🔧 پیشرفته")
+        self.tab_widget.addTab(self._create_preview_tab(),  "📋 پیش‌نمایش")
         main_layout.addWidget(self.tab_widget)
 
-        # ---------------------------------------------
-        # دکمه‌های پایین دیالوگ
-        # ---------------------------------------------
-        self.button_box = QDialogButtonBox(
+        # ── دکمه‌های پایین ───────────────────────────
+        btn_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel |
             QDialogButtonBox.StandardButton.RestoreDefaults |
             QDialogButtonBox.StandardButton.Reset,
             Qt.Orientation.Horizontal, self
         )
-
-        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("💾 ذخیره تنظیمات")
-        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(
-            "background-color: #27ae60; color: white; font-weight: bold; padding: 6px 16px;"
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("💾 اعمال و بستن")
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(
+            "background:#27ae60; color:white; font-weight:bold; padding:6px 16px;"
         )
-        self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
-        self.button_box.button(
-            QDialogButtonBox.StandardButton.RestoreDefaults).setText("🔄 پیش‌فرض اولیه")
-        self.button_box.button(QDialogButtonBox.StandardButton.Reset).setText(
-            "↩️ بازگشت به قبلی")
+        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
+        btn_box.button(QDialogButtonBox.StandardButton.RestoreDefaults).setText("🔄 بازگشت به پیش‌فرض config.py")
+        btn_box.button(QDialogButtonBox.StandardButton.Reset).setText("↩️ لغو تغییرات")
 
-        self.button_box.accepted.connect(self._save_and_accept)
-        self.button_box.rejected.connect(self.reject)
-        self.button_box.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
-            self._restore_defaults)
-        self.button_box.button(QDialogButtonBox.StandardButton.Reset).clicked.connect(
-            self._reset_to_previous)
+        btn_box.accepted.connect(self._apply_and_close)
+        btn_box.rejected.connect(self.reject)
+        btn_box.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
+            self._restore_factory_defaults)
+        btn_box.button(QDialogButtonBox.StandardButton.Reset).clicked.connect(
+            self._discard_changes)
 
-        main_layout.addWidget(self.button_box)
+        main_layout.addWidget(btn_box)
 
-    # =============================================
-    # ساخت تب‌ها
-    # =============================================
+    # ── تب‌ها ─────────────────────────────────────────
 
     def _create_api_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        group = QGroupBox("پارامترهای درخواست‌های شبکه")
-        form_layout = QFormLayout(group)
-        form_layout.setSpacing(12)
-        form_layout.setLabelAlignment(Qt.AlignRight)
+        w = QWidget(); layout = QVBoxLayout(w)
+        grp = QGroupBox("پارامترهای شبکه")
+        form = QFormLayout(grp); form.setSpacing(10)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self.spin_api_timeout = QSpinBox()
-        self.spin_api_timeout.setRange(3, 60)
-        self.spin_api_timeout.setSuffix(" ثانیه")
-        self.spin_api_timeout.valueChanged.connect(self._on_setting_changed)
-        form_layout.addRow("⏱️ زمان وقفه (Timeout):", self.spin_api_timeout)
+        self.spin_api_timeout.setRange(3, 120); self.spin_api_timeout.setSuffix(" ثانیه")
+        self.spin_api_timeout.valueChanged.connect(self._on_changed)
+        form.addRow("⏱️ Timeout:", self.spin_api_timeout)
 
         self.spin_max_retries = QSpinBox()
         self.spin_max_retries.setRange(1, 10)
-        self.spin_max_retries.valueChanged.connect(self._on_setting_changed)
-        form_layout.addRow("🔄 تعداد تلاش مجدد:", self.spin_max_retries)
+        self.spin_max_retries.valueChanged.connect(self._on_changed)
+        form.addRow("🔄 تلاش مجدد:", self.spin_max_retries)
 
         self.spin_request_delay = QSpinBox()
-        self.spin_request_delay.setRange(0, 5000)
-        self.spin_request_delay.setSingleStep(50)
-        self.spin_request_delay.setSuffix(" میلی‌ثانیه")
-        self.spin_request_delay.valueChanged.connect(self._on_setting_changed)
-        form_layout.addRow("⏳ تاخیر بین درخواست‌ها:", self.spin_request_delay)
+        self.spin_request_delay.setRange(0, 10000); self.spin_request_delay.setSingleStep(100)
+        self.spin_request_delay.setSuffix(" ms")
+        self.spin_request_delay.valueChanged.connect(self._on_changed)
+        form.addRow("⏳ تأخیر بین درخواست:", self.spin_request_delay)
 
-        layout.addWidget(group)
-        layout.addStretch()
-        return widget
+        layout.addWidget(grp); layout.addStretch()
+        return w
 
     def _create_scanner_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        w = QWidget(); layout = QVBoxLayout(w)
 
-        # گروه ۱: بازار
-        group_market = QGroupBox("پارامترهای پایه بازار")
-        form_market = QFormLayout(group_market)
-        form_market.setSpacing(12)
+        grp1 = QGroupBox("پارامترهای بازار")
+        f1 = QFormLayout(grp1); f1.setSpacing(10)
 
         self.spin_rf_rate = QDoubleSpinBox()
-        self.spin_rf_rate.setRange(0.0, 100.0)
-        self.spin_rf_rate.setSingleStep(0.5)
-        self.spin_rf_rate.setSuffix(" ٪")
-        self.spin_rf_rate.valueChanged.connect(self._on_setting_changed)
-        form_market.addRow("💰 نرخ سود بدون ریسک:", self.spin_rf_rate)
+        self.spin_rf_rate.setRange(0, 200); self.spin_rf_rate.setSingleStep(1)
+        self.spin_rf_rate.setSuffix(" ٪"); self.spin_rf_rate.setDecimals(2)
+        self.spin_rf_rate.valueChanged.connect(self._on_changed)
+        f1.addRow("💰 نرخ بدون ریسک:", self.spin_rf_rate)
 
         self.spin_min_open_int = QSpinBox()
-        self.spin_min_open_int.setRange(0, 1_000_000)
-        self.spin_min_open_int.setSingleStep(50)
-        self.spin_min_open_int.valueChanged.connect(self._on_setting_changed)
-        form_market.addRow("📊 حداقل موقعیت باز:", self.spin_min_open_int)
+        self.spin_min_open_int.setRange(0, 1_000_000); self.spin_min_open_int.setSingleStep(10)
+        self.spin_min_open_int.valueChanged.connect(self._on_changed)
+        f1.addRow("📊 حداقل موقعیت باز:", self.spin_min_open_int)
 
-        layout.addWidget(group_market)
+        layout.addWidget(grp1)
 
-        # گروه ۲: سررسید
-        group_maturity = QGroupBox("📅 محدوده روز تا سررسید (DTE)")
-        form_maturity = QFormLayout(group_maturity)
-        form_maturity.setSpacing(12)
+        grp2 = QGroupBox("روزهای تا سررسید (DTE)")
+        f2 = QFormLayout(grp2); f2.setSpacing(10)
 
         self.spin_min_dte = QSpinBox()
         self.spin_min_dte.setRange(0, 365)
-        self.spin_min_dte.valueChanged.connect(self._on_setting_changed)
-        form_maturity.addRow("📅 حداقل روز تا سررسید:", self.spin_min_dte)
+        self.spin_min_dte.valueChanged.connect(self._on_changed)
+        f2.addRow("📅 حداقل DTE:", self.spin_min_dte)
 
         self.spin_max_dte = QSpinBox()
         self.spin_max_dte.setRange(1, 1000)
-        self.spin_max_dte.valueChanged.connect(self._on_setting_changed)
-        form_maturity.addRow("📅 حداکثر روز تا سررسید:", self.spin_max_dte)
+        self.spin_max_dte.valueChanged.connect(self._on_changed)
+        f2.addRow("📅 حداکثر DTE:", self.spin_max_dte)
 
-        layout.addWidget(group_maturity)
+        layout.addWidget(grp2)
 
-        # گروه ۳: گام نوسان‌پذیری
-        group_steps = QGroupBox("📈 تنظیمات گام نمونه‌برداری نوسان‌پذیری")
-        form_steps = QFormLayout(group_steps)
-        form_steps.setSpacing(12)
+        grp3 = QGroupBox("بازه تغییر قیمت برای P&L")
+        f3 = QFormLayout(grp3); f3.setSpacing(10)
 
-        self.spin_vol_step = QDoubleSpinBox()
-        self.spin_vol_step.setRange(0.5, 20.0)
-        self.spin_vol_step.setSingleStep(0.5)
-        self.spin_vol_step.setSuffix(" ٪")
-        self.spin_vol_step.valueChanged.connect(self._on_setting_changed)
-        form_steps.addRow("📈 اندازه گام:", self.spin_vol_step)
-
-        vol_range_layout = QHBoxLayout()
         self.spin_vol_min = QDoubleSpinBox()
-        self.spin_vol_min.setRange(-90.0, 0.0)
-        self.spin_vol_min.setSuffix(" ٪")
-        self.spin_vol_min.valueChanged.connect(self._on_setting_changed)
+        self.spin_vol_min.setRange(-200, 0); self.spin_vol_min.setSuffix(" ٪")
+        self.spin_vol_min.valueChanged.connect(self._on_changed)
+        f3.addRow("📉 حداقل درصد:", self.spin_vol_min)
 
         self.spin_vol_max = QDoubleSpinBox()
-        self.spin_vol_max.setRange(0.0, 300.0)
-        self.spin_vol_max.setSuffix(" ٪")
-        self.spin_vol_max.valueChanged.connect(self._on_setting_changed)
+        self.spin_vol_max.setRange(0, 200); self.spin_vol_max.setSuffix(" ٪")
+        self.spin_vol_max.valueChanged.connect(self._on_changed)
+        f3.addRow("📈 حداکثر درصد:", self.spin_vol_max)
 
-        vol_range_layout.addWidget(QLabel("از:"))
-        vol_range_layout.addWidget(self.spin_vol_min)
-        vol_range_layout.addWidget(QLabel("تا:"))
-        vol_range_layout.addWidget(self.spin_vol_max)
-
-        form_steps.addRow("📊 دامنه نمونه‌برداری:", vol_range_layout)
-        layout.addWidget(group_steps)
-
+        layout.addWidget(grp3)
         layout.addStretch()
-        return widget
+        return w
 
     def _create_general_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        w = QWidget(); layout = QVBoxLayout(w)
 
-        group_ui = QGroupBox("🎨 پوسته و به‌روزرسانی")
-        form_ui = QFormLayout(group_ui)
-        form_ui.setSpacing(12)
-
-        self.chk_auto_refresh = QCheckBox(
-            "فعال‌سازی به‌روزرسانی دوره‌ای خودکار")
-        self.chk_auto_refresh.stateChanged.connect(self._on_setting_changed)
-        form_ui.addRow(self.chk_auto_refresh)
-
-        self.spin_refresh_interval = QSpinBox()
-        self.spin_refresh_interval.setRange(5, 3600)
-        self.spin_refresh_interval.setSuffix(" ثانیه")
-        self.spin_refresh_interval.valueChanged.connect(
-            self._on_setting_changed)
-        form_ui.addRow("⏱️ بازه به‌روزرسانی:", self.spin_refresh_interval)
+        grp1 = QGroupBox("UI و نمایش")
+        f1 = QFormLayout(grp1); f1.setSpacing(10)
 
         self.combo_theme = QComboBox()
-        self.combo_theme.addItems(
-            ["تاریک (Dark)", "روشن (Light)", "سیستم (System)"])
-        self.combo_theme.currentTextChanged.connect(self._on_setting_changed)
-        form_ui.addRow("🎨 پوسته برنامه:", self.combo_theme)
+        self.combo_theme.addItems(["روشن (Light)", "تاریک (Dark)", "سیستم (System)"])
+        self.combo_theme.currentTextChanged.connect(self._on_changed)
+        f1.addRow("🎨 پوسته:", self.combo_theme)
 
         self.combo_log_level = QComboBox()
         self.combo_log_level.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
-        self.combo_log_level.currentTextChanged.connect(
-            self._on_setting_changed)
-        form_ui.addRow("📝 سطح لاگ‌گیری:", self.combo_log_level)
+        self.combo_log_level.currentTextChanged.connect(self._on_changed)
+        f1.addRow("📝 سطح لاگ:", self.combo_log_level)
 
-        layout.addWidget(group_ui)
+        self.chk_auto_refresh = QCheckBox("اسکن خودکار دوره‌ای")
+        self.chk_auto_refresh.stateChanged.connect(self._on_changed)
+        f1.addRow(self.chk_auto_refresh)
 
-        group_path = QGroupBox("📁 مسیرهای ذخیره‌سازی")
-        form_path = QHBoxLayout(group_path)
+        self.spin_refresh_interval = QSpinBox()
+        self.spin_refresh_interval.setRange(30, 3600); self.spin_refresh_interval.setSuffix(" ثانیه")
+        self.spin_refresh_interval.valueChanged.connect(self._on_changed)
+        f1.addRow("⏱️ فاصله اسکن خودکار:", self.spin_refresh_interval)
 
+        layout.addWidget(grp1)
+
+        grp2 = QGroupBox("📁 پوشه خروجی اکسل")
+        fl = QHBoxLayout(grp2)
         self.txt_export_dir = QLineEdit()
-        self.txt_export_dir.textChanged.connect(self._on_setting_changed)
+        self.txt_export_dir.textChanged.connect(self._on_changed)
+        self.btn_browse = QPushButton("📁 انتخاب...")
+        self.btn_browse.clicked.connect(self._browse_dir)
+        fl.addWidget(self.txt_export_dir); fl.addWidget(self.btn_browse)
+        layout.addWidget(grp2)
 
-        self.btn_browse_dir = QPushButton("📁 انتخاب پوشه")
-        self.btn_browse_dir.clicked.connect(self._browse_export_directory)
-
-        form_path.addWidget(self.txt_export_dir)
-        form_path.addWidget(self.btn_browse_dir)
-
-        layout.addWidget(group_path)
         layout.addStretch()
-        return widget
+        return w
 
     def _create_advanced_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        group_advanced = QGroupBox("🔧 تنظیمات پیشرفته")
-        form_advanced = QFormLayout(group_advanced)
-        form_advanced.setSpacing(12)
+        w = QWidget(); layout = QVBoxLayout(w)
+        grp = QGroupBox("پردازش موازی و کش")
+        form = QFormLayout(grp); form.setSpacing(10)
 
         self.chk_parallel = QCheckBox("فعال‌سازی پردازش موازی")
-        self.chk_parallel.stateChanged.connect(self._on_setting_changed)
-        form_advanced.addRow(self.chk_parallel)
+        self.chk_parallel.stateChanged.connect(self._on_changed)
+        form.addRow(self.chk_parallel)
 
         self.spin_max_workers = QSpinBox()
         self.spin_max_workers.setRange(1, 16)
-        self.spin_max_workers.valueChanged.connect(self._on_setting_changed)
-        form_advanced.addRow("⚡ تعداد پردازش‌گرها:", self.spin_max_workers)
+        self.spin_max_workers.valueChanged.connect(self._on_changed)
+        form.addRow("⚡ تعداد Workers:", self.spin_max_workers)
 
         self.chk_cache = QCheckBox("فعال‌سازی کش داده")
-        self.chk_cache.stateChanged.connect(self._on_setting_changed)
-        form_advanced.addRow(self.chk_cache)
+        self.chk_cache.stateChanged.connect(self._on_changed)
+        form.addRow(self.chk_cache)
 
         self.spin_cache_ttl = QSpinBox()
-        self.spin_cache_ttl.setRange(10, 3600)
-        self.spin_cache_ttl.setSuffix(" ثانیه")
-        self.spin_cache_ttl.valueChanged.connect(self._on_setting_changed)
-        form_advanced.addRow("⏱️ مدت اعتبار کش:", self.spin_cache_ttl)
+        self.spin_cache_ttl.setRange(1, 3600); self.spin_cache_ttl.setSuffix(" ثانیه")
+        self.spin_cache_ttl.valueChanged.connect(self._on_changed)
+        form.addRow("⏱️ TTL کش:", self.spin_cache_ttl)
 
-        layout.addWidget(group_advanced)
-        layout.addStretch()
-        return widget
+        layout.addWidget(grp); layout.addStretch()
+        return w
 
     def _create_preview_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        w = QWidget(); layout = QVBoxLayout(w)
+        self.preview_text = QTextEdit()
+        self.preview_text.setReadOnly(True)
+        self.preview_text.setFont(QFont("Courier New", 9))
+        layout.addWidget(self.preview_text)
+        return w
 
-        self.preview_browser = QTextEdit()
-        self.preview_browser.setReadOnly(True)
-        self.preview_browser.setFont(QFont("Vazir", 9))
-        layout.addWidget(self.preview_browser)
-        return widget
+    # =====================================================
+    # بارگذاری / استخراج تنظیمات از/به ویجت‌ها
+    # =====================================================
 
-    # =============================================
-    # متدهای بارگذاری، استخراج و همگام‌سازی
-    # =============================================
-
-    def _load_settings_into_ui(self) -> None:
-        """مقداردهی کامل تمام ویجت‌ها از دیکشنری settings"""
+    def _load_settings_into_ui(self, s: Dict[str, Any]) -> None:
+        """پر کردن ویجت‌ها از دیکشنری تنظیمات."""
         # API
-        self.spin_api_timeout.setValue(self.settings.get("api_timeout", 10))
-        self.spin_max_retries.setValue(self.settings.get("api_max_retries", 3))
-        self.spin_request_delay.setValue(
-            self.settings.get("request_delay_ms", 200))
+        self.spin_api_timeout.setValue(s.get("api_timeout", 30))
+        self.spin_max_retries.setValue(s.get("api_max_retries", 3))
+        self.spin_request_delay.setValue(s.get("request_delay_ms", 5000))
 
         # Scanner
-        rf_rate = self.settings.get("risk_free_rate", 0.30)
-        self.spin_rf_rate.setValue(
-            rf_rate * 100 if rf_rate <= 1.0 else rf_rate)
-        self.spin_min_open_int.setValue(
-            self.settings.get("min_open_interest", 100))
-        self.spin_min_dte.setValue(
-            self.settings.get("min_days_to_maturity", 2))
-        self.spin_max_dte.setValue(
-            self.settings.get("max_days_to_maturity", 365))
-        self.spin_vol_step.setValue(
-            self.settings.get("volatility_step_percent", 5.0))
-        self.spin_vol_min.setValue(
-            self.settings.get("volatility_range_min", -50.0))
-        self.spin_vol_max.setValue(
-            self.settings.get("volatility_range_max", 50.0))
+        rf = s.get("risk_free_rate", 0.24)
+        self.spin_rf_rate.setValue(rf * 100 if rf <= 1.0 else rf)
+        self.spin_min_open_int.setValue(s.get("min_open_interest", 50))
+        self.spin_min_dte.setValue(s.get("min_days_to_maturity", 2))
+        self.spin_max_dte.setValue(s.get("max_days_to_maturity", 365))
+        self.spin_vol_min.setValue(s.get("volatility_range_min", -45.0))
+        self.spin_vol_max.setValue(s.get("volatility_range_max", 45.0))
 
         # General
-        self.chk_auto_refresh.setChecked(
-            self.settings.get("auto_refresh_enabled", True))
-        self.spin_refresh_interval.setValue(
-            self.settings.get("auto_refresh_interval_sec", 60))
-
-        theme = self.settings.get("theme", "تاریک (Dark)")
+        theme = s.get("theme", "روشن (Light)")
         idx = self.combo_theme.findText(theme)
-        if idx >= 0:
-            self.combo_theme.setCurrentIndex(idx)
+        self.combo_theme.setCurrentIndex(idx if idx >= 0 else 0)
 
-        log_lvl = self.settings.get("log_level", "INFO")
-        idx_log = self.combo_log_level.findText(log_lvl)
-        if idx_log >= 0:
-            self.combo_log_level.setCurrentIndex(idx_log)
+        log_lvl = s.get("log_level", "INFO")
+        idx_l = self.combo_log_level.findText(log_lvl)
+        self.combo_log_level.setCurrentIndex(idx_l if idx_l >= 0 else 1)
 
-        self.txt_export_dir.setText(self.settings.get(
-            "export_dir", str(Path.home() / "OptionScanner_Exports")))
+        self.chk_auto_refresh.setChecked(s.get("auto_refresh_enabled", False))
+        self.spin_refresh_interval.setValue(s.get("auto_refresh_interval_sec", 120))
+        self.txt_export_dir.setText(s.get("export_dir", ""))
 
         # Advanced
-        self.chk_parallel.setChecked(self.settings.get(
-            "enable_parallel_processing", True))
-        self.spin_max_workers.setValue(
-            self.settings.get("max_parallel_workers", 4))
-        self.chk_cache.setChecked(self.settings.get("cache_enabled", True))
-        self.spin_cache_ttl.setValue(
-            self.settings.get("cache_ttl_seconds", 300))
+        self.chk_parallel.setChecked(s.get("enable_parallel_processing", False))
+        self.spin_max_workers.setValue(s.get("max_parallel_workers", 3))
+        self.chk_cache.setChecked(s.get("cache_enabled", True))
+        self.spin_cache_ttl.setValue(s.get("cache_ttl_seconds", 6))
 
-    def _get_settings_from_ui(self) -> Dict[str, Any]:
-        """استخراج وضعیت فعلی ویجت‌ها"""
+    def _read_settings_from_ui(self) -> Dict[str, Any]:
+        """خواندن مقادیر فعلی ویجت‌ها."""
         return {
-            "api_timeout": self.spin_api_timeout.value(),
-            "api_max_retries": self.spin_max_retries.value(),
-            "request_delay_ms": self.spin_request_delay.value(),
-            "risk_free_rate": round(self.spin_rf_rate.value() / 100.0, 4),
-            "min_open_interest": self.spin_min_open_int.value(),
-            "min_days_to_maturity": self.spin_min_dte.value(),
-            "max_days_to_maturity": self.spin_max_dte.value(),
-            "volatility_step_percent": self.spin_vol_step.value(),
-            "volatility_range_min": self.spin_vol_min.value(),
-            "volatility_range_max": self.spin_vol_max.value(),
-            "auto_refresh_enabled": self.chk_auto_refresh.isChecked(),
+            "api_timeout":              self.spin_api_timeout.value(),
+            "api_max_retries":          self.spin_max_retries.value(),
+            "request_delay_ms":         self.spin_request_delay.value(),
+            "risk_free_rate":           round(self.spin_rf_rate.value() / 100.0, 4),
+            "min_open_interest":        self.spin_min_open_int.value(),
+            "min_days_to_maturity":     self.spin_min_dte.value(),
+            "max_days_to_maturity":     self.spin_max_dte.value(),
+            "volatility_range_min":     self.spin_vol_min.value(),
+            "volatility_range_max":     self.spin_vol_max.value(),
+            "theme":                    self.combo_theme.currentText(),
+            "log_level":                self.combo_log_level.currentText(),
+            "auto_refresh_enabled":     self.chk_auto_refresh.isChecked(),
             "auto_refresh_interval_sec": self.spin_refresh_interval.value(),
-            "theme": self.combo_theme.currentText(),
-            "log_level": self.combo_log_level.currentText(),
-            "export_dir": self.txt_export_dir.text().strip(),
+            "export_dir":               self.txt_export_dir.text().strip(),
             "enable_parallel_processing": self.chk_parallel.isChecked(),
-            "max_parallel_workers": self.spin_max_workers.value(),
-            "cache_enabled": self.chk_cache.isChecked(),
-            "cache_ttl_seconds": self.spin_cache_ttl.value()
+            "max_parallel_workers":     self.spin_max_workers.value(),
+            "cache_enabled":            self.chk_cache.isChecked(),
+            "cache_ttl_seconds":        self.spin_cache_ttl.value(),
         }
 
-    # =============================================
-    # متدهای مدیریت وضعیت و رویدادها
-    # =============================================
+    # =====================================================
+    # مدیریت تغییرات و عنوان
+    # =====================================================
 
-    def _on_setting_changed(self) -> None:
-        """تشخیص تغییرات"""
-        current = self._get_settings_from_ui()
+    def _on_changed(self) -> None:
+        current = self._read_settings_from_ui()
         self._has_changes = (current != self._initial_settings)
-        self._update_window_title()
+        self._update_title()
         self._update_preview()
 
-    def _update_window_title(self) -> None:
-        title = "تنظیمات سیستم"
+    def _update_title(self) -> None:
+        active = settings_manager.get_active_profile_name()
+        title = f"تنظیمات سیستم — [{active}]"
         if self._has_changes:
-            title += " * (تغییرات اعمال‌نشده)"
+            title += " *"
             self.lbl_changes.setText("⚠️ تغییرات ذخیره‌نشده")
         else:
             self.lbl_changes.setText("")
         self.setWindowTitle(title)
 
     def _update_preview(self) -> None:
-        settings = self._get_settings_from_ui()
-        preview_text = "📋 **خلاصه تنظیمات فعلی UI**:\n\n"
-        for k, v in settings.items():
-            preview_text += f"• **{k}**: {v}\n"
-        self.preview_browser.setText(preview_text)
+        s = self._read_settings_from_ui()
+        lines = ["═" * 40, f"  پروفایل فعال: {settings_manager.get_active_profile_name()}", "═" * 40]
+        for k, v in s.items():
+            lines.append(f"  {k}: {v}")
+        self.preview_text.setPlainText("\n".join(lines))
 
-    def _browse_export_directory(self) -> None:
-        dir_path = QFileDialog.getExistingDirectory(
-            self, "انتخاب پوشه پیش‌فرض خروجی‌ها", self.txt_export_dir.text()
-        )
-        if dir_path:
-            self.txt_export_dir.setText(dir_path)
+    # =====================================================
+    # مدیریت پروفایل‌ها
+    # =====================================================
 
-    def _load_profile(self, profile_name: str) -> None:
-        if not profile_name or profile_name == "سفارشی":
+    def _refresh_profile_combo(self) -> None:
+        """بازسازی لیست پروفایل‌ها در ComboBox."""
+        self.combo_profiles.blockSignals(True)
+        self.combo_profiles.clear()
+        # اول 'پیش‌فرض' ثابت
+        self.combo_profiles.addItem(_DEFAULT_PROFILE_NAME)
+        # بعد پروفایل‌های کاربر
+        for name in settings_manager.get_profile_names():
+            self.combo_profiles.addItem(name)
+
+        active = settings_manager.get_active_profile_name()
+        idx = self.combo_profiles.findText(active)
+        self.combo_profiles.setCurrentIndex(idx if idx >= 0 else 0)
+        self.combo_profiles.blockSignals(False)
+
+        # 'پیش‌فرض' قابل حذف نیست
+        self.btn_delete_profile.setEnabled(active != _DEFAULT_PROFILE_NAME)
+
+    def _on_profile_selected(self, name: str) -> None:
+        """وقتی کاربر پروفایل دیگری انتخاب می‌کند."""
+        if not name:
             return
-        try:
-            if hasattr(config, "apply_profile"):
-                updated = config.apply_profile(profile_name)
-                self.settings = updated.to_dict() if hasattr(updated, "to_dict") else updated
-            self._load_settings_into_ui()
-            self._on_setting_changed()
-            logger.info(f"📂 Profile '{profile_name}' applied.")
-        except Exception as e:
-            logger.error(f"Failed to load profile {profile_name}: {e}")
+
+        # اگر تغییر ذخیره‌نشده داریم، بپرس
+        if self._has_changes:
+            reply = QMessageBox.question(
+                self,
+                "تغییرات ذخیره‌نشده",
+                "تغییرات فعلی ذخیره نشده‌اند.\nآیا می‌خواهید بدون ذخیره پروفایل را تغییر دهید؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.No:
+                # برگرد به پروفایل قبلی
+                self._refresh_profile_combo()
+                return
+
+        settings_manager.set_active_profile(name)
+        new_settings = settings_manager.get_active_settings()
+        self._current_settings = new_settings
+        self._initial_settings = dict(new_settings)
+        self._has_changes = False
+        self._load_settings_into_ui(new_settings)
+        self._update_title()
+        self.btn_delete_profile.setEnabled(name != _DEFAULT_PROFILE_NAME)
+        logger.info(f"پروفایل '{name}' بارگذاری شد.")
 
     def _save_profile(self) -> None:
-        profile_name, ok = QInputDialog.getText(
-            self, "ذخیره پروفایل", "نام پروفایل جدید:")
-        if ok and profile_name.strip():
-            if hasattr(config, "save_custom_profile"):
-                config.save_custom_profile(
-                    profile_name.strip(), self._get_settings_from_ui())
-                if self.combo_profiles.findText(profile_name) == -1:
-                    self.combo_profiles.addItem(profile_name)
-                self.combo_profiles.setCurrentText(profile_name)
+        """ذخیره تنظیمات فعلی با یک نام (جدید یا بازنویسی)."""
+        current_name = settings_manager.get_active_profile_name()
+        suggested = "" if current_name == _DEFAULT_PROFILE_NAME else current_name
+
+        name, ok = QInputDialog.getText(
+            self,
+            "ذخیره پروفایل",
+            "نام پروفایل را وارد کنید:",
+            text=suggested,
+        )
+        if not ok or not name.strip():
+            return
+
+        name = name.strip()
+        if name == _DEFAULT_PROFILE_NAME:
+            QMessageBox.warning(self, "نام نامعتبر",
+                                f"نام '{_DEFAULT_PROFILE_NAME}' رزرو است.")
+            return
+
+        # اگر قبلاً وجود داشت، بپرس
+        if name in settings_manager.get_profile_names():
+            reply = QMessageBox.question(
+                self, "بازنویسی پروفایل",
+                f"پروفایل '{name}' از قبل وجود دارد. بازنویسی شود؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
+
+        settings = self._read_settings_from_ui()
+        settings_manager.save_profile(name, settings)
+
+        self._initial_settings = dict(settings)
+        self._has_changes = False
+        self._refresh_profile_combo()
+        self._update_title()
+
+        QMessageBox.information(self, "ذخیره شد",
+                                f"✅ پروفایل '{name}' با موفقیت ذخیره شد.")
+        logger.info(f"پروفایل '{name}' ذخیره شد.")
 
     def _delete_profile(self) -> None:
-        profile_name = self.combo_profiles.currentText()
-        if profile_name in ["پیش‌فرض", "سفارشی"]:
-            QMessageBox.warning(
-                self, "خطا", "امکان حذف این پروفایل وجود ندارد.")
+        name = settings_manager.get_active_profile_name()
+        if name == _DEFAULT_PROFILE_NAME:
             return
-        if hasattr(config, "delete_custom_profile"):
-            config.delete_custom_profile(profile_name)
-            idx = self.combo_profiles.findText(profile_name)
-            if idx >= 0:
-                self.combo_profiles.removeItem(idx)
 
-    def _reset_to_previous(self) -> None:
-        self.settings = self._initial_settings.copy()
-        self._load_settings_into_ui()
-        self._on_setting_changed()
-
-    def _restore_defaults(self) -> None:
         reply = QMessageBox.question(
-            self, "بازنشانی", "آیا می‌خواهید تنظیمات به پیش‌فرض اولیه برگردند؟",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            self, "حذف پروفایل",
+            f"آیا از حذف پروفایل '{name}' مطمئن هستید؟",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if reply == QMessageBox.StandardButton.Yes:
-            if hasattr(config, "get_default_settings"):
-                self.settings = config.get_default_settings()
-            else:
-                self.settings = self._get_default_settings()
-            self._load_settings_into_ui()
-            self._on_setting_changed()
+        if reply != QMessageBox.StandardButton.Yes:
+            return
 
-    @staticmethod
-    def _get_default_settings() -> Dict[str, Any]:
-        """مقادیر پیش‌فرض در صورت عدم وجود در config"""
-        return {
-            "api_timeout": 10,
-            "api_max_retries": 3,
-            "request_delay_ms": 200,
-            "risk_free_rate": 0.24,
-            "min_open_interest": 50,
-            "min_days_to_maturity": 2,
-            "max_days_to_maturity": 365,
-            "volatility_step_percent": 5.0,
-            "volatility_range_min": -45.0,
-            "volatility_range_max": 45.0,
-            "auto_refresh_enabled": False,
-            "auto_refresh_interval_sec": 120,
-            "theme": "روشن (Light)",
-            "log_level": "INFO",
-            "export_dir": str(Path.home() / "OptionScanner_Exports"),
-            "enable_parallel_processing": False,
-            "max_parallel_workers": 3,
-            "cache_enabled": True,
-            "cache_ttl_seconds": 6,
-        }
+        settings_manager.delete_profile(name)
+        # بعد از حذف، پروفایل فعال به پیش‌فرض رفته
+        new_settings = settings_manager.get_active_settings()
+        self._current_settings = new_settings
+        self._initial_settings = dict(new_settings)
+        self._has_changes = False
+        self._load_settings_into_ui(new_settings)
+        self._refresh_profile_combo()
+        self._update_title()
 
-    def get_settings(self) -> Dict[str, Any]:
-        """دریافت تنظیمات نهایی برای استفاده در main_window"""
-        return self._get_settings_from_ui()
+    # =====================================================
+    # دکمه‌های پایین
+    # =====================================================
 
-    def _save_and_accept(self) -> None:
+    def _apply_and_close(self) -> None:
+        """اعمال تنظیمات و بستن دیالوگ."""
         if self.spin_min_dte.value() >= self.spin_max_dte.value():
-            QMessageBox.warning(
-                self, "خطا", "حداقل روز تا سررسید باید کمتر از حداکثر آن باشد.")
+            QMessageBox.warning(self, "خطا",
+                                "حداقل DTE باید کمتر از حداکثر DTE باشد.")
             self.tab_widget.setCurrentIndex(1)
             return
 
-        new_settings = self._get_settings_from_ui()
+        settings = self._read_settings_from_ui()
 
-        # ذخیره نهایی در config.py (در صورت وجود)
-        if hasattr(config, "update_ui_settings"):
-            config.update_ui_settings(new_settings)
+        # اگر تغییری هست و پروفایل نامگذاری‌شده‌ای فعال است → بازنویسی خودکار
+        active = settings_manager.get_active_profile_name()
+        if self._has_changes and active != _DEFAULT_PROFILE_NAME:
+            settings_manager.save_profile(active, settings)
+        elif self._has_changes and active == _DEFAULT_PROFILE_NAME:
+            # کاربر پیش‌فرض را تغییر داده — باید با نام ذخیره کند
+            reply = QMessageBox.question(
+                self,
+                "ذخیره تغییرات",
+                "شما تنظیمات پیش‌فرض را تغییر داده‌اید.\n"
+                "برای ذخیره، باید یک نام پروفایل انتخاب کنید.\n\n"
+                "آیا می‌خواهید تنظیمات را با نام جدید ذخیره کنید؟",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._save_profile()
+                return  # بعد از ذخیره، کاربر دوباره Ok می‌زند
+            # اگر No: بدون ذخیره، فقط signal ارسال می‌کنیم
 
-        self.settings = new_settings
-        self.settings_saved.emit(self.settings)
-        logger.info("💾 Settings saved successfully")
+        self.settings_saved.emit(settings)
+        logger.info(f"تنظیمات اعمال شد — پروفایل: '{settings_manager.get_active_profile_name()}'")
         self.accept()
+
+    def _discard_changes(self) -> None:
+        """لغو تغییرات و بازگشت به آنچه هنگام باز شدن دیالوگ بود."""
+        self._has_changes = False
+        self._load_settings_into_ui(self._initial_settings)
+        self._update_title()
+
+    def _restore_factory_defaults(self) -> None:
+        """بازگشت کامل به مقادیر config.py (بدون حذف پروفایل‌های ذخیره‌شده)."""
+        reply = QMessageBox.question(
+            self,
+            "بازگشت به پیش‌فرض",
+            "تنظیمات به مقادیر اولیه config.py بازگردانده می‌شود.\n"
+            "پروفایل‌های ذخیره‌شده شما حذف نخواهند شد.\n\n"
+            "ادامه می‌دهید؟",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        settings_manager.restore_defaults()
+        defaults = settings_manager.get_defaults()
+        self._current_settings = defaults
+        self._initial_settings = dict(defaults)
+        self._has_changes = False
+        self._load_settings_into_ui(defaults)
+        self._refresh_profile_combo()
+        self._update_title()
+        logger.info("تنظیمات به پیش‌فرض config.py بازگردانده شد.")
+
+    def _browse_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "انتخاب پوشه خروجی", self.txt_export_dir.text()
+        )
+        if path:
+            self.txt_export_dir.setText(path)
+
+    # =====================================================
+    # API عمومی برای main_window
+    # =====================================================
+
+    def get_settings(self) -> Dict[str, Any]:
+        """تنظیمات نهایی پس از بستن دیالوگ."""
+        return self._read_settings_from_ui()

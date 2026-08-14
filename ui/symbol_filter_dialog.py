@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
+from ui.settings_manager import settings_manager
+
 logger = logging.getLogger("OptionScanner.UI.SymbolFilter")
 
 
@@ -50,20 +52,26 @@ class SymbolFilterDialog(QDialog):
         self.setMinimumSize(520, 620)
         self.setLayoutDirection(Qt.RightToLeft)
 
-        # داده‌ها
+        # نمادهای موجود
         self.available_symbols: List[str] = available_symbols or []
-        self.excluded_symbols: Set[str] = set(currently_excluded or [])
-        self._initial_excluded: Set[str] = set(currently_excluded or [])  # ثبت حالت اولیه برای Reset
-        self.symbol_categories: Dict[str, List[str]] = symbol_categories or {}
         
-        # حافظه موقت برای جستجو
+        # نمادهای بلاک‌شده: اول از settings_manager، اگر خالی بود از پارامتر
+        persisted = settings_manager.get_excluded_symbols()
+        initial = persisted if persisted else (currently_excluded or [])
+        
+        self.excluded_symbols: Set[str] = set(initial)
+        self._initial_excluded: Set[str] = set(initial)
+        self.symbol_categories: Dict[str, List[str]] = symbol_categories or {}
         self._current_search_text = ""
 
         self._init_ui()
         self._populate_list()
         self._update_stats()
         
-        logger.info(f"✅ SymbolFilterDialog initialized: {len(self.available_symbols)} total, {len(self.excluded_symbols)} excluded")
+        logger.info(
+            f"SymbolFilterDialog باز شد: {len(self.available_symbols)} نماد موجود، "
+            f"{len(self.excluded_symbols)} نماد بلاک‌شده"
+        )
 
     def _init_ui(self) -> None:
         """راه‌اندازی رابط کاربری"""
@@ -478,9 +486,13 @@ class SymbolFilterDialog(QDialog):
         logger.info("↩️ Reset to initial state")
 
     def _save_and_accept(self) -> None:
-        """ذخیره و ارسال سیگنال خروجی"""
+        """ذخیره در settings_manager و ارسال سیگنال"""
         final_list = sorted(list(self.excluded_symbols))
-        logger.info(f"💾 Excluded symbols updated: {len(final_list)} symbols blocked.")
+        
+        # ذخیره دائمی در user_settings.json
+        settings_manager.set_excluded_symbols(final_list)
+        
+        logger.info(f"💾 نمادهای بلاک‌شده ذخیره شد: {len(final_list)} نماد")
         
         self.symbols_updated.emit(final_list)
         if self.symbol_categories:

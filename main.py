@@ -196,7 +196,7 @@ class OptionScanner:
             logger.warning(f"⚠️ Failed to save to database: {e}")
 
     def _load_user_filters(self) -> None:
-        filters_path = config.DATA_DIR / "user_filters.json"
+        filters_path = config.BASE_DIR / "user_filters.json"
         if filters_path.exists():
             try:
                 with open(filters_path, 'r', encoding='utf-8') as f:
@@ -206,7 +206,7 @@ class OptionScanner:
 
     def update_user_filters(self, new_filters: Dict[str, Any]) -> None:
         self._user_filters.update(new_filters)
-        filters_path = config.DATA_DIR / "user_filters.json"
+        filters_path = config.BASE_DIR / "user_filters.json"
         try:
             with open(filters_path, 'w', encoding='utf-8') as f:
                 json.dump(self._user_filters, f, indent=4, ensure_ascii=False)
@@ -402,6 +402,8 @@ class OptionScanner:
         force_refresh: bool
     ) -> Tuple[List[Any], float]:
         
+        from ui.settings_manager import settings_manager
+
         start_time = time.time()
 
         update_progress(10, "🔍 دریافت اطلاعات بازار...")
@@ -415,6 +417,30 @@ class OptionScanner:
 
         if is_stopped() or not snapshot or not getattr(snapshot, 'option_contracts', None):
             return [], 0.0
+
+        # ── فیلتر نمادهای بلاک‌شده توسط کاربر ──────────────────────
+        excluded = set(settings_manager.get_excluded_symbols())
+        if excluded:
+            before_contracts = len(snapshot.option_contracts)
+            before_underlyings = len(snapshot.underlying_assets)
+
+            # حذف از قراردادهای اختیار
+            snapshot.option_contracts = [
+                c for c in snapshot.option_contracts
+                if getattr(c, 'underlying_ticker', '') not in excluded
+            ]
+            # حذف از دارایی‌های پایه — این کلید است که scanner loop نزند
+            for sym in excluded:
+                snapshot.underlying_assets.pop(sym, None)
+
+            snapshot.build_indices()
+
+            logger.info(
+                f"🚫 نمادهای بلاک‌شده: {excluded} — "
+                f"قراردادها: {before_contracts}→{len(snapshot.option_contracts)} | "
+                f"نمادهای پایه: {before_underlyings}→{len(snapshot.underlying_assets)}"
+            )
+        # ─────────────────────────────────────────────────────────────
 
         update_progress(30, f"📊 تحلیل {len(snapshot.option_contracts)} قرارداد...")
         engine = ScannerEngine(snapshot=snapshot)

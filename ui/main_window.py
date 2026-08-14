@@ -17,6 +17,7 @@ from PySide6.QtGui import QColor, QBrush, QFont
 from ui.workers import ScannerWorker, AutoScannerWorker
 from ui.symbol_filter_dialog import SymbolFilterDialog
 from ui.settings_dialog import SettingsDialog
+from ui.settings_manager import settings_manager
 
 # دریافت تنظیمات از config
 import config
@@ -48,7 +49,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         
         self.scanner_engine = scanner_engine
-        self.config = config_dict or {}
+        # تنظیمات از settings_manager (پروفایل فعال) + هر override اضافی
+        self.config = settings_manager.get_active_settings()
+        if config_dict:
+            self.config.update(config_dict)
         
         # دریافت تنظیمات بازه درصدی قیمت از config.py
         self.price_range_config = self.config.get(
@@ -399,15 +403,29 @@ class MainWindow(QMainWindow):
 
     def on_scan_finished(self, results):
         """پس از پایان موفقیت‌آمیز اسکن"""
-        self.current_results = results or []
+        all_results = results or []
+
+        # فیلتر نمادهای بلاک‌شده از نتایج نهایی
+        excluded = set(settings_manager.get_excluded_symbols())
+        if excluded:
+            before = len(all_results)
+            all_results = [
+                opp for opp in all_results
+                if getattr(opp, 'underlying_ticker', '') not in excluded
+            ]
+            removed = before - len(all_results)
+            if removed:
+                logger.info(f"🚫 {removed} استراتژی به دلیل نمادهای بلاک‌شده حذف شد: {excluded}")
+
+        self.current_results = all_results
         self._set_controls_enabled(True)
         self.progress_bar.setVisible(False)
-        
+
         count = len(self.current_results)
         self.status_update_signal.emit(f"✅ اسکن با موفقیت انجام شد - {count} استراتژی یافت شد")
         self.populate_table(self.current_results)
         self._update_stats()
-        
+
         logger.info(f"اسکن کامل شد - {count} نتیجه")
 
     def on_scan_failed(self, error_msg):
@@ -430,7 +448,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFormat(f"{percent}% - {status}")
 
     def populate_table(self, results: List):
-        """پر کردن جدول بر اساس ساختار ستون‌های جدید"""
+        """پر کردن جدول — سطرهای مرتبط با نمادهای بلاک‌شده نمایش داده نمی‌شوند"""
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
 
@@ -438,9 +456,37 @@ class MainWindow(QMainWindow):
             self._show_empty_state()
             return
 
-        for row_idx, strat in enumerate(results):
+        excluded = set(settings_manager.get_excluded_symbols())
+
+        row_idx = 0
+        for strat in results:
+            # بررسی: اگر هر لگ نماد پایه باشد و آن نماد در استثناهاست → رد کن
+            if excluded:
+                legs = getattr(strat, 'legs', [])
+                blocked = False
+                for leg in legs:
+                    contract = getattr(leg, 'contract', None)
+                    if contract is None:
+                        continue
+                    from core.enums import OptionType
+                    if getattr(contract, 'option_type', None) == OptionType.STOCK:
+                        if getattr(contract, 'ticker', '') in excluded:
+                            blocked = True
+                            break
+                    # بررسی از طریق underlying_ticker نیز
+                    if getattr(contract, 'underlying_ticker', '') in excluded:
+                        blocked = True
+                        break
+                if not blocked:
+                    # بررسی از طریق underlying_ticker خود Opportunity
+                    if getattr(strat, 'underlying_ticker', '') in excluded:
+                        blocked = True
+                if blocked:
+                    continue
+
             self.table.insertRow(row_idx)
             self._populate_row(row_idx, strat)
+            row_idx += 1
 
         self.table.setSortingEnabled(True)
         self._update_stats()
@@ -627,18 +673,13 @@ class MainWindow(QMainWindow):
         try:
             import config as cfg
             available = list(cfg.SYMBOL_INFO.keys()) if hasattr(cfg, 'SYMBOL_INFO') else []
-            currently_excluded = self.config.get('excluded_symbols', [])
             
             dialog = SymbolFilterDialog(
                 available_symbols=available,
-                currently_excluded=currently_excluded,
                 parent=self
             )
-            dialog.symbols_updated.connect(
-                lambda syms: self.config.update({'excluded_symbols': syms})
-            )
+            dialog.symbols_updated.connect(self._on_excluded_symbols_changed)
             dialog.exec()
-            logger.info("فیلتر نمادها به‌روزرسانی شد")
         except Exception as e:
             logger.warning(f"عدم امکان باز کردن SymbolFilterDialog: {e}")
             QMessageBox.information(
@@ -647,32 +688,32 @@ class MainWindow(QMainWindow):
                 "ماژول فیلتر نمادها در حال توسعه است.\nبه زودی اضافه خواهد شد."
             )
 
+    def _on_excluded_symbols_changed(self, excluded: list):
+        """بعد از ذخیره فیلتر نمادها — اعلام به اسکنر"""
+        self.config['excluded_symbols'] = excluded
+        count = len(excluded)
+        msg = f"🚫 {count} نماد بلاک شد" if count else "✅ هیچ نمادی بلاک نیست"
+        self.status_update_signal.emit(msg)
+        logger.info(f"نمادهای بلاک‌شده به‌روز شد: {excluded}")
+
     def open_settings_dialog(self):
         """باز کردن پنجره تنظیمات سیستم"""
         try:
-            dialog = SettingsDialog(self.config, self)
-            if dialog.exec():
-                new_config = dialog.get_settings()
-                self.config.update(new_config)
-                # در صورت تغییر تنظیمات بازه درصدی، ستون‌های جدول مجدداً تنظیم می‌شوند
-                if 'price_range' in new_config:
-                    self.price_range_config = new_config['price_range']
-                    # بازسازی جدول در layout (جایگزین کردن widget قدیمی)
-                    central = self.centralWidget()
-                    layout = central.layout()
-                    old_table = self.table
-                    self.table = self._create_table()
-                    layout.replaceWidget(old_table, self.table)
-                    old_table.deleteLater()
-                    self._show_empty_state()
-                logger.info("تنظیمات سیستم به‌روزرسانی شد")
+            dialog = SettingsDialog(self)
+            dialog.settings_saved.connect(self._on_settings_saved)
+            dialog.exec()
         except Exception as e:
             logger.warning(f"عدم امکان باز کردن SettingsDialog: {e}")
             QMessageBox.information(
-                self, 
-                "اطلاعات", 
+                self,
+                "اطلاعات",
                 "ماژول تنظیمات سیستم در حال توسعه است.\nبه زودی اضافه خواهد شد."
             )
+
+    def _on_settings_saved(self, new_settings: dict):
+        """اعمال تنظیمات جدید پس از بستن SettingsDialog"""
+        self.config.update(new_settings)
+        logger.info("تنظیمات سیستم به‌روزرسانی شد")
 
     def send_selected_to_broker(self):
         """ارسال استراتژی‌های تیک‌شده به کارگزاری"""
