@@ -845,6 +845,8 @@ class MainWindow(QMainWindow):
         self._bale_notifier.send_scan_results(selected_opps, top_n=len(selected_opps))
         self.status_update_signal.emit(f"📱 ارسال {len(selected_opps)} استراتژی به بله آغاز شد...")
         logger.info(f"ارسال دستی {len(selected_opps)} استراتژی به بله")
+
+    def clear_results(self):
         """پاک کردن نتایج جدول"""
         if self.table.rowCount() > 0:
             reply = QMessageBox.question(
