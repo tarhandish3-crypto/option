@@ -18,10 +18,6 @@ import requests
 
 logger = logging.getLogger("OptionScanner.Alerts.Bale")
 
-# آدرس پایه API بله
-_BALE_API_BASE = "https://tapi.bale.ai"
-
-
 def send_message_to_bale(bot_token: str, chat_id: str, message_text: str) -> Optional[dict]:
     """
     ارسال پیام متنی به ربات بله.
@@ -34,7 +30,7 @@ def send_message_to_bale(bot_token: str, chat_id: str, message_text: str) -> Opt
     Returns:
         dict پاسخ API در صورت موفقیت، None در صورت خطا
     """
-    url = f"{_BALE_API_BASE}/{bot_token}/sendMessage"
+    url = f'https://tapi.bale.ai/bot{bot_token}/sendMessage'
     payload = {"chat_id": chat_id, "text": message_text}
     headers = {"Content-Type": "application/json"}
 

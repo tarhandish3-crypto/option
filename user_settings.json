@@ -1,9 +1,9 @@
 {
-    "active_profile": "پیش‌فرض",
+    "active_profile": "mehdi",
     "profiles": {
         "mehdi": {
-            "api_timeout": 34,
-            "api_max_retries": 2,
+            "api_timeout": 30,
+            "api_max_retries": 3,
             "request_delay_ms": 5000,
             "risk_free_rate": 0.24,
             "min_open_interest": 50,
@@ -14,12 +14,18 @@
             "theme": "روشن (Light)",
             "log_level": "INFO",
             "auto_refresh_enabled": false,
-            "auto_refresh_interval_sec": 60,
+            "auto_refresh_interval_sec": 120,
             "export_dir": "F:\\python_project\\boors\\Ekhtiyar\\generate_strategyV4\\output",
             "enable_parallel_processing": false,
-            "max_parallel_workers": 2,
+            "max_parallel_workers": 3,
             "cache_enabled": true,
-            "cache_ttl_seconds": 6
+            "cache_ttl_seconds": 6,
+            "bale_enabled": false,
+            "bale_bot_token": "2144104837",
+            "bale_chat_id": "@Option_Mehdi",
+            "bale_top_n": 3,
+            "broker_username": "",
+            "broker_password": ""
         }
     },
     "excluded_symbols": [
