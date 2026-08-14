@@ -76,6 +76,10 @@ def _build_defaults_from_config() -> Dict[str, Any]:
         "bale_chat_id":   "",
         "bale_top_n":     2,
 
+        # کارگزاری اومکس
+        "broker_username": "",
+        "broker_password": "",
+
         # نمادهای بلاک‌شده (پیش‌فرض: هیچ‌کدام)
         "excluded_symbols": [],
     }
@@ -300,6 +304,14 @@ class SettingsManager:
             "chat_id":   s.get("bale_chat_id", ""),
             "top_n":     s.get("bale_top_n", 2),
             "enabled":   s.get("bale_enabled", False),
+        }
+
+    def get_broker_config(self) -> Dict[str, Any]:
+        """دریافت تنظیمات کارگزاری از پروفایل فعال."""
+        s = self.get_active_settings()
+        return {
+            "username": s.get("broker_username", ""),
+            "password": s.get("broker_password", ""),
         }
 
     def save_bale_config(self, bot_token: str, chat_id: str,

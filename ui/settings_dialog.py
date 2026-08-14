@@ -108,6 +108,7 @@ class SettingsDialog(QDialog):
         self.tab_widget.addTab(self._create_general_tab(),  "⚙️ عمومی")
         self.tab_widget.addTab(self._create_advanced_tab(), "🔧 پیشرفته")
         self.tab_widget.addTab(self._create_bale_tab(),     "📣 اعلان بله")
+        self.tab_widget.addTab(self._create_broker_tab(),   "🏦 کارگزاری")
         self.tab_widget.addTab(self._create_preview_tab(),  "📋 پیش‌نمایش")
         main_layout.addWidget(self.tab_widget)
 
@@ -340,6 +341,43 @@ class SettingsDialog(QDialog):
         else:
             QMessageBox.critical(self, "خطا", "❌ ارسال پیام ناموفق بود.\nتوکن و Chat ID را بررسی کنید.")
 
+    def _create_broker_tab(self) -> QWidget:
+        """تب تنظیمات کارگزاری اومکس خبرگان"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+
+        # لیبل توضیحی
+        lbl_info = QLabel(
+            "این اطلاعات برای ورود خودکار به سامانه خبرگان کارگزاری اومکس استفاده می‌شود.\n"
+            "اطلاعات به صورت رمزشده در فایل تنظیمات محلی ذخیره می‌شوند."
+        )
+        lbl_info.setWordWrap(True)
+        lbl_info.setStyleSheet(
+            "background:#fff3cd; border:1px solid #ffc107; border-radius:6px;"
+            " padding:10px; color:#856404;"
+        )
+        layout.addWidget(lbl_info)
+
+        grp = QGroupBox("🏦 اطلاعات ورود به سامانه خبرگان کارگزاری اومکس")
+        form = QFormLayout(grp)
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.txt_broker_username = QLineEdit()
+        self.txt_broker_username.setPlaceholderText("نام کاربری")
+        self.txt_broker_username.textChanged.connect(self._on_changed)
+        form.addRow("👤 نام کاربری:", self.txt_broker_username)
+
+        self.txt_broker_password = QLineEdit()
+        self.txt_broker_password.setPlaceholderText("رمز عبور")
+        self.txt_broker_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txt_broker_password.textChanged.connect(self._on_changed)
+        form.addRow("🔒 رمز عبور:", self.txt_broker_password)
+
+        layout.addWidget(grp)
+        layout.addStretch()
+        return w
+
     def _create_preview_tab(self) -> QWidget:
         w = QWidget(); layout = QVBoxLayout(w)
         self.preview_text = QTextEdit()
@@ -393,6 +431,10 @@ class SettingsDialog(QDialog):
         self.txt_bale_chat_id.setText(s.get("bale_chat_id", ""))
         self.spin_bale_top_n.setValue(s.get("bale_top_n", 2))
 
+        # Broker
+        self.txt_broker_username.setText(s.get("broker_username", ""))
+        self.txt_broker_password.setText(s.get("broker_password", ""))
+
     def _read_settings_from_ui(self) -> Dict[str, Any]:
         """خواندن مقادیر فعلی ویجت‌ها."""
         return {
@@ -419,6 +461,9 @@ class SettingsDialog(QDialog):
             "bale_bot_token":           self.txt_bale_token.text().strip(),
             "bale_chat_id":             self.txt_bale_chat_id.text().strip(),
             "bale_top_n":               self.spin_bale_top_n.value(),
+            # Broker
+            "broker_username":          self.txt_broker_username.text().strip(),
+            "broker_password":          self.txt_broker_password.text(),
         }
 
     # =====================================================

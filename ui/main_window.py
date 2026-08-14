@@ -925,7 +925,7 @@ class MainWindow(QMainWindow):
         # ساخت broker با تنظیمات فعلی
         try:
             from automation.brokers.Omex_khobregan import OmexKhobreganBroker
-            broker_cfg = self.config.get('broker', {})
+            broker_cfg = settings_manager.get_broker_config()
             self._broker = OmexKhobreganBroker(
                 username=broker_cfg.get('username', ''),
                 password=broker_cfg.get('password', ''),
