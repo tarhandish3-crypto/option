@@ -107,6 +107,7 @@ class SettingsDialog(QDialog):
         self.tab_widget.addTab(self._create_scanner_tab(),  "📊 اسکنر")
         self.tab_widget.addTab(self._create_general_tab(),  "⚙️ عمومی")
         self.tab_widget.addTab(self._create_advanced_tab(), "🔧 پیشرفته")
+        self.tab_widget.addTab(self._create_bale_tab(),     "📣 اعلان بله")
         self.tab_widget.addTab(self._create_preview_tab(),  "📋 پیش‌نمایش")
         main_layout.addWidget(self.tab_widget)
 
@@ -278,6 +279,67 @@ class SettingsDialog(QDialog):
         layout.addWidget(grp); layout.addStretch()
         return w
 
+    def _create_bale_tab(self) -> QWidget:
+        """تب تنظیمات پیام‌رسان بله"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+
+        grp = QGroupBox("📣 ارسال نتایج اسکن به پیام‌رسان بله")
+        form = QFormLayout(grp)
+        form.setSpacing(12)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self.chk_bale_enabled = QCheckBox("فعال‌سازی ارسال اعلان به بله")
+        self.chk_bale_enabled.stateChanged.connect(self._on_changed)
+        form.addRow(self.chk_bale_enabled)
+
+        self.txt_bale_token = QLineEdit()
+        self.txt_bale_token.setPlaceholderText("0000000000:xxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+        self.txt_bale_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.txt_bale_token.textChanged.connect(self._on_changed)
+        form.addRow("🔑 توکن ربات:", self.txt_bale_token)
+
+        self.txt_bale_chat_id = QLineEdit()
+        self.txt_bale_chat_id.setPlaceholderText("@channel_name یا عدد chat_id")
+        self.txt_bale_chat_id.textChanged.connect(self._on_changed)
+        form.addRow("💬 Chat ID:", self.txt_bale_chat_id)
+
+        self.spin_bale_top_n = QSpinBox()
+        self.spin_bale_top_n.setRange(1, 10)
+        self.spin_bale_top_n.setValue(2)
+        self.spin_bale_top_n.setSuffix(" سطر اول")
+        self.spin_bale_top_n.valueChanged.connect(self._on_changed)
+        form.addRow("📊 تعداد نتایج:", self.spin_bale_top_n)
+
+        # دکمه تست
+        self.btn_test_bale = QPushButton("🧪 ارسال پیام تست")
+        self.btn_test_bale.clicked.connect(self._test_bale)
+        self.btn_test_bale.setStyleSheet(
+            "background-color: #2980b9; color: white; font-weight: bold;"
+        )
+        form.addRow(self.btn_test_bale)
+
+        layout.addWidget(grp)
+        layout.addStretch()
+        return w
+
+    def _test_bale(self) -> None:
+        """ارسال پیام تست به بله"""
+        from alerts.bale_notifier import send_message_to_bale
+        token = self.txt_bale_token.text().strip()
+        chat_id = self.txt_bale_chat_id.text().strip()
+        if not token or not chat_id:
+            QMessageBox.warning(self, "هشدار", "توکن و Chat ID را وارد کنید.")
+            return
+        result = send_message_to_bale(
+            token, chat_id,
+            "✅ پیام تست از اسکنر اختیار معامله — اتصال برقرار است."
+        )
+        if result:
+            QMessageBox.information(self, "موفق", "✅ پیام تست با موفقیت ارسال شد.")
+        else:
+            QMessageBox.critical(self, "خطا", "❌ ارسال پیام ناموفق بود.\nتوکن و Chat ID را بررسی کنید.")
+
     def _create_preview_tab(self) -> QWidget:
         w = QWidget(); layout = QVBoxLayout(w)
         self.preview_text = QTextEdit()
@@ -325,6 +387,12 @@ class SettingsDialog(QDialog):
         self.chk_cache.setChecked(s.get("cache_enabled", True))
         self.spin_cache_ttl.setValue(s.get("cache_ttl_seconds", 6))
 
+        # Bale
+        self.chk_bale_enabled.setChecked(s.get("bale_enabled", False))
+        self.txt_bale_token.setText(s.get("bale_bot_token", ""))
+        self.txt_bale_chat_id.setText(s.get("bale_chat_id", ""))
+        self.spin_bale_top_n.setValue(s.get("bale_top_n", 2))
+
     def _read_settings_from_ui(self) -> Dict[str, Any]:
         """خواندن مقادیر فعلی ویجت‌ها."""
         return {
@@ -346,6 +414,11 @@ class SettingsDialog(QDialog):
             "max_parallel_workers":     self.spin_max_workers.value(),
             "cache_enabled":            self.chk_cache.isChecked(),
             "cache_ttl_seconds":        self.spin_cache_ttl.value(),
+            # Bale
+            "bale_enabled":             self.chk_bale_enabled.isChecked(),
+            "bale_bot_token":           self.txt_bale_token.text().strip(),
+            "bale_chat_id":             self.txt_bale_chat_id.text().strip(),
+            "bale_top_n":               self.spin_bale_top_n.value(),
         }
 
     # =====================================================

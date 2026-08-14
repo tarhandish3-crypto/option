@@ -70,6 +70,12 @@ def _build_defaults_from_config() -> Dict[str, Any]:
         "cache_enabled":              config.CACHE_ENABLED,
         "cache_ttl_seconds":          config.CACHE_TTL_SECONDS,
 
+        # پیام‌رسان بله
+        "bale_enabled":   False,
+        "bale_bot_token": "",
+        "bale_chat_id":   "",
+        "bale_top_n":     2,
+
         # نمادهای بلاک‌شده (پیش‌فرض: هیچ‌کدام)
         "excluded_symbols": [],
     }
@@ -281,6 +287,40 @@ class SettingsManager:
         self._excluded_symbols = sorted(set(symbols))
         self._save()
         logger.info(f"🚫 نمادهای بلاک‌شده به‌روز شد: {len(self._excluded_symbols)} نماد")
+
+    # =====================================================
+    # تنظیمات بله (Bale Notifier)
+    # =====================================================
+
+    def get_bale_config(self) -> Dict[str, Any]:
+        """دریافت تنظیمات بله از پروفایل فعال."""
+        s = self.get_active_settings()
+        return {
+            "bot_token": s.get("bale_bot_token", ""),
+            "chat_id":   s.get("bale_chat_id", ""),
+            "top_n":     s.get("bale_top_n", 2),
+            "enabled":   s.get("bale_enabled", False),
+        }
+
+    def save_bale_config(self, bot_token: str, chat_id: str,
+                         top_n: int = 2, enabled: bool = True) -> None:
+        """ذخیره تنظیمات بله در پروفایل فعال."""
+        active = self._active_profile
+        if active == _DEFAULT_PROFILE_NAME:
+            # ایجاد پروفایل «بله-تنظیمات» اگر پروفایل فعال پیش‌فرض است
+            active = "bale-config"
+
+        current = self._profiles.get(active, {})
+        current.update({
+            "bale_bot_token": bot_token.strip(),
+            "bale_chat_id":   chat_id.strip(),
+            "bale_top_n":     top_n,
+            "bale_enabled":   enabled,
+        })
+        self._profiles[active] = current
+        self._active_profile = active
+        self._save()
+        logger.info(f"📱 تنظیمات بله ذخیره شد — پروفایل: '{active}'")
 
 
 # =====================================================

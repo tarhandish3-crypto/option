@@ -18,6 +18,7 @@ from ui.workers import ScannerWorker, AutoScannerWorker
 from ui.symbol_filter_dialog import SymbolFilterDialog
 from ui.settings_dialog import SettingsDialog
 from ui.settings_manager import settings_manager
+from alerts.bale_notifier import BaleNotifier
 
 # دریافت تنظیمات از config
 import config
@@ -75,7 +76,16 @@ class MainWindow(QMainWindow):
         # تنظیم تایمر برای اسکن دوره‌ای
         self.auto_scan_timer = QTimer(self)
         self.auto_scan_timer.timeout.connect(self.start_scan)
-        
+
+        # ۳. راه‌اندازی notifier بله (تنظیمات از settings_manager خوانده می‌شود)
+        bale_cfg = settings_manager.get_bale_config()
+        self._bale_notifier = BaleNotifier(
+            bot_token=bale_cfg.get("bot_token", ""),
+            chat_id=bale_cfg.get("chat_id", ""),
+        )
+        self._bale_enabled = bale_cfg.get("enabled", False)
+        self._bale_top_n   = bale_cfg.get("top_n", 2)
+
         self.load_settings()
         
         # نمایش پیام خوش‌آمدگویی
@@ -313,30 +323,35 @@ class MainWindow(QMainWindow):
         table.setSortingEnabled(True)
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         
         # کلیک روی header checkbox برای انتخاب/لغو همه
         header.sectionClicked.connect(self._on_header_clicked)
+        # تک‌انتخابی: وقتی checkbox‌ای تیک خورد، بقیه پاک شوند
+        table.itemChanged.connect(self._on_checkbox_changed)
         
         return table
 
     def _on_header_clicked(self, col: int):
-        """کلیک روی ستون ✓ → toggle همه checkbox ها"""
-        if col != 0:
+        """کلیک روی ستون ✓ → چون تک‌انتخابی است، header click کاری نمی‌کند"""
+        pass
+
+    def _on_checkbox_changed(self, item: QTableWidgetItem):
+        """تک‌انتخابی: وقتی یک checkbox تیک خورد، بقیه را پاک کن"""
+        if item.column() != 0:
             return
-        # بررسی وضعیت فعلی: اگر همه تیک دارند، همه را بردار
-        all_checked = all(
-            self.table.item(r, 0) and
-            self.table.item(r, 0).checkState() == Qt.CheckState.Checked
-            for r in range(self.table.rowCount())
-            if self.table.item(r, 0)
-        )
-        new_state = Qt.CheckState.Unchecked if all_checked else Qt.CheckState.Checked
+        if item.checkState() != Qt.CheckState.Checked:
+            self._update_stats()
+            return
+
+        # پاک کردن همه checkboxهای دیگر
         self.table.blockSignals(True)
         for r in range(self.table.rowCount()):
-            item = self.table.item(r, 0)
-            if item:
-                item.setCheckState(new_state)
+            if r == item.row():
+                continue
+            chk = self.table.item(r, 0)
+            if chk and chk.checkState() == Qt.CheckState.Checked:
+                chk.setCheckState(Qt.CheckState.Unchecked)
         self.table.blockSignals(False)
         self._update_stats()
 
@@ -363,6 +378,16 @@ class MainWindow(QMainWindow):
         self.btn_send_to_broker.clicked.connect(self.send_selected_to_broker)
         layout.addWidget(self.btn_send_to_broker)
 
+        self.btn_send_to_bale = QPushButton("📱 ارسال انتخابی به بله")
+        self.btn_send_to_bale.setObjectName("btn_send_bale")
+        self.btn_send_to_bale.setStyleSheet(
+            "QPushButton#btn_send_bale { background-color: #7b2d8b; }"
+            "QPushButton#btn_send_bale:hover { background-color: #5e2070; }"
+            "QPushButton#btn_send_bale:disabled { background-color: #b8c4d0; color: #7a8a9a; }"
+        )
+        self.btn_send_to_bale.clicked.connect(self.send_selected_to_bale)
+        layout.addWidget(self.btn_send_to_bale)
+
         self.btn_clear = QPushButton("🗑️ پاک کردن نتایج")
         self.btn_clear.clicked.connect(self.clear_results)
         layout.addWidget(self.btn_clear)
@@ -380,11 +405,19 @@ class MainWindow(QMainWindow):
     # ==================== متدهای اجرایی ====================
 
     def start_scan(self):
-        """شروع اسکن در ورکر پس‌زمینه"""
-        if self.worker and self.worker.isRunning():
-            logger.warning("اسکن در حال اجراست، درخواست جدید رد شد")
-            self.status_update_signal.emit("⏳ اسکن در حال انجام است...")
-            return
+        """شروع اسکن دستی — جدول پاک شده و اسکن جدید شروع می‌شود"""
+        # اگر worker در حال اجراست، آن را متوقف کن و worker جدید بساز
+        if self.worker is not None:
+            if self.worker.isRunning():
+                self.worker.stop()
+                self.worker.wait(2000)
+            self.worker = None
+
+        # پاک‌سازی نتایج قبلی
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(0)
+        self.current_results = []
+        self._show_empty_state()
 
         self._set_controls_enabled(False)
         self.progress_bar.setVisible(True)
@@ -396,10 +429,20 @@ class MainWindow(QMainWindow):
         self.worker.scan_failed.connect(self.on_scan_failed)
         self.worker.progress_updated.connect(self.on_progress_updated)
         self.worker.status_changed.connect(self.status_update_signal.emit)
-        self.worker.finished.connect(self.worker.deleteLater)
+        # finished همیشه اجرا می‌شود — کنترل‌ها را فعال و worker را پاک می‌کند
+        self.worker.finished.connect(self._on_worker_finished)
         self.worker.start()
 
-        logger.info("اسکن شروع شد")
+        logger.info("اسکن دستی شروع شد")
+
+    def _on_worker_finished(self):
+        """همیشه بعد از پایان worker — چه موفق چه ناموفق — اجرا می‌شود"""
+        self._set_controls_enabled(True)
+        self.progress_bar.setVisible(False)
+        # پاک‌سازی reference برای اسکن بعدی
+        if self.worker:
+            self.worker.deleteLater()
+            self.worker = None
 
     def on_scan_finished(self, results):
         """پس از پایان موفقیت‌آمیز اسکن"""
@@ -413,33 +456,30 @@ class MainWindow(QMainWindow):
                 opp for opp in all_results
                 if getattr(opp, 'underlying_ticker', '') not in excluded
             ]
-            removed = before - len(all_results)
-            if removed:
-                logger.info(f"🚫 {removed} استراتژی به دلیل نمادهای بلاک‌شده حذف شد: {excluded}")
+            if before - len(all_results):
+                logger.info(f"🚫 {before - len(all_results)} استراتژی بلاک‌شده حذف شد")
 
         self.current_results = all_results
-        self._set_controls_enabled(True)
-        self.progress_bar.setVisible(False)
+        # کنترل‌ها در _on_worker_finished فعال می‌شوند
 
         count = len(self.current_results)
         self.status_update_signal.emit(f"✅ اسکن با موفقیت انجام شد - {count} استراتژی یافت شد")
         self.populate_table(self.current_results)
         self._update_stats()
-
         logger.info(f"اسکن کامل شد - {count} نتیجه")
+
+        # ارسال نتایج برتر به بله (async — UI بلاک نمی‌شود)
+        self._send_bale_alert(self.current_results)
 
     def on_scan_failed(self, error_msg):
         """در صورت بروز خطا در اسکن"""
-        self._set_controls_enabled(True)
-        self.progress_bar.setVisible(False)
+        # کنترل‌ها در _on_worker_finished فعال می‌شوند
         self.status_update_signal.emit(f"❌ خطا در اسکن: {error_msg}")
-        
         QMessageBox.critical(
-            self, 
-            "خطا در اسکن", 
+            self,
+            "خطا در اسکن",
             f"خطایی در حین اسکن رخ داد:\n\n{error_msg}\n\nلطفاً تنظیمات را بررسی کرده و دوباره تلاش کنید."
         )
-        
         logger.error(f"خطا در اسکن: {error_msg}")
 
     def on_progress_updated(self, percent: int, status: str):
@@ -448,7 +488,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFormat(f"{percent}% - {status}")
 
     def populate_table(self, results: List):
-        """پر کردن جدول — سطرهای مرتبط با نمادهای بلاک‌شده نمایش داده نمی‌شوند"""
+        """پر کردن جدول — سطرهایی که در ستون Positions شامل نماد استثناشده هستند نمایش داده نمی‌شوند"""
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
 
@@ -460,27 +500,20 @@ class MainWindow(QMainWindow):
 
         row_idx = 0
         for strat in results:
-            # بررسی: اگر هر لگ نماد پایه باشد و آن نماد در استثناهاست → رد کن
             if excluded:
+                # ساخت متن Positions دقیقاً مثل _populate_row
                 legs = getattr(strat, 'legs', [])
-                blocked = False
-                for leg in legs:
-                    contract = getattr(leg, 'contract', None)
-                    if contract is None:
-                        continue
-                    from core.enums import OptionType
-                    if getattr(contract, 'option_type', None) == OptionType.STOCK:
-                        if getattr(contract, 'ticker', '') in excluded:
-                            blocked = True
-                            break
-                    # بررسی از طریق underlying_ticker نیز
-                    if getattr(contract, 'underlying_ticker', '') in excluded:
-                        blocked = True
-                        break
-                if not blocked:
-                    # بررسی از طریق underlying_ticker خود Opportunity
-                    if getattr(strat, 'underlying_ticker', '') in excluded:
-                        blocked = True
+                positions_text = ""
+                if legs:
+                    parts = []
+                    for leg in legs:
+                        ticker = leg.contract.ticker if leg.contract else 'Stock'
+                        side = leg.side.value if hasattr(leg.side, 'value') else str(leg.side)
+                        parts.append(f"{ticker} ({leg.ratio}x{side})")
+                    positions_text = " | ".join(parts)
+
+                # بررسی: آیا هر یک از نمادهای استثنا در متن Positions وجود دارد؟
+                blocked = any(sym in positions_text for sym in excluded)
                 if blocked:
                     continue
 
@@ -713,7 +746,25 @@ class MainWindow(QMainWindow):
     def _on_settings_saved(self, new_settings: dict):
         """اعمال تنظیمات جدید پس از بستن SettingsDialog"""
         self.config.update(new_settings)
+
+        # بروزرسانی notifier بله
+        self._bale_enabled = new_settings.get("bale_enabled", False)
+        self._bale_top_n   = new_settings.get("bale_top_n", 2)
+        self._bale_notifier.update_config(
+            bot_token=new_settings.get("bale_bot_token", ""),
+            chat_id=new_settings.get("bale_chat_id", ""),
+        )
         logger.info("تنظیمات سیستم به‌روزرسانی شد")
+
+    def _send_bale_alert(self, opportunities: List) -> None:
+        """ارسال n سطر اول نتایج به پیام‌رسان بله (async)"""
+        if not self._bale_enabled:
+            return
+        if not self._bale_notifier.is_configured:
+            logger.debug("BaleNotifier: توکن یا chat_id تنظیم نشده")
+            return
+        self._bale_notifier.send_scan_results(opportunities, top_n=self._bale_top_n)
+        logger.info(f"📱 ارسال {min(self._bale_top_n, len(opportunities))} نتیجه به بله آغاز شد")
 
     def send_selected_to_broker(self):
         """ارسال استراتژی‌های تیک‌شده به کارگزاری"""
@@ -744,7 +795,56 @@ class MainWindow(QMainWindow):
             logger.info(f"ارسال {len(checked_rows)} استراتژی به کارگزاری")
             QMessageBox.information(self, "موفقیت", "استراتژی‌های انتخابی با موفقیت ارسال شدند.")
 
-    def clear_results(self):
+    def send_selected_to_bale(self):
+        """ارسال سطر انتخاب‌شده به پیام‌رسان بله"""
+        checked_rows = [
+            r for r in range(self.table.rowCount())
+            if self.table.item(r, 0) and
+            self.table.item(r, 0).checkState() == Qt.CheckState.Checked
+        ]
+
+        if not checked_rows:
+            QMessageBox.warning(self, "هشدار", "لطفاً یک سطر را با تیک انتخاب کنید.")
+            return
+
+        if not self._bale_enabled:
+            QMessageBox.warning(
+                self, "بله غیرفعال",
+                "ارسال به بله فعال نیست.\nاز تنظیمات سیستم → تب «اعلان بله» آن را فعال کنید."
+            )
+            return
+
+        if not self._bale_notifier.is_configured:
+            QMessageBox.warning(
+                self, "تنظیمات ناقص",
+                "توکن یا Chat ID ربات بله تنظیم نشده.\nاز تنظیمات سیستم → تب «اعلان بله» آن را تکمیل کنید."
+            )
+            return
+
+        # دریافت آبجکت‌های Opportunity از سطرهای تیک‌شده
+        selected_opps = []
+        for r in checked_rows:
+            item = self.table.item(r, 0)
+            if item:
+                opp = item.data(Qt.ItemDataRole.UserRole + 1)
+                if opp is not None:
+                    selected_opps.append(opp)
+
+        if not selected_opps:
+            # اگر آبجکت ذخیره نشده، از current_results بر اساس ردیف جدول بگیر
+            for r in checked_rows:
+                rank_item = self.table.item(r, 1)
+                if rank_item and r < len(self.current_results):
+                    selected_opps.append(self.current_results[r])
+
+        if not selected_opps:
+            QMessageBox.warning(self, "خطا", "داده استراتژی انتخابی یافت نشد.")
+            return
+
+        # ارسال با همان فرمت استاندارد (top_n=len تا فقط انتخابی‌ها ارسال شوند)
+        self._bale_notifier.send_scan_results(selected_opps, top_n=len(selected_opps))
+        self.status_update_signal.emit(f"📱 ارسال {len(selected_opps)} استراتژی به بله آغاز شد...")
+        logger.info(f"ارسال دستی {len(selected_opps)} استراتژی به بله")
         """پاک کردن نتایج جدول"""
         if self.table.rowCount() > 0:
             reply = QMessageBox.question(
