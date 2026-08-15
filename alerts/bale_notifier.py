@@ -112,7 +112,7 @@ class BaleNotifier:
         lines = [
             "📊 اسکنر اختیار معامله",
             f"🕐 {now}",
-            "─" * 30,
+            "─" * 20,
         ]
 
         for i, opp in enumerate(opportunities, 1):
@@ -137,7 +137,7 @@ class BaleNotifier:
                 f"#{i}  {strategy_name}  [{underlying}]",
                 f"📌 {positions_text}",
                 f"📅 DTE: {dte}  |  🏆 Score: {score:.1f}  |  💰 MaxProfit: {max_profit:,.0f}",
-                "─" * 30,
+                "─" * 20,
             ]
 
         return "\n".join(lines)
