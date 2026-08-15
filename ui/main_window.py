@@ -418,6 +418,15 @@ class MainWindow(QMainWindow):
         self.btn_clear.clicked.connect(self.clear_results)
         layout.addWidget(self.btn_clear)
 
+        self.btn_export_excel = QPushButton("📊 ذخیره نتایج در اکسل")
+        self.btn_export_excel.setStyleSheet(
+            "QPushButton { background-color: #1a6b3a; }"
+            "QPushButton:hover { background-color: #145230; }"
+            "QPushButton:disabled { background-color: #b8c4d0; color: #7a8a9a; }"
+        )
+        self.btn_export_excel.clicked.connect(self.export_results_to_excel)
+        layout.addWidget(self.btn_export_excel)
+
         return toolbar
 
     def load_settings(self):
@@ -1034,6 +1043,79 @@ class MainWindow(QMainWindow):
         self.btn_send_to_broker.setEnabled(False)
         self.status_update_signal.emit("🔌 اتصال به کارگزاری قطع شد")
         logger.info("اتصال به کارگزاری قطع شد")
+
+    def export_results_to_excel(self):
+        """ذخیره نتایج جدول در فایل اکسل یا CSV"""
+        if not self.current_results:
+            QMessageBox.information(self, "اطلاعات", "نتیجه‌ای برای ذخیره وجود ندارد.\nابتدا اسکن را اجرا کنید.")
+            return
+
+        # ساخت نام پیش‌فرض با تاریخ شمسی
+        try:
+            import jdatetime
+            jnow = jdatetime.datetime.now()
+            default_name = f"scan_results_{jnow.strftime('%Y%m%d_%H%M%S')}"
+        except ImportError:
+            from datetime import datetime as _dt
+            default_name = f"scan_results_{_dt.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # پوشه پیش‌فرض
+        import config as cfg
+        default_dir = str(cfg.OUTPUT_DIR)
+
+        from PySide6.QtWidgets import QFileDialog
+        filepath, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "ذخیره نتایج اسکن",
+            f"{default_dir}/{default_name}",
+            "Excel Files (*.xlsx);;CSV Files (*.csv);;All Files (*)"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            import pandas as pd
+
+            # ساخت DataFrame از نتایج جدول
+            rows = []
+            col_count = self.table.columnCount()
+            headers = [self.table.horizontalHeaderItem(c).text()
+                       if self.table.horizontalHeaderItem(c) else f"col{c}"
+                       for c in range(1, col_count)]  # از ستون ۱ (بدون checkbox)
+
+            for r in range(self.table.rowCount()):
+                # رد کردن سطر empty state
+                item_check = self.table.item(r, 1)
+                if item_check and ("برای شروع اسکن" in item_check.text()):
+                    continue
+                row_data = []
+                for c in range(1, col_count):
+                    item = self.table.item(r, c)
+                    row_data.append(item.text() if item else "")
+                rows.append(row_data)
+
+            if not rows:
+                QMessageBox.information(self, "اطلاعات", "جدول خالی است.")
+                return
+
+            df = pd.DataFrame(rows, columns=headers)
+
+            if filepath.endswith(".csv"):
+                df.to_csv(filepath, index=False, encoding="utf-8-sig")
+            else:
+                if not filepath.endswith(".xlsx"):
+                    filepath += ".xlsx"
+                df.to_excel(filepath, index=False, engine="openpyxl")
+
+            self.status_update_signal.emit(f"فایل ذخیره شد: {filepath}")
+            QMessageBox.information(self, "ذخیره شد",
+                                    f"{len(rows)} سطر در فایل زیر ذخیره شد:\n{filepath}")
+            logger.info(f"Results exported to: {filepath}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "خطا", f"خطا در ذخیره فایل:\n{e}")
+            logger.error(f"Export to excel failed: {e}", exc_info=True)
 
     def closeEvent(self, event):
         """هنگام بستن برنامه"""

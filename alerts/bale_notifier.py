@@ -106,38 +106,57 @@ class BaleNotifier:
 
     def _build_message(self, opportunities: List[Any]) -> str:
         """
-        ساخت متن پیام از استراتژی‌های برتر.
+        ساخت متن پیام با فرمت:
+            اسکن بازار
+            ------ در ساعت HH:MM  تاریخ شمسی
+            پیشنهاد covered_call
+            خرید ضستا6049  پریمیوم 565
+            فروش ضستا6050  پریمیوم 388
+            امتیاز 72.5
+            ------------------------------------
         """
-        now = datetime.now().strftime("%Y/%m/%d  %H:%M")
+        try:
+            import jdatetime
+            jnow = jdatetime.datetime.now()
+            date_str = jnow.strftime("%Y/%m/%d")
+            time_str = jnow.strftime("%H:%M")
+        except ImportError:
+            now = datetime.now()
+            date_str = now.strftime("%Y/%m/%d")
+            time_str = now.strftime("%H:%M")
+
         lines = [
-            "📊 اسکنر اختیار معامله",
-            f"🕐 {now}",
-            "─" * 20,
+            "اسکن بازار",
+            f"------ در ساعت {time_str}  {date_str}",
         ]
 
-        for i, opp in enumerate(opportunities, 1):
-            strategy_name = getattr(opp, 'strategy_name', 'N/A')
-            underlying  = getattr(opp, 'underlying_ticker', 'N/A')
-            dte         = getattr(opp, 'days_to_maturity', 0)
-            score       = getattr(opp, 'final_score', 0.0)
-            max_profit  = getattr(opp, 'max_profit', 0.0)
+        sep = "-" * 36
 
-            # ساخت خلاصه Positions از legs
-            legs = getattr(opp, 'legs', [])
-            positions_parts = []
+        for opp in opportunities:
+            strategy_name = getattr(opp, 'strategy_name', 'N/A')
+            score         = getattr(opp, 'final_score', 0.0)
+            legs          = getattr(opp, 'legs', [])
+
+            lines.append(f"پیشنهاد {strategy_name}")
+
             for leg in legs:
                 contract = getattr(leg, 'contract', None)
-                ticker = contract.ticker if contract else 'N/A'
-                side   = leg.side.value if hasattr(leg.side, 'value') else str(leg.side)
-                ratio  = leg.ratio
-                positions_parts.append(f"{ticker} ({ratio}x{side})")
-            positions_text = " | ".join(positions_parts) if positions_parts else "N/A"
+                if contract is None:
+                    continue
 
-            lines += [
-                f"#{i}  {strategy_name}  [{underlying}]",
-                f"📌 {positions_text}",
-                f"📅 DTE: {dte}  |  🏆 Score: {score:.1f}  |  💰 MaxProfit: {max_profit:,.0f}",
-                "─" * 20,
-            ]
+                side_val = leg.side.value if hasattr(leg.side, 'value') else str(leg.side)
+                direction = "خرید" if side_val.upper() in ('BUY', 'LONG') else "فروش"
+
+                ticker = getattr(contract, 'ticker', 'N/A')
+
+                # پریمیوم: entry_price اولویت اول، بعد last_price
+                premium = getattr(leg, 'entry_price', 0.0)
+                if not premium or premium <= 0:
+                    premium = getattr(contract, 'last_price', 0.0)
+
+                lines.append(f"{direction} {ticker}  پریمیوم {int(premium):,}")
+
+            lines.append(f"امتیاز {score:.1f}")
+            lines.append(sep)
 
         return "\n".join(lines)
