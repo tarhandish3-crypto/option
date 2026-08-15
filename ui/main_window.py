@@ -259,12 +259,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._create_separator())
 
         self.chk_auto_scan = QCheckBox("تکرار خودکار هر:")
+        self.chk_auto_scan.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.chk_auto_scan.stateChanged.connect(self.toggle_auto_scan)
         layout.addWidget(self.chk_auto_scan)
 
         self.spin_interval = QSpinBox()
         self.spin_interval.setRange(10, 3600)
-        self.spin_interval.setValue(self.config.get('auto_scan_interval', 120))
+        self.spin_interval.setValue(self.config.get('auto_scan_interval', 60))
         self.spin_interval.setSuffix(" ثانیه")
         self.spin_interval.setSingleStep(10)
         self.spin_interval.valueChanged.connect(self._on_interval_changed)
