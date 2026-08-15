@@ -126,7 +126,7 @@ class DataCleaner:
         """فیلتر سررسید"""
         if 'DaysToMaturity' in df.columns:
             before = len(df)
-            df = df[df['DaysToMaturity'] > min_days]
+            df = df[df['DaysToMaturity'] >= min_days]
             if before - len(df) > 0:
                 logger.debug(
                     f"Removed {before - len(df)} contracts with <= {min_days} days")

@@ -20,15 +20,13 @@
             "max_parallel_workers": 3,
             "cache_enabled": true,
             "cache_ttl_seconds": 6,
-            "bale_enabled": false,
-            "bale_bot_token": "2144104837",
+            "bale_enabled": true,
+            "bale_bot_token": "2144104837:M-1qbeWfXUTducuJS0aV4zu70P8xTr8Jzjk",
             "bale_chat_id": "@Option_Mehdi",
-            "bale_top_n": 3,
+            "bale_top_n": 1,
             "broker_username": "",
             "broker_password": ""
         }
     },
-    "excluded_symbols": [
-        "اهرم"
-    ]
+    "excluded_symbols": []
 }

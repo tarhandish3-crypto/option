@@ -263,12 +263,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.chk_auto_scan)
 
         self.spin_interval = QSpinBox()
-        self.spin_interval.setRange(1, 60)
-        self.spin_interval.setValue(self.config.get('auto_scan_interval', 2))
-        self.spin_interval.setSuffix(" دقیقه")
-        self.spin_interval.setEnabled(False)
+        self.spin_interval.setRange(10, 3600)
+        self.spin_interval.setValue(self.config.get('auto_scan_interval', 120))
+        self.spin_interval.setSuffix(" ثانیه")
+        self.spin_interval.setSingleStep(10)
         self.spin_interval.valueChanged.connect(self._on_interval_changed)
         layout.addWidget(self.spin_interval)
+
+        # نمایش معادل دقیقه
+        self.lbl_interval_min = QLabel()
+        self._update_interval_label(self.spin_interval.value())
+        self.lbl_interval_min.setStyleSheet("color: #666; font-size: 11px;")
+        layout.addWidget(self.lbl_interval_min)
+
+        # فعال‌سازی پیش‌فرض چک‌باکس
+        self.chk_auto_scan.setChecked(True)
 
         layout.addStretch()
 
@@ -412,11 +421,10 @@ class MainWindow(QMainWindow):
 
     def load_settings(self):
         """بارگذاری تنظیمات ذخیره‌شده"""
-        auto_scan_enabled = self.config.get('auto_scan_enabled', False)
-        if auto_scan_enabled:
-            self.chk_auto_scan.setChecked(True)
-            self.spin_interval.setEnabled(True)
-            self.toggle_auto_scan(Qt.CheckState.Checked.value)
+        # چک‌باکس به صورت پیش‌فرض فعال است (در _create_toolbar setChecked(True) شده)
+        # اگر کاربر قبلاً آن را غیرفعال ذخیره کرده باشد، اینجا اعمال می‌شود
+        auto_scan_enabled = self.config.get('auto_scan_enabled', True)
+        self.chk_auto_scan.setChecked(auto_scan_enabled)
 
     # ==================== متدهای اجرایی ====================
 
@@ -698,24 +706,37 @@ class MainWindow(QMainWindow):
         """فعال/غیرفعال‌سازی اسکن دوره‌ای"""
         is_checked = (state == Qt.CheckState.Checked.value or state is True)
         if is_checked:
-            interval = self.spin_interval.value()
-            interval_ms = interval * 60 * 1000
-            self.auto_scan_timer.start(interval_ms)
+            seconds = self.spin_interval.value()
+            self.auto_scan_timer.start(seconds * 1000)
             self.spin_interval.setEnabled(True)
-            self.status_update_signal.emit(f"⏱️ اسکن خودکار هر {interval} دقیقه فعال شد")
-            logger.info(f"Auto-scan enabled - every {interval} minute(s)")
+            mins = seconds / 60
+            self.status_update_signal.emit(f"اسکن خودکار هر {seconds} ثانیه ({mins:.1f} دقیقه) فعال شد")
+            logger.info(f"Auto-scan enabled - every {seconds} second(s)")
         else:
             self.auto_scan_timer.stop()
             self.spin_interval.setEnabled(False)
-            self.status_update_signal.emit("⏹️ اسکن خودکار غیرفعال شد")
+            self.status_update_signal.emit("اسکن خودکار غیرفعال شد")
             logger.info("Auto-scan disabled")
+
+    def _update_interval_label(self, seconds: int) -> None:
+        """نمایش معادل دقیقه در کنار SpinBox"""
+        mins = seconds / 60
+        if mins < 1:
+            text = f"({seconds} ثانیه)"
+        elif mins == int(mins):
+            text = f"({int(mins)} دقیقه)"
+        else:
+            text = f"({mins:.1f} دقیقه)"
+        if hasattr(self, 'lbl_interval_min'):
+            self.lbl_interval_min.setText(text)
 
     def _on_interval_changed(self, value: int):
         """در صورت تغییر بازه زمانی اسکن خودکار"""
+        self._update_interval_label(value)
         if self.chk_auto_scan.isChecked():
-            interval_ms = value * 60 * 1000
-            self.auto_scan_timer.start(interval_ms)
-            self.status_update_signal.emit(f"⏱️ زمان‌بندی اسکن به {value} دقیقه تغییر یافت")
+            self.auto_scan_timer.start(value * 1000)
+            mins = value / 60
+            self.status_update_signal.emit(f"زمان‌بندی اسکن به {value} ثانیه ({mins:.1f} دقیقه) تغییر یافت")
 
     def open_symbol_filter_dialog(self):
         """باز کردن پنجره فیلتر نمادها"""

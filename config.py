@@ -155,7 +155,7 @@ PRICE_RANGE_CONFIG = {
 # آستانه‌های نقدشوندگی (Liquidity Thresholds)
 # =====================================================
 
-DaysToMaturity = 2               # حداقل روز تا سررسید
+DaysToMaturity = 1               # حداقل روز تا سررسید
 MIN_VOLUME = 3                   # حداقل حجم معاملات روزانه
 MIN_OPEN_INTEREST = 50           # حداقل موقعیت‌های باز
 MAX_SPREAD_PCT = 0.05            # حداکثر اسپرد قابل قبول (5%)
