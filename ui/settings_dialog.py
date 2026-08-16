@@ -21,6 +21,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 from ui.settings_manager import settings_manager, _DEFAULT_PROFILE_NAME
+from ui import theme as ui_theme
 
 logger = logging.getLogger("OptionScanner.UI.Settings")
 
@@ -48,6 +49,7 @@ class SettingsDialog(QDialog):
         self._has_changes = False
 
         self._init_ui()
+        self._apply_dialog_theme()
         self._refresh_profile_combo()
         self._load_settings_into_ui(self._current_settings)
         self._update_preview()
@@ -57,6 +59,19 @@ class SettingsDialog(QDialog):
     # ساخت UI
     # =====================================================
 
+    def _apply_dialog_theme(self) -> None:
+        """اعمال استایل‌های وابسته به پوسته روی بخش‌های اختصاصی دیالوگ."""
+        mode = ui_theme.current_mode()
+        if hasattr(self, "profile_frame"):
+            self.profile_frame.setStyleSheet(ui_theme.get_dialog_profile_frame_style(mode))
+        if hasattr(self, "tab_widget"):
+            self.tab_widget.setStyleSheet(ui_theme.get_dialog_tab_style(mode))
+        if hasattr(self, "lbl_changes"):
+            color = "#f0883e" if mode == "dark" else "#e67e22"
+            self.lbl_changes.setStyleSheet(f"color:{color}; font-weight:bold;")
+        if hasattr(self, "lbl_broker_info"):
+            self.lbl_broker_info.setStyleSheet(ui_theme.get_dialog_warning_banner_style(mode))
+
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(12)
@@ -64,9 +79,8 @@ class SettingsDialog(QDialog):
 
         # ── نوار پروفایل ──────────────────────────────
         profile_frame = QFrame()
-        profile_frame.setStyleSheet(
-            "QFrame { background:#f0f2f5; border-radius:8px; padding:6px; }"
-        )
+        self.profile_frame = profile_frame
+        profile_frame.setStyleSheet(ui_theme.get_dialog_profile_frame_style(ui_theme.current_mode()))
         pl = QHBoxLayout(profile_frame)
         pl.setContentsMargins(8, 4, 8, 4)
 
@@ -97,11 +111,7 @@ class SettingsDialog(QDialog):
 
         # ── تب‌ها ────────────────────────────────────
         self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane { border:1px solid #d0d7de; border-radius:6px; padding:10px; }
-            QTabBar::tab { padding:8px 16px; margin-right:4px; border-radius:4px; }
-            QTabBar::tab:selected { background:#4a6fa5; color:white; }
-        """)
+        self.tab_widget.setStyleSheet(ui_theme.get_dialog_tab_style(ui_theme.current_mode()))
 
         self.tab_widget.addTab(self._create_api_tab(),      "🌐 شبکه و API")
         self.tab_widget.addTab(self._create_scanner_tab(),  "📊 اسکنر")
@@ -351,11 +361,9 @@ class SettingsDialog(QDialog):
             "این اطلاعات برای ورود خودکار به سامانه خبرگان کارگزاری اومکس استفاده می‌شود.\n"
             "اطلاعات به صورت رمزشده در فایل تنظیمات محلی ذخیره می‌شوند."
         )
+        self.lbl_broker_info = lbl_info
         lbl_info.setWordWrap(True)
-        lbl_info.setStyleSheet(
-            "background:#fff3cd; border:1px solid #ffc107; border-radius:6px;"
-            " padding:10px; color:#856404;"
-        )
+        lbl_info.setStyleSheet(ui_theme.get_dialog_warning_banner_style(ui_theme.current_mode()))
         layout.addWidget(lbl_info)
 
         grp = QGroupBox("🏦 اطلاعات ورود به سامانه خبرگان کارگزاری اومکس")

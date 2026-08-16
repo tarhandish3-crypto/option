@@ -8,15 +8,16 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QTableWidget, QTableWidgetItem, QPushButton, QCheckBox, 
     QSpinBox, QLabel, QHeaderView, QMessageBox, QStatusBar,
-    QProgressBar, QFrame, QApplication
+    QProgressBar, QFrame, QApplication, QToolButton, QMenu
 )
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QBrush, QFont
+from PySide6.QtGui import QBrush
 
 from ui.workers import ScannerWorker, AutoScannerWorker, BrokerLoginWorker
 from ui.symbol_filter_dialog import SymbolFilterDialog
 from ui.settings_dialog import SettingsDialog
 from ui.settings_manager import settings_manager
+from ui import theme as ui_theme
 from alerts.bale_notifier import BaleNotifier
 
 # دریافت تنظیمات از config
@@ -65,6 +66,9 @@ class MainWindow(QMainWindow):
         self.auto_worker: Optional[AutoScannerWorker] = None
         self.current_results: List = []
         self.price_steps: List[float] = []
+        self._theme_mode: ui_theme.ThemeMode = ui_theme.resolve_theme(
+            self.config.get("theme", ui_theme.THEME_LIGHT)
+        )
         
         # ۱. راه‌اندازی UI و StatusBar
         self.init_ui()
@@ -137,8 +141,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Option Strategy Scanner - دستیار هوشمند اختیار معامله")
         self.resize(1350, 750)
         self.showMaximized()
+        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
-        self.setStyleSheet(self._get_global_style())
+        self._apply_theme(self.config.get("theme", ui_theme.THEME_LIGHT))
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -147,8 +152,8 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(10, 10, 10, 10)
 
         # ۱. نوار ابزار بالا
-        toolbar = self._create_toolbar()
-        main_layout.addWidget(toolbar)
+        self._top_toolbar = self._create_toolbar()
+        main_layout.addWidget(self._top_toolbar)
 
         # ۲. نوار پیشرفت
         self.progress_bar = QProgressBar()
@@ -161,94 +166,66 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.table, stretch=1)
 
         # ۴. نوار ابزار پایین
-        bottom_toolbar = self._create_bottom_toolbar()
-        main_layout.addWidget(bottom_toolbar)
+        self._bottom_toolbar = self._create_bottom_toolbar()
+        main_layout.addWidget(self._bottom_toolbar)
 
         # ۵. نوار وضعیت
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("✅ آماده به کار - برای شروع اسکن، دکمه '🔄 اسکن دستی' را بزنید")
 
-    def _get_global_style(self) -> str:
-        """استایل کلی برنامه"""
-        return """
-        QMainWindow {
-            background-color: #f5f7fa;
-        }
-        QTableWidget {
-            background-color: white;
-            alternate-background-color: #f8f9fc;
-            gridline-color: #e1e4e8;
-            selection-background-color: #cfe2ff;
-        }
-        QTableWidget::item {
-            padding: 4px;
-        }
-        QHeaderView::section {
-            background-color: #3b5998;
-            color: white;
-            padding: 6px;
-            border: 1px solid #2d4373;
-            font-weight: bold;
-            font-size: 11px;
-        }
-        QPushButton {
-            background-color: #4a6fa5;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            font-weight: bold;
-        }
-        QPushButton:hover {
-            background-color: #3d5f8a;
-        }
-        QPushButton:pressed {
-            background-color: #2e4a6b;
-        }
-        QPushButton:disabled {
-            background-color: #b8c4d0;
-            color: #7a8a9a;
-        }
-        QPushButton#btn_send_broker {
-            background-color: #2e7d32;
-        }
-        QPushButton#btn_send_broker:hover {
-            background-color: #1b5e20;
-        }
-        QCheckBox {
-            font-weight: bold;
-        }
-        QSpinBox {
-            padding: 4px;
-            border: 1px solid #d0d7de;
-            border-radius: 4px;
-            min-width: 80px;
-        }
-        QLabel {
-            color: #24292e;
-        }
-        QProgressBar {
-            border: 1px solid #d0d7de;
-            border-radius: 4px;
-            text-align: center;
-        }
-        QProgressBar::chunk {
-            background-color: #4a6fa5;
-            border-radius: 4px;
-        }
-        """
+    def _apply_theme(self, theme_setting: str) -> None:
+        """اعمال پوسته روی پنجره اصلی و ویجت‌های وابسته."""
+        self._theme_mode = ui_theme.resolve_theme(theme_setting)
+        app = QApplication.instance()
+        if app is not None:
+            ui_theme.apply_app_theme(app, theme_setting)
+        self._refresh_widget_styles()
+        if self.current_results:
+            self.populate_table(self.current_results)
+        elif self.table.rowCount() == 1:
+            self._show_empty_state()
+
+    def _refresh_widget_styles(self) -> None:
+        """به‌روزرسانی استایل‌های محلی که به پوسته وابسته‌اند."""
+        mode = self._theme_mode
+        if hasattr(self, "_top_toolbar"):
+            self._top_toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(mode))
+        if hasattr(self, "_bottom_toolbar"):
+            self._bottom_toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(mode))
+        if hasattr(self, "lbl_interval_min"):
+            self.lbl_interval_min.setStyleSheet(ui_theme.get_interval_label_style(mode))
+
+    def _create_menu_toolbar_button(self, title: str, object_name: str = "") -> QToolButton:
+        """ساخت دکمه منوی کشویی برای نوار ابزار پایین."""
+        btn = QToolButton()
+        btn.setText(title)
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        if object_name:
+            btn.setObjectName(object_name)
+        return btn
+
+    def _update_broker_menu_state(self, *, connecting: bool = False) -> None:
+        """به‌روزرسانی وضعیت آیتم‌های منوی کارگزاری."""
+        if connecting:
+            self.action_broker_connect.setText("⏳ در حال اتصال...")
+            self.action_broker_connect.setEnabled(False)
+            return
+
+        if self._broker_connected:
+            self.action_broker_connect.setText("🔌 قطع اتصال از کارگزاری")
+            self.action_broker_connect.setEnabled(True)
+            self.action_send_broker.setEnabled(True)
+        else:
+            self.action_broker_connect.setText("🔌 اتصال به کارگزاری")
+            self.action_broker_connect.setEnabled(True)
+            self.action_send_broker.setEnabled(False)
 
     def _create_toolbar(self) -> QFrame:
         """ساخت نوار ابزار بالایی"""
         toolbar = QFrame()
-        toolbar.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border-radius: 8px;
-                padding: 10px;
-            }
-        """)
+        toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(self._theme_mode))
         layout = QHBoxLayout(toolbar)
         layout.setContentsMargins(10, 5, 10, 5)
 
@@ -274,7 +251,7 @@ class MainWindow(QMainWindow):
         # نمایش معادل دقیقه
         self.lbl_interval_min = QLabel()
         self._update_interval_label(self.spin_interval.value())
-        self.lbl_interval_min.setStyleSheet("color: #666; font-size: 11px;")
+        self.lbl_interval_min.setStyleSheet(ui_theme.get_interval_label_style(self._theme_mode))
         layout.addWidget(self.lbl_interval_min)
 
         # فعال‌سازی پیش‌فرض چک‌باکس
@@ -298,7 +275,7 @@ class MainWindow(QMainWindow):
         separator.setFrameShape(QFrame.VLine)
         separator.setFrameShadow(QFrame.Sunken)
         separator.setMaximumWidth(2)
-        separator.setStyleSheet("background-color: #d0d7de;")
+        separator.setStyleSheet(ui_theme.get_separator_style(self._theme_mode))
         return separator
 
     def _create_table(self) -> QTableWidget:
@@ -373,13 +350,7 @@ class MainWindow(QMainWindow):
     def _create_bottom_toolbar(self) -> QFrame:
         """ساخت نوار ابزار پایینی"""
         toolbar = QFrame()
-        toolbar.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border-radius: 8px;
-                padding: 8px;
-            }
-        """)
+        toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(self._theme_mode))
         layout = QHBoxLayout(toolbar)
         layout.setContentsMargins(10, 5, 10, 5)
 
@@ -388,44 +359,33 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        self.btn_send_to_broker = QPushButton("🚀 ارسال موقعیت‌های انتخابی به کارگزاری")
-        self.btn_send_to_broker.setObjectName("btn_send_broker")
-        self.btn_send_to_broker.setEnabled(False)   # تا زمان اتصال غیرفعال است
-        self.btn_send_to_broker.clicked.connect(self.send_selected_to_broker)
-        layout.addWidget(self.btn_send_to_broker)
-
-        self.btn_broker_connect = QPushButton("🔌 اتصال به کارگزاری")
-        self.btn_broker_connect.setObjectName("btn_broker_connect")
-        self.btn_broker_connect.setStyleSheet(
-            "QPushButton#btn_broker_connect { background-color: #5d4037; }"
-            "QPushButton#btn_broker_connect:hover { background-color: #4e342e; }"
-            "QPushButton#btn_broker_connect[connected='true'] { background-color: #1b5e20; }"
+        # ── منوی کارگزاری ──
+        self.btn_menu_broker = self._create_menu_toolbar_button("🏦 کارگزاری ▾", "menu_broker")
+        broker_menu = QMenu(self.btn_menu_broker)
+        self.action_broker_connect = broker_menu.addAction(
+            "🔌 اتصال به کارگزاری", self.connect_to_broker
         )
-        self.btn_broker_connect.clicked.connect(self.connect_to_broker)
-        layout.addWidget(self.btn_broker_connect)
-
-        self.btn_send_to_bale = QPushButton("📱 ارسال انتخابی به بله")
-        self.btn_send_to_bale.setObjectName("btn_send_bale")
-        self.btn_send_to_bale.setStyleSheet(
-            "QPushButton#btn_send_bale { background-color: #7b2d8b; }"
-            "QPushButton#btn_send_bale:hover { background-color: #5e2070; }"
-            "QPushButton#btn_send_bale:disabled { background-color: #b8c4d0; color: #7a8a9a; }"
+        self.action_send_broker = broker_menu.addAction(
+            "🚀 ارسال انتخابی به کارگزاری", self.send_selected_to_broker
         )
-        self.btn_send_to_bale.clicked.connect(self.send_selected_to_bale)
-        layout.addWidget(self.btn_send_to_bale)
+        self.action_send_broker.setEnabled(False)
+        self.btn_menu_broker.setMenu(broker_menu)
+        layout.addWidget(self.btn_menu_broker)
 
-        self.btn_clear = QPushButton("🗑️ پاک کردن نتایج")
-        self.btn_clear.clicked.connect(self.clear_results)
-        layout.addWidget(self.btn_clear)
+        # ── منوی اشتراک‌گذاری ──
+        self.btn_menu_share = self._create_menu_toolbar_button("📤 اشتراک‌گذاری ▾", "menu_share")
+        share_menu = QMenu(self.btn_menu_share)
+        share_menu.addAction("📱 ارسال انتخابی به بله", self.send_selected_to_bale)
+        share_menu.addAction("📊 ذخیره نتایج در اکسل", self.export_results_to_excel)
+        self.btn_menu_share.setMenu(share_menu)
+        layout.addWidget(self.btn_menu_share)
 
-        self.btn_export_excel = QPushButton("📊 ذخیره نتایج در اکسل")
-        self.btn_export_excel.setStyleSheet(
-            "QPushButton { background-color: #1a6b3a; }"
-            "QPushButton:hover { background-color: #145230; }"
-            "QPushButton:disabled { background-color: #b8c4d0; color: #7a8a9a; }"
-        )
-        self.btn_export_excel.clicked.connect(self.export_results_to_excel)
-        layout.addWidget(self.btn_export_excel)
+        # ── منوی عملیات ──
+        self.btn_menu_ops = self._create_menu_toolbar_button("⚙️ عملیات ▾", "menu_ops")
+        ops_menu = QMenu(self.btn_menu_ops)
+        ops_menu.addAction("🗑️ پاک کردن نتایج", self.clear_results)
+        self.btn_menu_ops.setMenu(ops_menu)
+        layout.addWidget(self.btn_menu_ops)
 
         return toolbar
 
@@ -638,10 +598,11 @@ class MainWindow(QMainWindow):
                     item_pnl.setData(Qt.ItemDataRole.UserRole, num_val)
                     item_pnl.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                     
+                    pos_color, neg_color = ui_theme.get_pnl_colors(self._theme_mode)
                     if num_val > 0:
-                        item_pnl.setForeground(QBrush(QColor(0, 128, 0)))
+                        item_pnl.setForeground(QBrush(pos_color))
                     elif num_val < 0:
-                        item_pnl.setForeground(QBrush(QColor(200, 0, 0)))
+                        item_pnl.setForeground(QBrush(neg_color))
                         
                     self.table.setItem(row, col_idx, item_pnl)
                 except (ValueError, TypeError):
@@ -668,7 +629,7 @@ class MainWindow(QMainWindow):
         
         empty_item = QTableWidgetItem("🔍 برای شروع اسکن، دکمه '🔄 اسکن دستی' را بزنید")
         empty_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_item.setForeground(QBrush(QColor(150, 150, 150)))
+        empty_item.setForeground(QBrush(ui_theme.get_empty_state_color(self._theme_mode)))
         font = empty_item.font()
         font.setPointSize(12)
         empty_item.setFont(font)
@@ -801,6 +762,7 @@ class MainWindow(QMainWindow):
             bot_token=new_settings.get("bale_bot_token", ""),
             chat_id=new_settings.get("bale_chat_id", ""),
         )
+        self._apply_theme(new_settings.get("theme", ui_theme.THEME_LIGHT))
         logger.info("System settings updated")
 
     def _send_bale_alert(self, opportunities: List) -> None:
@@ -848,7 +810,7 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self.status_update_signal.emit("� در حال استخراج موقعیت‌های باز...")
+        self.status_update_signal.emit("⏳ در حال استخراج موقعیت‌های باز...")
         try:
             existing = self._broker.extract_open_positions()
             result   = self._broker.submit_strategy(positions_text, existing)
@@ -970,9 +932,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # تغییر ظاهر دکمه به حالت «در حال اتصال»
-        self.btn_broker_connect.setText("⏳ در حال اتصال...")
-        self.btn_broker_connect.setEnabled(False)
+        # تغییر وضعیت منوی کارگزاری به حالت «در حال اتصال»
+        self._update_broker_menu_state(connecting=True)
         self.status_update_signal.emit("🌐 در حال باز کردن مرورگر کارگزاری...")
 
         # شروع worker
@@ -986,18 +947,7 @@ class MainWindow(QMainWindow):
     def _on_broker_login_success(self):
         """پس از ورود موفق کاربر به سامانه کارگزاری"""
         self._broker_connected = True
-
-        # تغییر ظاهر دکمه به «✅ به مرورگر وصل است»
-        self.btn_broker_connect.setText("✅ به مرورگر وصل است")
-        self.btn_broker_connect.setEnabled(True)
-        self.btn_broker_connect.setStyleSheet(
-            "QPushButton { background-color: #1b5e20; color: white; "
-            "font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #145214; }"
-        )
-
-        # فعال کردن دکمه ارسال به کارگزاری
-        self.btn_send_to_broker.setEnabled(True)
+        self._update_broker_menu_state()
 
         self.status_update_signal.emit("✅ اتصال به کارگزاری برقرار شد — آماده ارسال")
         logger.info("Broker connection established")
@@ -1006,18 +956,7 @@ class MainWindow(QMainWindow):
         """پس از شکست اتصال"""
         self._broker_connected = False
         self._broker = None
-
-        # بازگشت دکمه به حالت اولیه
-        self.btn_broker_connect.setText("🔌 اتصال به کارگزاری")
-        self.btn_broker_connect.setEnabled(True)
-        self.btn_broker_connect.setStyleSheet(
-            "QPushButton { background-color: #5d4037; color: white; "
-            "font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #4e342e; }"
-        )
-
-        # غیرفعال نگه داشتن دکمه ارسال
-        self.btn_send_to_broker.setEnabled(False)
+        self._update_broker_menu_state()
 
         self.status_update_signal.emit(f"❌ اتصال ناموفق: {error_msg}")
         QMessageBox.warning(self, "اتصال به کارگزاری", f"اتصال ناموفق:\n{error_msg}")
@@ -1033,14 +972,7 @@ class MainWindow(QMainWindow):
             self._broker = None
 
         self._broker_connected = False
-        self.btn_broker_connect.setText("🔌 اتصال به کارگزاری")
-        self.btn_broker_connect.setEnabled(True)
-        self.btn_broker_connect.setStyleSheet(
-            "QPushButton { background-color: #5d4037; color: white; "
-            "font-weight: bold; padding: 8px 16px; border-radius: 4px; }"
-            "QPushButton:hover { background-color: #4e342e; }"
-        )
-        self.btn_send_to_broker.setEnabled(False)
+        self._update_broker_menu_state()
         self.status_update_signal.emit("🔌 اتصال به کارگزاری قطع شد")
         logger.info("اتصال به کارگزاری قطع شد")
 

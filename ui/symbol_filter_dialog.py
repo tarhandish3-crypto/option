@@ -23,6 +23,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 from ui.settings_manager import settings_manager
+from ui import theme as ui_theme
 
 logger = logging.getLogger("OptionScanner.UI.SymbolFilter")
 
@@ -65,6 +66,7 @@ class SymbolFilterDialog(QDialog):
         self._current_search_text = ""
 
         self._init_ui()
+        self._apply_dialog_theme()
         self._populate_list()
         self._update_stats()
         
@@ -72,6 +74,13 @@ class SymbolFilterDialog(QDialog):
             f"SymbolFilterDialog opened: {len(self.available_symbols)} available symbol(s), "
             f"{len(self.excluded_symbols)} blocked symbol(s)"
         )
+
+    def _apply_dialog_theme(self) -> None:
+        mode = ui_theme.current_mode()
+        if hasattr(self, "info_label"):
+            self.info_label.setStyleSheet(ui_theme.get_symbol_filter_info_style(mode))
+        if hasattr(self, "stats_label"):
+            self.stats_label.setStyleSheet(ui_theme.get_symbol_filter_stats_style(mode))
 
     def _init_ui(self) -> None:
         """راه‌اندازی رابط کاربری"""
@@ -86,10 +95,11 @@ class SymbolFilterDialog(QDialog):
         header_layout = QVBoxLayout(header_group)
 
         info_label = QLabel(
-            "نمادهایی که چک‌باکس آن‌ها **فعال (تیک‌خورده)** است، از محاسبات اسکنر **حذف (Block)** خواهند شد:"
+            "نمادهایی که چک‌باکس آن‌ها فعال (تیک‌خورده) است، از محاسبات اسکنر حذف (Block) خواهند شد:"
         )
+        self.info_label = info_label
         info_label.setWordWrap(True)
-        info_label.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        info_label.setStyleSheet(ui_theme.get_symbol_filter_info_style(ui_theme.current_mode()))
         header_layout.addWidget(info_label)
 
         filter_layout = QHBoxLayout()
@@ -120,9 +130,7 @@ class SymbolFilterDialog(QDialog):
         list_layout = QVBoxLayout(list_group)
 
         self.stats_label = QLabel("📊 آماده‌سازی...")
-        self.stats_label.setStyleSheet(
-            "color: #34495e; font-size: 9pt; padding: 6px; background-color: #ecf0f1; border-radius: 4px;"
-        )
+        self.stats_label.setStyleSheet(ui_theme.get_symbol_filter_stats_style(ui_theme.current_mode()))
         list_layout.addWidget(self.stats_label)
 
         self.symbol_list_widget = QListWidget()

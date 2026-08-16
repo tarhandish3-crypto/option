@@ -29,6 +29,8 @@ from scoring.ranker import OpportunityRanker, RankingProfile
 from analytics.risk_engine import RiskEngine
 from filters.strategy_filters import apply_strategy_filter
 from ui.main_window import MainWindow
+from ui.settings_manager import settings_manager
+from ui import theme as ui_theme
 
 logger = logging.getLogger("OptionScanner.Main")
 
@@ -496,12 +498,16 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
+    ui_theme.apply_app_layout(app)
 
     try:
         font = QFont("Vazir", 9)
         app.setFont(font)
     except Exception:
         pass
+
+    theme_setting = settings_manager.get_active_settings().get("theme", ui_theme.THEME_LIGHT)
+    ui_theme.apply_app_theme(app, theme_setting)
 
     # ۱. ایجاد موتور (بسیار سبک و بدون دیتابیس/استراتژی اولیه)
     scanner_engine = OptionScanner()
