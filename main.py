@@ -177,7 +177,7 @@ class OptionScanner:
                     """)
                     conn.commit()
         except Exception as e:
-            logger.warning(f"⚠️ Database init failed: {e}")
+            logger.warning(f"Database init failed: {e}")
             self._db_enabled = False
 
     def _save_scan_to_db(self, results: List[Any], duration: float) -> None:
@@ -265,7 +265,7 @@ class OptionScanner:
                         symbols.add(symbol)
                 return sorted(list(symbols))
         except Exception as e:
-            logger.warning(f"⚠️ Failed to get available symbols: {e}")
+            logger.warning(f"Failed to get available symbols: {e}")
         
         return sorted(list(getattr(config, 'SYMBOL_INFO', {}).keys()))
 
@@ -279,7 +279,7 @@ class OptionScanner:
         if level in level_map:
             logging.getLogger().setLevel(level_map[level])
             logging.getLogger("OptionScanner").setLevel(level_map[level])
-            logger.info(f"📝 Log level changed to {level}")
+            logger.info(f"Log level changed to {level}")
             return True
         return False
 
@@ -335,7 +335,7 @@ class OptionScanner:
 
         # کش
         if not force_refresh and self._cache and not self._cache.is_expired(self._cache_ttl):
-            update_progress(100, "📦 استفاده از نتایج ذخیره‌شده")
+            update_progress(100, "استفاده از نتایج ذخیره‌شده")
             return self._cache.results
 
         scan_output = {"results": None, "duration": 0.0, "error": None}
@@ -357,17 +357,17 @@ class OptionScanner:
 
         if thread.is_alive():
             self._cancel_event.set()
-            logger.error(f"⏱️ Scan timed out after {self._scan_timeout} seconds!")
-            update_progress(0, "⏱️ زمان اسکن به پایان رسید")
+            logger.error(f"⏱Scan timed out after {self._scan_timeout} seconds!")
+            update_progress(0, "زمان اسکن به پایان رسید")
             return []
 
         if scan_output["error"]:
-            logger.error(f"❌ Scan error: {scan_output['error']}", exc_info=True)
-            update_progress(0, f"❌ خطا: {str(scan_output['error'])}")
+            logger.error(f"Scan error: {scan_output['error']}", exc_info=True)
+            update_progress(0, f"خطا: {str(scan_output['error'])}")
             return []
 
         if self._cancel_event.is_set():
-            update_progress(0, "🛑 اسکن متوقف شد")
+            update_progress(0, " اسکن متوقف شد")
             return []
 
         result = scan_output["results"] if scan_output["results"] is not None else []
@@ -382,7 +382,7 @@ class OptionScanner:
             self._last_scan_time = datetime.now()
         
         if len(result) < original_count:
-            logger.info(f"🔍 Filters applied: {original_count} → {len(result)} opportunities")
+            logger.info(f" Filters applied: {original_count} → {len(result)} opportunities")
         
         self._save_scan_to_db(result, duration)
         self._cache = ScanCacheEntry(
@@ -393,7 +393,7 @@ class OptionScanner:
             filters_used=self._user_filters.copy()
         )
 
-        update_progress(100, f"✅ اسکن کامل شد - {len(result)} فرصت یافت شد")
+        update_progress(100, f" اسکن کامل شد - {len(result)} فرصت یافت شد")
         gc.collect()
         return result
 
@@ -438,7 +438,7 @@ class OptionScanner:
             snapshot.build_indices()
 
             logger.info(
-                f"🚫 نمادهای بلاک‌شده: {excluded} — "
+                f" نمادهای بلاک‌شده: {excluded} — "
                 f"قراردادها: {before_contracts}→{len(snapshot.option_contracts)} | "
                 f"نمادهای پایه: {before_underlyings}→{len(snapshot.underlying_assets)}"
             )
@@ -481,9 +481,9 @@ class OptionScanner:
             filename = f"opportunities_gui_{timestamp}.xlsx"
             try:
                 self.excel_exporter.export(opportunities=top_opportunities, filename=filename)
-                logger.info(f"📊 Results exported to {filename}")
+                logger.info(f"Results exported to {filename}")
             except Exception as exp_err:
-                logger.error(f"❌ Error exporting to excel: {exp_err}")
+                logger.error(f" Error exporting to excel: {exp_err}")
 
         return top_opportunities, time.time() - start_time
 
@@ -494,7 +494,7 @@ class OptionScanner:
 
 def main():
     setup_logging()
-    logger.info("🚀 Starting Option Scanner GUI Application...")
+    logger.info("Starting Option Scanner GUI Application...")
 
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
@@ -516,7 +516,7 @@ def main():
     window = MainWindow(scanner_engine=scanner_engine)
     window.show()
 
-    logger.info("✅ UI Window Opened successfully")
+    logger.info(" UI Window Opened successfully")
     
     # ۳. برنامه منتظر کلیک کاربر بر روی دکمه اسکن یا تایمر اتوماتیک UI باقی می‌ماند
     sys.exit(app.exec())

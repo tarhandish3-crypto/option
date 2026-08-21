@@ -7,8 +7,7 @@
 """
 
 import logging
-from typing import Dict, Any, Optional
-from pathlib import Path
+from typing import Dict, Any
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
@@ -38,13 +37,14 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("تنظیمات سیستم")
+        self.setWindowTitle("تنظیمات برنامه")
         self.resize(680, 650)
         self.setMinimumSize(580, 560)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         # تنظیمات جاری از manager
-        self._current_settings: Dict[str, Any] = settings_manager.get_active_settings()
+        self._current_settings: Dict[str,
+                                     Any] = settings_manager.get_active_settings()
         self._initial_settings: Dict[str, Any] = dict(self._current_settings)
         self._has_changes = False
 
@@ -63,14 +63,16 @@ class SettingsDialog(QDialog):
         """اعمال استایل‌های وابسته به پوسته روی بخش‌های اختصاصی دیالوگ."""
         mode = ui_theme.current_mode()
         if hasattr(self, "profile_frame"):
-            self.profile_frame.setStyleSheet(ui_theme.get_dialog_profile_frame_style(mode))
+            self.profile_frame.setStyleSheet(
+                ui_theme.get_dialog_profile_frame_style(mode))
         if hasattr(self, "tab_widget"):
             self.tab_widget.setStyleSheet(ui_theme.get_dialog_tab_style(mode))
         if hasattr(self, "lbl_changes"):
             color = "#f0883e" if mode == "dark" else "#e67e22"
             self.lbl_changes.setStyleSheet(f"color:{color}; font-weight:bold;")
         if hasattr(self, "lbl_broker_info"):
-            self.lbl_broker_info.setStyleSheet(ui_theme.get_dialog_warning_banner_style(mode))
+            self.lbl_broker_info.setStyleSheet(
+                ui_theme.get_dialog_warning_banner_style(mode))
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -80,7 +82,8 @@ class SettingsDialog(QDialog):
         # ── نوار پروفایل ──────────────────────────────
         profile_frame = QFrame()
         self.profile_frame = profile_frame
-        profile_frame.setStyleSheet(ui_theme.get_dialog_profile_frame_style(ui_theme.current_mode()))
+        profile_frame.setStyleSheet(
+            ui_theme.get_dialog_profile_frame_style(ui_theme.current_mode()))
         pl = QHBoxLayout(profile_frame)
         pl.setContentsMargins(8, 4, 8, 4)
 
@@ -88,11 +91,13 @@ class SettingsDialog(QDialog):
 
         self.combo_profiles = QComboBox()
         self.combo_profiles.setMinimumWidth(160)
-        self.combo_profiles.currentTextChanged.connect(self._on_profile_selected)
+        self.combo_profiles.currentTextChanged.connect(
+            self._on_profile_selected)
         pl.addWidget(self.combo_profiles)
 
         self.btn_save_profile = QPushButton("💾 ذخیره با نام...")
-        self.btn_save_profile.setToolTip("ذخیره تنظیمات فعلی به عنوان پروفایل جدید یا بازنویسی")
+        self.btn_save_profile.setToolTip(
+            "ذخیره تنظیمات فعلی به عنوان پروفایل جدید یا بازنویسی")
         self.btn_save_profile.clicked.connect(self._save_profile)
         pl.addWidget(self.btn_save_profile)
 
@@ -111,12 +116,12 @@ class SettingsDialog(QDialog):
 
         # ── تب‌ها ────────────────────────────────────
         self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet(ui_theme.get_dialog_tab_style(ui_theme.current_mode()))
+        self.tab_widget.setStyleSheet(
+            ui_theme.get_dialog_tab_style(ui_theme.current_mode()))
 
         self.tab_widget.addTab(self._create_api_tab(),      "🌐 شبکه و API")
         self.tab_widget.addTab(self._create_scanner_tab(),  "📊 اسکنر")
         self.tab_widget.addTab(self._create_general_tab(),  "⚙️ عمومی")
-        self.tab_widget.addTab(self._create_advanced_tab(), "🔧 پیشرفته")
         self.tab_widget.addTab(self._create_bale_tab(),     "📣 اعلان بله")
         self.tab_widget.addTab(self._create_broker_tab(),   "🏦 کارگزاری")
         self.tab_widget.addTab(self._create_preview_tab(),  "📋 پیش‌نمایش")
@@ -130,13 +135,17 @@ class SettingsDialog(QDialog):
             QDialogButtonBox.StandardButton.Reset,
             Qt.Orientation.Horizontal, self
         )
-        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("💾 اعمال و بستن")
+        btn_box.button(QDialogButtonBox.StandardButton.Ok).setText(
+            "💾 اعمال و بستن")
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(
             "background:#27ae60; color:white; font-weight:bold; padding:6px 16px;"
         )
-        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
-        btn_box.button(QDialogButtonBox.StandardButton.RestoreDefaults).setText("🔄 بازگشت به پیش‌فرض config.py")
-        btn_box.button(QDialogButtonBox.StandardButton.Reset).setText("↩️ لغو تغییرات")
+        btn_box.button(
+            QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
+        btn_box.button(QDialogButtonBox.StandardButton.RestoreDefaults).setText(
+            "🔄 بازگشت به پیش‌فرض config.py")
+        btn_box.button(QDialogButtonBox.StandardButton.Reset).setText(
+            "↩️ لغو تغییرات")
 
         btn_box.accepted.connect(self._apply_and_close)
         btn_box.rejected.connect(self.reject)
@@ -150,13 +159,16 @@ class SettingsDialog(QDialog):
     # ── تب‌ها ─────────────────────────────────────────
 
     def _create_api_tab(self) -> QWidget:
-        w = QWidget(); layout = QVBoxLayout(w)
+        w = QWidget()
+        layout = QVBoxLayout(w)
         grp = QGroupBox("پارامترهای شبکه")
-        form = QFormLayout(grp); form.setSpacing(10)
+        form = QFormLayout(grp)
+        form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self.spin_api_timeout = QSpinBox()
-        self.spin_api_timeout.setRange(3, 120); self.spin_api_timeout.setSuffix(" ثانیه")
+        self.spin_api_timeout.setRange(3, 120)
+        self.spin_api_timeout.setSuffix(" ثانیه")
         self.spin_api_timeout.valueChanged.connect(self._on_changed)
         form.addRow("⏱️ Timeout:", self.spin_api_timeout)
 
@@ -166,35 +178,43 @@ class SettingsDialog(QDialog):
         form.addRow("🔄 تلاش مجدد:", self.spin_max_retries)
 
         self.spin_request_delay = QSpinBox()
-        self.spin_request_delay.setRange(0, 10000); self.spin_request_delay.setSingleStep(100)
+        self.spin_request_delay.setRange(0, 10000)
+        self.spin_request_delay.setSingleStep(100)
         self.spin_request_delay.setSuffix(" ms")
         self.spin_request_delay.valueChanged.connect(self._on_changed)
         form.addRow("⏳ تأخیر بین درخواست:", self.spin_request_delay)
 
-        layout.addWidget(grp); layout.addStretch()
+        layout.addWidget(grp)
+        layout.addStretch()
         return w
 
     def _create_scanner_tab(self) -> QWidget:
-        w = QWidget(); layout = QVBoxLayout(w)
+        w = QWidget()
+        layout = QVBoxLayout(w)
 
         grp1 = QGroupBox("پارامترهای بازار")
-        f1 = QFormLayout(grp1); f1.setSpacing(10)
+        f1 = QFormLayout(grp1)
+        f1.setSpacing(10)
 
         self.spin_rf_rate = QDoubleSpinBox()
-        self.spin_rf_rate.setRange(0, 200); self.spin_rf_rate.setSingleStep(1)
-        self.spin_rf_rate.setSuffix(" ٪"); self.spin_rf_rate.setDecimals(2)
+        self.spin_rf_rate.setRange(0, 200)
+        self.spin_rf_rate.setSingleStep(1)
+        self.spin_rf_rate.setSuffix(" ٪")
+        self.spin_rf_rate.setDecimals(2)
         self.spin_rf_rate.valueChanged.connect(self._on_changed)
         f1.addRow("💰 نرخ بدون ریسک:", self.spin_rf_rate)
 
         self.spin_min_open_int = QSpinBox()
-        self.spin_min_open_int.setRange(0, 1_000_000); self.spin_min_open_int.setSingleStep(10)
+        self.spin_min_open_int.setRange(0, 1_000_000)
+        self.spin_min_open_int.setSingleStep(10)
         self.spin_min_open_int.valueChanged.connect(self._on_changed)
         f1.addRow("📊 حداقل موقعیت باز:", self.spin_min_open_int)
 
         layout.addWidget(grp1)
 
         grp2 = QGroupBox("روزهای تا سررسید (DTE)")
-        f2 = QFormLayout(grp2); f2.setSpacing(10)
+        f2 = QFormLayout(grp2)
+        f2.setSpacing(10)
 
         self.spin_min_dte = QSpinBox()
         self.spin_min_dte.setRange(0, 365)
@@ -209,15 +229,18 @@ class SettingsDialog(QDialog):
         layout.addWidget(grp2)
 
         grp3 = QGroupBox("بازه تغییر قیمت برای P&L")
-        f3 = QFormLayout(grp3); f3.setSpacing(10)
+        f3 = QFormLayout(grp3)
+        f3.setSpacing(10)
 
         self.spin_vol_min = QDoubleSpinBox()
-        self.spin_vol_min.setRange(-200, 0); self.spin_vol_min.setSuffix(" ٪")
+        self.spin_vol_min.setRange(-200, 0)
+        self.spin_vol_min.setSuffix(" ٪")
         self.spin_vol_min.valueChanged.connect(self._on_changed)
         f3.addRow("📉 حداقل درصد:", self.spin_vol_min)
 
         self.spin_vol_max = QDoubleSpinBox()
-        self.spin_vol_max.setRange(0, 200); self.spin_vol_max.setSuffix(" ٪")
+        self.spin_vol_max.setRange(0, 200)
+        self.spin_vol_max.setSuffix(" ٪")
         self.spin_vol_max.valueChanged.connect(self._on_changed)
         f3.addRow("📈 حداکثر درصد:", self.spin_vol_max)
 
@@ -226,15 +249,23 @@ class SettingsDialog(QDialog):
         return w
 
     def _create_general_tab(self) -> QWidget:
-        w = QWidget(); layout = QVBoxLayout(w)
+        w = QWidget()
+        layout = QVBoxLayout(w)
 
         grp1 = QGroupBox("UI و نمایش")
-        f1 = QFormLayout(grp1); f1.setSpacing(10)
+        f1 = QFormLayout(grp1)
+        f1.setSpacing(10)
 
         self.combo_theme = QComboBox()
-        self.combo_theme.addItems(["روشن (Light)", "تاریک (Dark)", "سیستم (System)"])
+        self.combo_theme.addItems(
+            ["روشن (Light)", "تاریک (Dark)", "سیستم (System)"])
         self.combo_theme.currentTextChanged.connect(self._on_changed)
         f1.addRow("🎨 پوسته:", self.combo_theme)
+
+        self.combo_layout_direction = QComboBox()
+        self.combo_layout_direction.addItems(["راست‌چین (RTL)", "چپ‌چین (LTR)"])
+        self.combo_layout_direction.currentTextChanged.connect(self._on_changed)
+        f1.addRow("📐 جهت چیدمان:", self.combo_layout_direction)
 
         self.combo_log_level = QComboBox()
         self.combo_log_level.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -246,7 +277,8 @@ class SettingsDialog(QDialog):
         f1.addRow(self.chk_auto_refresh)
 
         self.spin_refresh_interval = QSpinBox()
-        self.spin_refresh_interval.setRange(30, 3600); self.spin_refresh_interval.setSuffix(" ثانیه")
+        self.spin_refresh_interval.setRange(30, 3600)
+        self.spin_refresh_interval.setSuffix(" ثانیه")
         self.spin_refresh_interval.valueChanged.connect(self._on_changed)
         f1.addRow("⏱️ فاصله اسکن خودکار:", self.spin_refresh_interval)
 
@@ -258,36 +290,36 @@ class SettingsDialog(QDialog):
         self.txt_export_dir.textChanged.connect(self._on_changed)
         self.btn_browse = QPushButton("📁 انتخاب...")
         self.btn_browse.clicked.connect(self._browse_dir)
-        fl.addWidget(self.txt_export_dir); fl.addWidget(self.btn_browse)
+        fl.addWidget(self.txt_export_dir)
+        fl.addWidget(self.btn_browse)
         layout.addWidget(grp2)
 
-        layout.addStretch()
-        return w
-
-    def _create_advanced_tab(self) -> QWidget:
-        w = QWidget(); layout = QVBoxLayout(w)
-        grp = QGroupBox("پردازش موازی و کش")
-        form = QFormLayout(grp); form.setSpacing(10)
+        grp3 = QGroupBox("پردازش موازی و کش")
+        f3 = QFormLayout(grp3)
+        f3.setSpacing(10)
 
         self.chk_parallel = QCheckBox("فعال‌سازی پردازش موازی")
         self.chk_parallel.stateChanged.connect(self._on_changed)
-        form.addRow(self.chk_parallel)
+        f3.addRow(self.chk_parallel)
 
         self.spin_max_workers = QSpinBox()
         self.spin_max_workers.setRange(1, 16)
         self.spin_max_workers.valueChanged.connect(self._on_changed)
-        form.addRow("⚡ تعداد Workers:", self.spin_max_workers)
+        f3.addRow("⚡ تعداد Workers:", self.spin_max_workers)
 
         self.chk_cache = QCheckBox("فعال‌سازی کش داده")
         self.chk_cache.stateChanged.connect(self._on_changed)
-        form.addRow(self.chk_cache)
+        f3.addRow(self.chk_cache)
 
         self.spin_cache_ttl = QSpinBox()
-        self.spin_cache_ttl.setRange(1, 3600); self.spin_cache_ttl.setSuffix(" ثانیه")
+        self.spin_cache_ttl.setRange(1, 3600)
+        self.spin_cache_ttl.setSuffix(" ثانیه")
         self.spin_cache_ttl.valueChanged.connect(self._on_changed)
-        form.addRow("⏱️ TTL کش:", self.spin_cache_ttl)
+        f3.addRow("⏱️ TTL کش:", self.spin_cache_ttl)
 
-        layout.addWidget(grp); layout.addStretch()
+        layout.addWidget(grp3)
+
+        layout.addStretch()
         return w
 
     def _create_bale_tab(self) -> QWidget:
@@ -347,9 +379,11 @@ class SettingsDialog(QDialog):
             "✅ پیام تست از اسکنر اختیار معامله — اتصال برقرار است."
         )
         if result:
-            QMessageBox.information(self, "موفق", "✅ پیام تست با موفقیت ارسال شد.")
+            QMessageBox.information(
+                self, "موفق", "✅ پیام تست با موفقیت ارسال شد.")
         else:
-            QMessageBox.critical(self, "خطا", "❌ ارسال پیام ناموفق بود.\nتوکن و Chat ID را بررسی کنید.")
+            QMessageBox.critical(
+                self, "خطا", "❌ ارسال پیام ناموفق بود.\nتوکن و Chat ID را بررسی کنید.")
 
     def _create_broker_tab(self) -> QWidget:
         """تب تنظیمات کارگزاری اومکس خبرگان"""
@@ -363,7 +397,8 @@ class SettingsDialog(QDialog):
         )
         self.lbl_broker_info = lbl_info
         lbl_info.setWordWrap(True)
-        lbl_info.setStyleSheet(ui_theme.get_dialog_warning_banner_style(ui_theme.current_mode()))
+        lbl_info.setStyleSheet(
+            ui_theme.get_dialog_warning_banner_style(ui_theme.current_mode()))
         layout.addWidget(lbl_info)
 
         grp = QGroupBox("🏦 اطلاعات ورود به سامانه خبرگان کارگزاری اومکس")
@@ -387,7 +422,8 @@ class SettingsDialog(QDialog):
         return w
 
     def _create_preview_tab(self) -> QWidget:
-        w = QWidget(); layout = QVBoxLayout(w)
+        w = QWidget()
+        layout = QVBoxLayout(w)
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
         self.preview_text.setFont(QFont("Courier New", 9))
@@ -419,16 +455,22 @@ class SettingsDialog(QDialog):
         idx = self.combo_theme.findText(theme)
         self.combo_theme.setCurrentIndex(idx if idx >= 0 else 0)
 
+        layout_dir = s.get("layout_direction", "راست‌چین (RTL)")
+        idx_dir = self.combo_layout_direction.findText(layout_dir)
+        self.combo_layout_direction.setCurrentIndex(idx_dir if idx_dir >= 0 else 0)
+
         log_lvl = s.get("log_level", "INFO")
         idx_l = self.combo_log_level.findText(log_lvl)
         self.combo_log_level.setCurrentIndex(idx_l if idx_l >= 0 else 1)
 
         self.chk_auto_refresh.setChecked(s.get("auto_refresh_enabled", False))
-        self.spin_refresh_interval.setValue(s.get("auto_refresh_interval_sec", 120))
+        self.spin_refresh_interval.setValue(
+            s.get("auto_refresh_interval_sec", 120))
         self.txt_export_dir.setText(s.get("export_dir", ""))
 
-        # Advanced
-        self.chk_parallel.setChecked(s.get("enable_parallel_processing", False))
+        # پردازش موازی و کش (که قبلاً در تب پیشرفته بود)
+        self.chk_parallel.setChecked(
+            s.get("enable_parallel_processing", False))
         self.spin_max_workers.setValue(s.get("max_parallel_workers", 3))
         self.chk_cache.setChecked(s.get("cache_enabled", True))
         self.spin_cache_ttl.setValue(s.get("cache_ttl_seconds", 6))
@@ -456,6 +498,7 @@ class SettingsDialog(QDialog):
             "volatility_range_min":     self.spin_vol_min.value(),
             "volatility_range_max":     self.spin_vol_max.value(),
             "theme":                    self.combo_theme.currentText(),
+            "layout_direction":         self.combo_layout_direction.currentText(),
             "log_level":                self.combo_log_level.currentText(),
             "auto_refresh_enabled":     self.chk_auto_refresh.isChecked(),
             "auto_refresh_interval_sec": self.spin_refresh_interval.value(),
@@ -496,7 +539,8 @@ class SettingsDialog(QDialog):
 
     def _update_preview(self) -> None:
         s = self._read_settings_from_ui()
-        lines = ["═" * 40, f"  پروفایل فعال: {settings_manager.get_active_profile_name()}", "═" * 40]
+        lines = [
+            "═" * 40, f"  پروفایل فعال: {settings_manager.get_active_profile_name()}", "═" * 40]
         for k, v in s.items():
             lines.append(f"  {k}: {v}")
         self.preview_text.setPlainText("\n".join(lines))
@@ -654,7 +698,8 @@ class SettingsDialog(QDialog):
             # اگر No: بدون ذخیره، فقط signal ارسال می‌کنیم
 
         self.settings_saved.emit(settings)
-        logger.info(f"Settings applied -- profile: '{settings_manager.get_active_profile_name()}'")
+        logger.info(
+            f"Settings applied -- profile: '{settings_manager.get_active_profile_name()}'")
         self.accept()
 
     def _discard_changes(self) -> None:

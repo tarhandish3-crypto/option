@@ -1,14 +1,171 @@
 # ui/workers.py
 # -*- coding: utf-8 -*-
 
-from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
-from typing import Optional, Any, Callable
+from __future__ import annotations
+
 import logging
+import queue
+import socket
+import time
 import traceback
 from datetime import datetime
+from typing import Any, Callable, Optional
 
-logger = logging.getLogger(__name__)
+from PySide6.QtCore import QMutex, QMutexLocker, QObject, QThread, QTimer, Signal
 
+# تلاش برای خواندن مصرف رم با psutil؛ در صورت عدم نصب هندل می‌شود
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
+logger = logging.getLogger("OptionScanner.UI.Workers")
+
+
+# =========================================================================
+# ۱. مدیریت بروزرسانی دسته‌ای (Batch Updates / Throttling)
+# =========================================================================
+
+class BatchUpdateManager(QObject):
+    """
+    مدیریت صف و بروزرسانی دسته‌ای داده‌های بازار و استراتژی‌ها
+    برای جلوگیری از لگ و افت فریم رابط کاربری هنگام پردازش حجم بالای اطلاعات.
+    """
+    batch_ready = Signal(list)  # ارسال بسته‌ای از آیتم‌ها برای رندر در جدول
+
+    def __init__(
+        self, 
+        interval_ms: int = 150, 
+        max_batch_size: int = 100, 
+        parent: Optional[Any] = None
+    ):
+        super().__init__(parent)
+        self._queue: queue.Queue = queue.Queue()
+        self._max_batch_size = max_batch_size
+        
+        self._timer = QTimer(self)
+        self._timer.setInterval(interval_ms)
+        self._timer.timeout.connect(self._flush)
+        self._timer.start()
+
+    def push(self, item: Any) -> None:
+        """افزودن یک آیتم به صف پردازش دسته‌ای"""
+        self._queue.put(item)
+
+    def push_many(self, items: list) -> None:
+        """افزودن گروهی از آیتم‌ها به صف"""
+        for it in items:
+            self._queue.put(it)
+
+    def clear(self) -> None:
+        """پاک‌سازی صف جاری"""
+        with self._queue.mutex:
+            self._queue.queue.clear()
+
+    def _flush(self) -> None:
+        """تخلیه صف و ارسال داده‌ها به صورت پکیج به UI"""
+        if self._queue.empty():
+            return
+        
+        batch = []
+        while not self._queue.empty() and len(batch) < self._max_batch_size:
+            try:
+                batch.append(self._queue.get_nowait())
+            except queue.Empty:
+                break
+                
+        if batch:
+            self.batch_ready.emit(batch)
+
+
+# =========================================================================
+# ۲. ورکر تلمتری و پایش وضعیت سیستم و شبکه (Telemetry Worker)
+# =========================================================================
+
+class TelemetryWorker(QThread):
+    """
+    پایشگر پس‌زمینه برای اندازه‌گیری پینگ سرور، وضعیت اتصال و مصرف منابع (RAM).
+    """
+    telemetry_updated = Signal(dict)
+    status_changed = Signal(str)
+
+    def __init__(
+        self, 
+        host: str = "tsetmc.com", 
+        port: int = 80, 
+        interval_sec: float = 2.0, 
+        parent: Optional[Any] = None
+    ):
+        super().__init__(parent)
+        self.host = host
+        self.port = port
+        self.interval_sec = interval_sec
+        self._is_running = False
+        self._mutex = QMutex()
+
+    def run(self) -> None:
+        with QMutexLocker(self._mutex):
+            self._is_running = True
+
+        process = psutil.Process() if HAS_PSUTIL else None
+
+        while True:
+            with QMutexLocker(self._mutex):
+                if not self._is_running:
+                    break
+
+            # محاسبه پینگ واقعی TCP به سرور
+            ping_ms = self._measure_ping(self.host, self.port)
+            
+            # محاسبه مصرف حافظه رم
+            ram_mb = 0.0
+            if process:
+                try:
+                    ram_mb = process.memory_info().rss / (1024 * 1024)
+                except Exception:
+                    ram_mb = 0.0
+
+            telemetry_data = {
+                "ping_ms": ping_ms,
+                "connected": ping_ms >= 0,
+                "ram_usage_mb": ram_mb,
+                "timestamp": datetime.now()
+            }
+
+            self.telemetry_updated.emit(telemetry_data)
+
+            # توقف پاسخ‌دهنده (پاسخ سریع به سیگنال توقف در گام‌های ۱۰۰ میلی‌ثانیه‌ای)
+            steps = int(self.interval_sec * 10)
+            for _ in range(max(steps, 1)):
+                with QMutexLocker(self._mutex):
+                    if not self._is_running:
+                        break
+                self.msleep(100)
+
+    def _measure_ping(self, host: str, port: int) -> int:
+        """بررسی زمان تاخیر اتصال به سرور مقصد"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.5)
+            start = time.perf_counter()
+            s.connect((host, port))
+            latency = int((time.perf_counter() - start) * 1000)
+            s.close()
+            return latency
+        except Exception:
+            return -1
+
+    def stop(self) -> None:
+        """توقف ایمن ترد پایش"""
+        with QMutexLocker(self._mutex):
+            self._is_running = False
+        self.wait()
+
+
+# =========================================================================
+# ۳. ورکر اسکنر بازار (Scanner Worker)
+# =========================================================================
 
 class ScannerWorker(QThread):
     """
@@ -16,10 +173,10 @@ class ScannerWorker(QThread):
     """
     
     # سیگنال‌ها
-    scan_finished = Signal(object)      # ارسال نتایج اسکن
-    scan_failed = Signal(str)           # ارسال خطا
-    progress_updated = Signal(int, str) # (درصد, متن وضعیت)
-    status_changed = Signal(str)        # تغییر وضعیت
+    scan_finished = Signal(object)       # ارسال نتایج اسکن
+    scan_failed = Signal(str)            # ارسال خطا
+    progress_updated = Signal(int, str)  # (درصد, متن وضعیت)
+    status_changed = Signal(str)         # تغییر وضعیت
     
     def __init__(
         self, 
@@ -169,9 +326,13 @@ class ScannerWorker(QThread):
             return f"خطا: {str(error)}"
 
 
+# =========================================================================
+# ۴. ورکر اسکن خودکار و دوره‌ای (Auto Scanner Worker)
+# =========================================================================
+
 class AutoScannerWorker(QThread):
     """
-    ورکر خودکار برای اجرای دوره‌ای اسکن
+    ورکر خودکار برای اجرای دوره‌ای اسکن در فواصل زمانی معین
     """
     
     scan_requested = Signal()  # درخواست اسکن جدید
@@ -226,9 +387,13 @@ class AutoScannerWorker(QThread):
         logger.info("Auto-scan timer stop request registered")
 
 
+# =========================================================================
+# ۵. ورکر ارسال و اجرای استراتژی در کارگزاری (Strategy Executor Worker)
+# =========================================================================
+
 class StrategyExecutorWorker(QThread):
     """
-    ورکر برای اجرای خودکار یا دستی استراتژی در کارگزاری
+    ورکر برای اجرای خودکار یا دستی استراتژی‌های چندپایه‌ای در سامانه کارگزاری
     """
     
     execution_finished = Signal(bool, str)  # (موفقیت, پیام)
@@ -288,6 +453,10 @@ class StrategyExecutorWorker(QThread):
         return True
 
 
+# =========================================================================
+# ۶. ورکر ورود به سامانه معاملاتی (Broker Login Worker)
+# =========================================================================
+
 class BrokerLoginWorker(QThread):
     """
     ورکر پس‌زمینه برای باز کردن مرورگر کارگزاری و انتظار برای ورود کاربر.
@@ -303,7 +472,7 @@ class BrokerLoginWorker(QThread):
     login_failed   = Signal(str)    # پیام خطا
     status_changed = Signal(str)    # وضعیت
 
-    def __init__(self, broker, parent=None):
+    def __init__(self, broker: Any, parent: Optional[Any] = None):
         """
         Args:
             broker: نمونه OmexKhobreganBroker

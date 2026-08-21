@@ -61,6 +61,7 @@ def _build_defaults_from_config() -> Dict[str, Any]:
         "auto_refresh_enabled":       False,
         "auto_refresh_interval_sec":  int(config.SYSTEM_CONFIG.get("scan_interval_minutes", 2) * 60),
         "theme":                      "روشن (Light)",
+        "layout_direction":           "راست‌چین (RTL)",
         "log_level":                  "INFO",
         "export_dir":                 str(config.OUTPUT_DIR),
 
