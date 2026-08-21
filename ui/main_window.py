@@ -599,11 +599,28 @@ class MainWindow(QMainWindow):
         # پیدا کردن سطر کلیک‌شده
         item = self.table.itemAt(pos)
         if not item:
+            logger.debug("No item found at click position")
             return
         
         row = item.row()
         if row < 0:
+            logger.debug(f"Invalid row index: {row}")
             return
+        
+        logger.debug(f"Context menu requested for row: {row}")
+        
+        # بررسی اینکه آیا استراتژی در این سطر وجود دارد
+        check_item = self.table.item(row, 0)
+        if not check_item:
+            logger.debug(f"No check item found for row: {row}")
+            return
+        
+        strategy = check_item.data(Qt.ItemDataRole.UserRole + 1)
+        if not strategy:
+            logger.debug(f"No strategy data found for row: {row}")
+            return
+        
+        logger.debug(f"Found strategy: {getattr(strategy, 'strategy_name', 'Unknown')}")
         
         # ایجاد منو
         menu = QMenu(self.table)
@@ -627,17 +644,28 @@ class MainWindow(QMainWindow):
     def _open_payoff_chart_for_row(self, row: int):
         """باز کردن نمودار سود و زیان برای سطر مشخص"""
         if row < 0:
+            logger.warning(f"Invalid row index for chart: {row}")
             return
         
         check_item = self.table.item(row, 0)
         if not check_item:
+            logger.warning(f"No check item found for row: {row}")
             return
         
         strategy = check_item.data(Qt.ItemDataRole.UserRole + 1)
-        if strategy:
+        if not strategy:
+            logger.warning(f"No strategy found for row: {row}")
+            return
+        
+        try:
+            logger.info(f"Opening payoff chart for strategy: {getattr(strategy, 'strategy_name', 'Unknown')}")
             dialog = PayoffChartDialog(self)
             dialog.load_strategy(strategy, self._theme_mode)
             dialog.exec()
+            logger.info("Payoff chart dialog opened successfully")
+        except Exception as e:
+            logger.error(f"Error opening payoff chart dialog: {e}")
+            QMessageBox.critical(self, "خطا", f"خطا در باز کردن نمودار سود و زیان:\n{str(e)}")
     
     def _send_to_broker_from_row(self, row: int):
         """ارسال استراتژی از سطر مشخص به کارگزاری"""
