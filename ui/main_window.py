@@ -26,6 +26,7 @@ from ui.workers import (
 from ui.symbol_filter_dialog import SymbolFilterDialog
 from ui.settings_dialog import SettingsDialog
 from ui.settings_manager import settings_manager
+from ui.payoff_chart_dialog import PayoffChartDialog
 from ui import theme as ui_theme
 from alerts.bale_notifier import BaleNotifier
 
@@ -570,8 +571,13 @@ class MainWindow(QMainWindow):
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         
+        # فعال کردن منوی کلیک راست
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(self._on_table_context_menu)
+        
         table.itemChanged.connect(self._on_checkbox_changed)
         table.itemClicked.connect(self._on_table_row_clicked)
+        table.itemDoubleClicked.connect(self._on_table_row_double_clicked)
         
         return table
 
@@ -583,6 +589,89 @@ class MainWindow(QMainWindow):
             strategy = check_item.data(Qt.ItemDataRole.UserRole + 1)
             if strategy:
                 self.inspector.load_strategy(strategy)
+
+    def _on_table_row_double_clicked(self, item: QTableWidgetItem):
+        """هنگام دابل‌کلیک روی سطر، پنجره نمودار سود و زیان باز می‌شود"""
+        self._open_payoff_chart_for_row(item.row())
+    
+    def _on_table_context_menu(self, pos):
+        """نمایش منوی کلیک راست روی جدول"""
+        # پیدا کردن سطر کلیک‌شده
+        item = self.table.itemAt(pos)
+        if not item:
+            return
+        
+        row = item.row()
+        if row < 0:
+            return
+        
+        # ایجاد منو
+        menu = QMenu(self.table)
+        
+        # گزینه ترسیم نمودار سود و زیان
+        chart_action = menu.addAction("📊 ترسیم نمودار سود و زیان")
+        chart_action.triggered.connect(lambda: self._open_payoff_chart_for_row(row))
+        
+        menu.addSeparator()
+        
+        # گزینه ارسال به کارگزاری
+        send_broker_action = menu.addAction("🚀 ارسال به کارگزاری")
+        send_broker_action.triggered.connect(lambda: self._send_to_broker_from_row(row))
+        
+        # گزینه ارسال به بله
+        send_bale_action = menu.addAction("📱 ارسال به بله")
+        send_bale_action.triggered.connect(lambda: self._send_to_bale_from_row(row))
+        
+        menu.exec(self.table.mapToGlobal(pos))
+    
+    def _open_payoff_chart_for_row(self, row: int):
+        """باز کردن نمودار سود و زیان برای سطر مشخص"""
+        if row < 0:
+            return
+        
+        check_item = self.table.item(row, 0)
+        if not check_item:
+            return
+        
+        strategy = check_item.data(Qt.ItemDataRole.UserRole + 1)
+        if strategy:
+            dialog = PayoffChartDialog(self)
+            dialog.load_strategy(strategy, self._theme_mode)
+            dialog.exec()
+    
+    def _send_to_broker_from_row(self, row: int):
+        """ارسال استراتژی از سطر مشخص به کارگزاری"""
+        if row < 0:
+            return
+        
+        # انتخاب سطر
+        check_item = self.table.item(row, 0)
+        if not check_item:
+            return
+        
+        # تیک‌زدن سطر (اگر قبلاً انتخاب نشده)
+        if check_item.checkState() != Qt.CheckState.Checked:
+            check_item.setCheckState(Qt.CheckState.Checked)
+        
+        # ارسال به کارگزاری
+        self.send_selected_to_broker()
+    
+    def _send_to_bale_from_row(self, row: int):
+        """ارسال استراتژی از سطر مشخص به بله"""
+        if row < 0:
+            return
+        
+        # انتخاب سطر
+        check_item = self.table.item(row, 0)
+        if not check_item:
+            return
+        
+        # تیک‌زدن سطر (اگر قبلاً انتخاب نشده)
+        if check_item.checkState() != Qt.CheckState.Checked:
+            check_item.setCheckState(Qt.CheckState.Checked)
+        
+        # ارسال به بله
+        self.send_selected_to_bale()
 
     def _on_checkbox_changed(self, item: QTableWidgetItem):
         if item.column() != 0:
