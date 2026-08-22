@@ -3,43 +3,95 @@
 
 """
 ماژول رابط کاربری (UI) پروژه Option Strategy Scanner
+شامل پنجره‌های اصلی، دیالوگ‌های تنظیمات، ورکرهای پس‌زمینه و کامپوننت‌های گرافیکی.
 """
 
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("OptionScanner.UI")
 
-# خروجی‌های اصلی ماژول جهت دسترسی ساده‌تر
+# لیست اجزای عمومی ماژول جهت دسترسی سریع‌تر
 __all__ = [
+    # پنجره اصلی و پنل‌های جانبی
     "MainWindow",
+    "StrategyInspectorWidget",
+    
+    # دیالوگ‌ها
+    "SettingsDialog",
+    "SymbolFilterDialog",
+    "StrategySettingsDialog",
+    "PayoffChartDialog",
+    
+    # ورکرهای پس‌زمینه و مدیریت داده
     "ScannerWorker",
     "AutoScannerWorker",
-    "SymbolFilterDialog",
-    "SettingsDialog",
+    "BrokerLoginWorker",
+    "StrategyExecutorWorker",
+    "TelemetryWorker",
+    "BatchUpdateManager",
+    
+    # مدل‌ها و کامپوننت‌های جدول
+    "FastStrategyTableModel",
+    "StrategyFilterProxyModel",
+    "StrategyCellDelegate",
+    
+    # مدیریت تنظیمات و تم
+    "settings_manager",
+    "SettingsManager",
 ]
 
-# ۱. وارد کردن پنجره اصلی
+# ۱. وارد کردن پنجره اصلی و پنل‌های بازرسی
 try:
-    from ui.main_window import MainWindow
+    from ui.main_window import MainWindow, StrategyInspectorWidget
 except ImportError as e:
-    logger.warning(f"MainWindow is not accessible: {e}")
+    logger.warning(f"MainWindow components are not accessible: {e}")
     MainWindow = None
+    StrategyInspectorWidget = None
 
-# ۲. وارد کردن ورکرهای پس‌زمینه (Multithreading)
+# ۲. وارد کردن پنجره‌های دیالوگ
 try:
-    from ui.workers import ScannerWorker, AutoScannerWorker
-except ImportError as e:
-    logger.warning(f"Background workers are not accessible: {e}")
-    ScannerWorker = None
-    AutoScannerWorker = None
+    from ui.settings_dialog import SettingsDialog
+except ImportError:
+    SettingsDialog = None
 
-# ۳. وارد کردن پنجره‌های دیالوگ (در صورت وجود)
 try:
     from ui.symbol_filter_dialog import SymbolFilterDialog
 except ImportError:
     SymbolFilterDialog = None
 
 try:
-    from ui.settings_dialog import SettingsDialog
+    from ui.strategy_settings_dialog import StrategySettingsDialog
 except ImportError:
-    SettingsDialog = None
+    StrategySettingsDialog = None
+
+try:
+    from ui.payoff_chart_dialog import PayoffChartDialog
+except ImportError:
+    PayoffChartDialog = None
+
+# ۳. وارد کردن ورکرهای پس‌زمینه و تلمتری (Multithreading)
+try:
+    from ui.workers import (
+        ScannerWorker,
+        AutoScannerWorker,
+        BrokerLoginWorker,
+        StrategyExecutorWorker,
+        TelemetryWorker,
+        BatchUpdateManager,
+    )
+except ImportError as e:
+    logger.warning(f"Background workers are not accessible: {e}")
+    ScannerWorker = None
+    AutoScannerWorker = None
+    BrokerLoginWorker = None
+    StrategyExecutorWorker = None
+    TelemetryWorker = None
+    BatchUpdateManager = None
+
+
+# ۵. مدیریت تنظیمات
+try:
+    from ui.settings_manager import settings_manager, SettingsManager
+except ImportError:
+    settings_manager = None
+    SettingsManager = None
