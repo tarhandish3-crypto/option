@@ -420,7 +420,7 @@ class OptionScanner:
         if is_stopped() or not snapshot or not getattr(snapshot, 'option_contracts', None):
             return [], 0.0
 
-        # ── فیلتر نمادهای بلاک‌شده توسط کاربر ──────────────────────
+        # ── فیلتر نمادهای بلاک‌شده توسط کاربر ─────────────────────
         excluded = set(settings_manager.get_excluded_symbols())
         if excluded:
             before_contracts = len(snapshot.option_contracts)
