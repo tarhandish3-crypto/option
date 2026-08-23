@@ -7,18 +7,17 @@ import logging
 from typing import Optional, List, Dict, Any
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QCheckBox, 
     QSpinBox, QLabel, QHeaderView, QMessageBox, QStatusBar,
-    QProgressBar, QFrame, QApplication, QToolButton, QMenu,
-    QSplitter, QGroupBox, QFileDialog, QScrollArea
+    QProgressBar, QFrame, QApplication, QSplitter, QFileDialog,
+    QMenu, QLineEdit
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtGui import QBrush, QColor
 
 from ui.workers import (
     ScannerWorker, 
-    AutoScannerWorker, 
     BrokerLoginWorker, 
     TelemetryWorker, 
     BatchUpdateManager
@@ -28,6 +27,8 @@ from ui.settings_dialog import SettingsDialog
 from ui.strategy_settings_dialog import StrategySettingsDialog
 from ui.settings_manager import settings_manager
 from ui.payoff_chart_dialog import PayoffChartDialog
+from ui.strategy_inspector import StrategyInspectorWidget
+from ui.table_components import StrategyCellDelegate
 from ui import theme as ui_theme
 from alerts.bale_notifier import BaleNotifier
 
@@ -37,7 +38,7 @@ logger = logging.getLogger("OptionScanner.UI.MainWindow")
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
-    """آیتم اختصاصی جدول جهت مرتب‌سازی صحیح عددی"""
+    """آیتم اختصاصی جدول جهت مرتب‌سازی صحیح عددی بر مبنای UserRole"""
     def __lt__(self, other):
         try:
             val_self = self.data(Qt.ItemDataRole.UserRole)
@@ -49,185 +50,10 @@ class NumericTableWidgetItem(QTableWidgetItem):
             return super().__lt__(other)
 
 
-class StrategyInspectorWidget(QGroupBox):
-    """
-    پنل اختصاصی و متمرکز تحلیل عمیق استراتژی (بدون شبیه‌ساز و دکمه‌های تکراری)
-    """
-    def __init__(self, parent: Optional[QWidget] = None):
-        super().__init__("🔍 تحلیل عمیق و مشخصات استراتژی", parent)
-        self.current_strategy: Any = None
-        self._theme_mode: ui_theme.ThemeMode = "dark"
-        self._init_ui()
-
-    def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-        layout.setContentsMargins(12, 14, 12, 12)
-
-        # ۱. هدر عنوان
-        self.lbl_strategy_title = QLabel("هیچ استراتژی‌ای انتخاب نشده است")
-        self.lbl_strategy_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #58a6ff;")
-        self.lbl_strategy_title.setWordWrap(True)
-        layout.addWidget(self.lbl_strategy_title)
-
-        # ۲. کارت‌های آماری متریک‌های مالی
-        metrics_group = QGroupBox("خلاصه مالی و ریسک")
-        metrics_layout = QGridLayout(metrics_group)
-        metrics_layout.setSpacing(6)
-
-        self.lbl_margin = QLabel("وجه تضمین: -")
-        self.lbl_roi = QLabel("بازده روی مارجین: -")
-        self.lbl_max_profit = QLabel("حداکثر سود: -")
-        self.lbl_max_risk = QLabel("حداکثر ریسک: -")
-        self.lbl_breakeven = QLabel("نقطه سربه‌سر: -")
-        self.lbl_pop = QLabel("احتمال سود (PoP): -")
-
-        self.lbl_margin.setStyleSheet("color: #d29922; font-weight: bold;")
-        self.lbl_roi.setStyleSheet("color: #3fb950; font-weight: bold;")
-        self.lbl_max_profit.setStyleSheet("color: #3fb950;")
-        self.lbl_max_risk.setStyleSheet("color: #f85149;")
-
-        metrics_layout.addWidget(self.lbl_margin, 0, 0)
-        metrics_layout.addWidget(self.lbl_roi, 0, 1)
-        metrics_layout.addWidget(self.lbl_max_profit, 1, 0)
-        metrics_layout.addWidget(self.lbl_max_risk, 1, 1)
-        metrics_layout.addWidget(self.lbl_breakeven, 2, 0)
-        metrics_layout.addWidget(self.lbl_pop, 2, 1)
-        layout.addWidget(metrics_group)
-
-        # ۳. بخش پارامترهای یونانی (Option Greeks)
-        greeks_group = QGroupBox("پارامترهای حساسیت یونانی (Greeks)")
-        greeks_layout = QHBoxLayout(greeks_group)
-        greeks_layout.setContentsMargins(6, 6, 6, 6)
-
-        self.lbl_delta = QLabel("Δ دلتا: -")
-        self.lbl_gamma = QLabel("Γ گاما: -")
-        self.lbl_theta = QLabel("Θ تتا: -")
-        self.lbl_vega = QLabel("ν وگا: -")
-
-        for lbl in (self.lbl_delta, self.lbl_gamma, self.lbl_theta, self.lbl_vega):
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("font-weight: bold; background-color: rgba(255,255,255,0.04); border-radius: 4px; padding: 4px;")
-            greeks_layout.addWidget(lbl)
-
-        layout.addWidget(greeks_group)
-
-        # ۴. جدول تفکیک پایه‌ها (Legs Breakdown)
-        lbl_legs = QLabel("📌 پایه‌های معاملاتی (Legs Breakdown):")
-        lbl_legs.setStyleSheet("font-weight: bold; margin-top: 4px;")
-        layout.addWidget(lbl_legs)
-
-        self.legs_table = QTableWidget(0, 5)
-        self.legs_table.setHorizontalHeaderLabels(["نوع", "قرارداد / سررسید", "قیمت", "تعداد", "سمت"])
-        self.legs_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.legs_table.setFixedHeight(140)
-        self.legs_table.setAlternatingRowColors(True)
-        self.legs_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        layout.addWidget(self.legs_table)
-
-        layout.addStretch()
-
-    def set_theme_mode(self, mode: ui_theme.ThemeMode):
-        self._theme_mode = mode
-        self.setStyleSheet(ui_theme.get_inspector_frame_style(mode))
-
-    def load_strategy(self, strategy: Any):
-        """بارگذاری اطلاعات استراتژی انتخاب‌شده"""
-        self.current_strategy = strategy
-        if not strategy:
-            self.clear_inspector()
-            return
-
-        strat_name = str(getattr(strategy, 'strategy_name', 'استراتژی') or 'استراتژی')
-        ticker = str(getattr(strategy, 'underlying_ticker', '-') or '-')
-        rank = getattr(strategy, 'rank', None)
-        rank_str = f" [رتبه {rank}]" if rank is not None else ""
-        self.lbl_strategy_title.setText(f"🎯 {strat_name} روی {ticker}{rank_str}")
-
-        margin_req = getattr(strategy, 'margin_required', 0)
-        roi_val = getattr(strategy, 'return_on_margin', 0.0)
-        max_p = getattr(strategy, 'max_profit', 0)
-        max_l = getattr(strategy, 'max_loss', 0)
-        pop_val = getattr(strategy, 'probability_of_profit', None)
-
-        metadata = getattr(strategy, 'metadata', {})
-        if isinstance(metadata, dict):
-            margin_req = margin_req or metadata.get('margin_required', 0)
-            roi_val = roi_val or metadata.get('return_on_margin', 0.0)
-            max_p = max_p or metadata.get('max_profit', 0)
-            max_l = max_l or metadata.get('max_loss', 0)
-            pop_val = pop_val or metadata.get('pop', None)
-
-        self.lbl_margin.setText(f"وجه تضمین: {ui_theme.format_rial(margin_req, unit='ریال')}")
-        self.lbl_roi.setText(f"بازده روی مارجین: {ui_theme.format_percent(roi_val)}")
-        self.lbl_max_profit.setText(f"حداکثر سود: {ui_theme.format_rial(max_p, unit='ریال')}")
-        self.lbl_max_risk.setText(f"حداکثر ریسک: {ui_theme.format_rial(max_l, unit='ریال')}")
-
-        pop_str = f"{pop_val * 100:.1f}%" if pop_val is not None else "محاسبه‌نشده"
-        self.lbl_pop.setText(f"احتمال سود: {pop_str}")
-
-        # نقاط سربه‌سر
-        be_list = getattr(strategy, 'break_even_points', [])
-        if not be_list and isinstance(metadata, dict):
-            be_list = metadata.get('break_even_points', [])
-        be_str = ", ".join(ui_theme.format_rial(p) for p in be_list) if be_list else "-"
-        self.lbl_breakeven.setText(f"سربه‌سر: {be_str}")
-
-        # پارامترهای یونانی
-        greeks = getattr(strategy, 'greeks', {})
-        if not greeks and isinstance(metadata, dict):
-            greeks = metadata.get('greeks', {})
-
-        delta_val = greeks.get('delta', getattr(strategy, 'delta', None)) if isinstance(greeks, dict) else None
-        gamma_val = greeks.get('gamma', getattr(strategy, 'gamma', None)) if isinstance(greeks, dict) else None
-        theta_val = greeks.get('theta', getattr(strategy, 'theta', None)) if isinstance(greeks, dict) else None
-        vega_val  = greeks.get('vega', getattr(strategy, 'vega', None)) if isinstance(greeks, dict) else None
-
-        self.lbl_delta.setText(f"Δ دلتا: {ui_theme.format_greek(delta_val)}")
-        self.lbl_gamma.setText(f"Γ گاما: {ui_theme.format_greek(gamma_val, decimals=4)}")
-        self.lbl_theta.setText(f"Θ تتا: {ui_theme.format_greek(theta_val)}")
-        self.lbl_vega.setText(f"ν وگا: {ui_theme.format_greek(vega_val)}")
-
-        # پر کردن جدول پایه‌ها
-        legs = getattr(strategy, 'legs', [])
-        self.legs_table.setRowCount(len(legs))
-        for r, leg in enumerate(legs):
-            contract = getattr(leg, 'contract', None)
-            symbol_str = contract.ticker if contract else getattr(strategy, 'underlying_ticker', 'سهام پایه')
-            expiry_str = ui_theme.format_jalali_date(getattr(contract, 'expiry_date', '')) if contract else '-'
-            price_val = getattr(leg, 'entry_price', getattr(contract, 'close_price', 0))
-            ratio_val = getattr(leg, 'ratio', 1)
-            side_fa = "خرید" if str(getattr(leg, 'side', '')).upper() in ("BUY", "SIDE.BUY") else "فروش"
-            opt_type = str(getattr(contract, 'option_type', 'STOCK'))
-
-            self.legs_table.setItem(r, 0, QTableWidgetItem(opt_type))
-            self.legs_table.setItem(r, 1, QTableWidgetItem(f"{symbol_str} | {expiry_str}"))
-            self.legs_table.setItem(r, 2, QTableWidgetItem(ui_theme.format_rial(price_val)))
-            self.legs_table.setItem(r, 3, QTableWidgetItem(str(ratio_val)))
-            
-            side_item = QTableWidgetItem(side_fa)
-            side_item.setForeground(QBrush(QColor("#3fb950" if side_fa == "خرید" else "#f85149")))
-            self.legs_table.setItem(r, 4, side_item)
-
-    def clear_inspector(self):
-        self.current_strategy = None
-        self.lbl_strategy_title.setText("هیچ استراتژی‌ای انتخاب نشده است")
-        self.lbl_margin.setText("وجه تضمین: -")
-        self.lbl_roi.setText("بازده روی مارجین: -")
-        self.lbl_max_profit.setText("حداکثر سود: -")
-        self.lbl_max_risk.setText("حداکثر ریسک: -")
-        self.lbl_breakeven.setText("نقطه سربه‌سر: -")
-        self.lbl_pop.setText("احتمال سود (PoP): -")
-        self.lbl_delta.setText("Δ دلتا: -")
-        self.lbl_gamma.setText("Γ گاما: -")
-        self.lbl_theta.setText("Θ تتا: -")
-        self.lbl_vega.setText("ν وگا: -")
-        self.legs_table.setRowCount(0)
-
-
 class MainWindow(QMainWindow):
     """
-    پنجره اصلی برنامه Option Strategy Scanner با رابط کاربری مدرن و پایدار
+    پنجره اصلی برنامه Option Strategy Scanner
+    شامل نوار ابزار متمرکز، جدول بهینه‌شده با میکروچارت و هیت‌مپ، پنل Inspector و منوی عملیات
     """
     status_update_signal = Signal(str)
     
@@ -242,7 +68,6 @@ class MainWindow(QMainWindow):
         if config_dict:
             self.config.update(config_dict)
         
-        # بارگذاری استراتژی‌های فعال ذخیره‌شده
         active_strats = self.config.get("active_strategies", None)
         if active_strats:
             config.ACTIVE_STRATEGIES = active_strats
@@ -253,21 +78,20 @@ class MainWindow(QMainWindow):
         )
         
         self.worker: Optional[ScannerWorker] = None
-        self.auto_worker: Optional[AutoScannerWorker] = None
         self.telemetry_worker: Optional[TelemetryWorker] = None
         self.batch_manager: Optional[BatchUpdateManager] = None
         
         self.current_results: List = []
         self.price_steps: List[float] = []
+        self._active_quick_filters: set[str] = set()
+
         self._theme_mode: ui_theme.ThemeMode = ui_theme.resolve_theme(
             self.config.get("theme", ui_theme.THEME_LIGHT)
         )
         
-        # ۱. راه‌اندازی رابط کاربری
         self.init_ui()
         self._apply_theme(self.config.get("theme", ui_theme.THEME_LIGHT))
         
-        # ۲. راه‌اندازی اعلان‌گر بله
         bale_cfg = settings_manager.get_bale_config()
         self._bale_notifier = BaleNotifier(
             bot_token=bale_cfg.get("bot_token", ""),
@@ -276,14 +100,11 @@ class MainWindow(QMainWindow):
         self._bale_enabled = bale_cfg.get("enabled", False)
         self._bale_top_n   = bale_cfg.get("top_n", 2)
 
-        # ۳. کارگزاری
         self._broker = None
         self._broker_connected = False
         self._login_worker: Optional[BrokerLoginWorker] = None
 
-        # ۴. راه‌اندازی سرویس‌های پس‌زمینه
         self._init_background_services()
-
         self.load_settings()
         self._show_empty_state()
         
@@ -316,10 +137,45 @@ class MainWindow(QMainWindow):
             headers.append(fmt.format(val))
         return headers
 
+    def _apply_layout_direction(self, layout_dir: str) -> None:
+        """تنظیم جهت چیدمان کل پنجره و جدول نتایج"""
+        app = QApplication.instance()
+        is_ltr = "چپ‌چین" in str(layout_dir) or "LTR" in str(layout_dir).upper() or layout_dir == "ltr"
+        
+        if app:
+            ui_theme.apply_layout_direction(app, "ltr" if is_ltr else "rtl")
+        
+        direction = Qt.LayoutDirection.LeftToRight if is_ltr else Qt.LayoutDirection.RightToLeft
+        self.setLayoutDirection(direction)
+        self._apply_layout_to_all_widgets(direction)
+
+    def _apply_layout_to_all_widgets(self, direction: Qt.LayoutDirection) -> None:
+        is_ltr = (direction == Qt.LayoutDirection.LeftToRight)
+
+        if hasattr(self, "_top_toolbar"):
+            self._top_toolbar.setLayoutDirection(direction)
+        if hasattr(self, "_filter_toolbar"):
+            self._filter_toolbar.setLayoutDirection(direction)
+        if hasattr(self, "_bottom_toolbar"):
+            self._bottom_toolbar.setLayoutDirection(direction)
+            
+        if hasattr(self, "table"):
+            # اعمال مستقیم جهت به جدول (بدون معکوس کردن)
+            self.table.setLayoutDirection(direction)
+            header = self.table.horizontalHeader()
+            if header:
+                header.setLayoutDirection(direction)
+                header.setDefaultAlignment(
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter if is_ltr
+                    else Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                )
+            # بازنشانی و ترسیم مجدد ردیف‌های جدول برای اعمال تراز جدید
+            if self.current_results:
+                self.populate_table(self.current_results)
+
     def init_ui(self):
-        """راه‌اندازی ساختار بصری مدرن ترمینال معاملاتی"""
         self.setWindowTitle("Option Strategy Scanner — دستیار هوشمند معاملات اختیار معامله")
-        self.resize(1420, 840)
+        self.resize(1440, 840)
         self.showMaximized()
         
         layout_dir = self.config.get("layout_direction", "راست‌چین (RTL)")
@@ -328,20 +184,22 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setSpacing(8)
-        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(10, 8, 10, 8)
 
-        # نوار ابزار بالا
+        # ۱. نوار ابزار بالا
         self._top_toolbar = self._create_toolbar()
         main_layout.addWidget(self._top_toolbar)
 
-        # نوار پیشرفت باریک مدرن
+        # ۲. نوار فیلتر و جستجوی سریع
+        self._filter_toolbar = self._create_quick_filter_bar()
+        main_layout.addWidget(self._filter_toolbar)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.progress_bar.setMaximumHeight(16)
+        self.progress_bar.setMaximumHeight(14)
         main_layout.addWidget(self.progress_bar)
 
-        # چیدمان ماژولار با Splitter (جدول اصلی + پنل Inspector)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         
         self.table = self._create_table()
@@ -354,126 +212,19 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(1, 3)
         main_layout.addWidget(self.splitter, stretch=1)
 
-        # نوار ابزار پایین
         self._bottom_toolbar = self._create_bottom_toolbar()
         main_layout.addWidget(self._bottom_toolbar)
 
-        # نوار وضعیت هوشمند و تلمتری
         self._setup_status_bar()
 
-    def _setup_status_bar(self):
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-
-        self.lbl_broker_badge = QLabel("○ کارگزاری: قطع")
-        self.lbl_broker_badge.setStyleSheet("color: #8c9bae; margin-left: 10px;")
-        
-        self.lbl_bale_badge = QLabel("○ بله: غیرفعال")
-        self.lbl_bale_badge.setStyleSheet("color: #8c9bae; margin-left: 10px;")
-
-        self.lbl_ping = QLabel("پینگ TSETMC: -- ms")
-        self.lbl_ping.setStyleSheet("color: #8c9bae; margin-left: 10px;")
-
-        self.lbl_ram = QLabel("RAM: -- MB")
-        self.lbl_ram.setStyleSheet("color: #8c9bae; margin-left: 10px;")
-
-        self.status_bar.addPermanentWidget(self.lbl_broker_badge)
-        self.status_bar.addPermanentWidget(self.lbl_bale_badge)
-        self.status_bar.addPermanentWidget(self.lbl_ping)
-        self.status_bar.addPermanentWidget(self.lbl_ram)
-        
-        self.status_update_signal.connect(self.status_bar.showMessage)
-        self.status_bar.showMessage("✅ آماده به کار — برای شروع، دکمه '🔄 اسکن دستی' را بزنید")
-
-    def _init_background_services(self):
-        self.batch_manager = BatchUpdateManager(interval_ms=150, parent=self)
-        self.telemetry_worker = TelemetryWorker(host="tsetmc.com", interval_sec=2.5, parent=self)
-        self.telemetry_worker.telemetry_updated.connect(self._on_telemetry_updated)
-        self.telemetry_worker.start()
-
-    @Slot(dict)
-    def _on_telemetry_updated(self, data: dict):
-        ping = data.get("ping_ms", -1)
-        ram = data.get("ram_usage_mb", 0.0)
-
-        if ping >= 0:
-            self.lbl_ping.setText(f"🌐 پینگ TSETMC: {ping}ms")
-            self.lbl_ping.setStyleSheet("color: #3fb950; margin-left: 10px;")
-        else:
-            self.lbl_ping.setText("🌐 پینگ TSETMC: قطع")
-            self.lbl_ping.setStyleSheet("color: #f85149; margin-left: 10px;")
-
-        self.lbl_ram.setText(f"💾 RAM: {ram:.1f} MB")
-
-        if self._bale_enabled and self._bale_notifier.is_configured:
-            self.lbl_bale_badge.setText("● بله: آنلاین")
-            self.lbl_bale_badge.setStyleSheet("color: #3fb950; margin-left: 10px;")
-        else:
-            self.lbl_bale_badge.setText("○ بله: غیرفعال")
-            self.lbl_bale_badge.setStyleSheet("color: #8c9bae; margin-left: 10px;")
-
-        if self._broker_connected:
-            self.lbl_broker_badge.setText("● کارگزاری: متصل")
-            self.lbl_broker_badge.setStyleSheet("color: #3fb950; margin-left: 10px;")
-        else:
-            self.lbl_broker_badge.setText("○ کارگزاری: قطع")
-            self.lbl_broker_badge.setStyleSheet("color: #8c9bae; margin-left: 10px;")
-
-    def _apply_theme(self, theme_setting: str) -> None:
-        self._theme_mode = ui_theme.resolve_theme(theme_setting)
-        app = QApplication.instance()
-        if app is not None:
-            ui_theme.apply_app_theme(app, theme_setting)
-        self._refresh_widget_styles()
-        self.inspector.set_theme_mode(self._theme_mode)
-        if self.current_results:
-            self.populate_table(self.current_results)
-        elif self.table.rowCount() == 1:
-            self._show_empty_state()
-
-    def _apply_layout_direction(self, layout_dir: str) -> None:
-        app = QApplication.instance()
-        is_ltr = "چپ‌چین" in layout_dir or "LTR" in layout_dir.upper() or layout_dir == "ltr"
-        
-        if app:
-            ui_theme.apply_layout_direction(app, "ltr" if is_ltr else "rtl")
-        
-        direction = Qt.LayoutDirection.LeftToRight if is_ltr else Qt.LayoutDirection.RightToLeft
-        self.setLayoutDirection(direction)
-        self._apply_layout_to_all_widgets(direction)
-
-    def _apply_layout_to_all_widgets(self, direction: Qt.LayoutDirection) -> None:
-        table_direction = Qt.LayoutDirection.RightToLeft if direction == Qt.LayoutDirection.LeftToRight else Qt.LayoutDirection.LeftToRight
-        if hasattr(self, "_top_toolbar"):
-            self._top_toolbar.setLayoutDirection(direction)
-        if hasattr(self, "_bottom_toolbar"):
-            self._bottom_toolbar.setLayoutDirection(direction)
-        if hasattr(self, "table"):
-            self.table.setLayoutDirection(table_direction)
-            header = self.table.horizontalHeader()
-            if header:
-                header.setDefaultAlignment(
-                    Qt.AlignmentFlag.AlignRight if direction == Qt.LayoutDirection.LeftToRight 
-                    else Qt.AlignmentFlag.AlignLeft
-                )
-
-    def _refresh_widget_styles(self) -> None:
-        mode = self._theme_mode
-        if hasattr(self, "_top_toolbar"):
-            self._top_toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(mode))
-        if hasattr(self, "_bottom_toolbar"):
-            self._bottom_toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(mode))
-        if hasattr(self, "lbl_interval_min"):
-            self.lbl_interval_min.setStyleSheet(ui_theme.get_interval_label_style(mode))
-
     def _create_toolbar(self) -> QFrame:
-        """ساخت نوار ابزار بالا همراه با دکمه تنظیمات استراتژی‌ها"""
         toolbar = QFrame()
         toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(self._theme_mode))
         layout = QHBoxLayout(toolbar)
         layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
 
-        # ۱. دکمه اسکن دستی
+        # دکمه اسکن بازار
         self.btn_refresh = QPushButton("🔄 اسکن بازار")
         self.btn_refresh.setStyleSheet("""
             QPushButton {
@@ -490,7 +241,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self._create_separator())
 
-        # ۲. اسکن خودکار و زمان‌بندی
+        # تکرار خودکار
         self.chk_auto_scan = QCheckBox("تکرار خودکار:")
         self.chk_auto_scan.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.chk_auto_scan.stateChanged.connect(self.toggle_auto_scan)
@@ -512,14 +263,14 @@ class MainWindow(QMainWindow):
         self.chk_auto_scan.setChecked(True)
         layout.addStretch()
 
-        # ۳. دکمه جدید تنظیمات استراتژی‌ها
-        self.btn_strategy_settings = QPushButton("🎯 تنظیمات استراتژی‌ها")
+        # دکمه یکپارچه تنظیمات و فیلترهای استراتژی‌ها
+        self.btn_strategy_settings = QPushButton("🎯 تنظیمات و فیلترهای استراتژی")
         self.btn_strategy_settings.setStyleSheet("""
             QPushButton {
                 background-color: #1f6feb;
                 color: white;
                 font-weight: bold;
-                padding: 6px 14px;
+                padding: 6px 16px;
                 border-radius: 5px;
             }
             QPushButton:hover { background-color: #388bfd; }
@@ -527,17 +278,90 @@ class MainWindow(QMainWindow):
         self.btn_strategy_settings.clicked.connect(self.open_strategy_settings_dialog)
         layout.addWidget(self.btn_strategy_settings)
 
-        # ۴. دکمه فیلتر نمادها
+        # فیلتر نمادها
         self.btn_symbol_filter = QPushButton("🔍 فیلتر نمادها")
         self.btn_symbol_filter.clicked.connect(self.open_symbol_filter_dialog)
         layout.addWidget(self.btn_symbol_filter)
 
-        # ۵. تنظیمات عمومی
+        # تنظیمات سیستم
         self.btn_settings = QPushButton("⚙️ تنظیمات سیستم")
         self.btn_settings.clicked.connect(self.open_settings_dialog)
         layout.addWidget(self.btn_settings)
 
         return toolbar
+
+    def _create_quick_filter_bar(self) -> QFrame:
+        """نوار جستجوی سریع و چیپ‌های فیلتر بلادرنگ"""
+        frame = QFrame()
+        frame.setStyleSheet(ui_theme.get_toolbar_frame_style(self._theme_mode))
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+
+        self.txt_quick_search = QLineEdit()
+        self.txt_quick_search.setPlaceholderText("🔍 جستجوی زنده در نماد، استراتژی یا پایه‌ها...")
+        self.txt_quick_search.setFixedWidth(280)
+        self.txt_quick_search.textChanged.connect(self._apply_quick_filters)
+        layout.addWidget(self.txt_quick_search)
+
+        layout.addWidget(self._create_separator())
+
+        self.chip_arbitrage = QPushButton("🔒 فقط بدون ریسک (آربیتراژ)")
+        self.chip_arbitrage.clicked.connect(lambda: self._toggle_chip("arbitrage", self.chip_arbitrage))
+        layout.addWidget(self.chip_arbitrage)
+
+        self.chip_dte = QPushButton("📅 سررسید زیر ۳۰ روز")
+        self.chip_dte.clicked.connect(lambda: self._toggle_chip("dte_30", self.chip_dte))
+        layout.addWidget(self.chip_dte)
+
+        self.chip_roi = QPushButton("🚀 بازده بالای ۱۵٪")
+        self.chip_roi.clicked.connect(lambda: self._toggle_chip("roi_15", self.chip_roi))
+        layout.addWidget(self.chip_roi)
+
+        layout.addStretch()
+        self._refresh_chips_style()
+        return frame
+
+    def _toggle_chip(self, key: str, btn: QPushButton):
+        if key in self._active_quick_filters:
+            self._active_quick_filters.remove(key)
+        else:
+            self._active_quick_filters.add(key)
+        self._refresh_chips_style()
+        self._apply_quick_filters()
+
+    def _refresh_chips_style(self):
+        for key, btn in (("arbitrage", self.chip_arbitrage), ("dte_30", self.chip_dte), ("roi_15", self.chip_roi)):
+            active = key in self._active_quick_filters
+            btn.setStyleSheet(ui_theme.get_filter_chip_style(active, self._theme_mode))
+
+    def _apply_quick_filters(self):
+        query = self.txt_quick_search.text().strip().lower()
+        filtered = []
+        for strat in self.current_results:
+            name = str(getattr(strat, 'strategy_name', '')).lower()
+            ticker = str(getattr(strat, 'underlying_ticker', '')).lower()
+            
+            if query and (query not in name and query not in ticker):
+                continue
+
+            if "arbitrage" in self._active_quick_filters:
+                if "conversion" not in name and "box" not in name and "آربیتراژ" not in name:
+                    continue
+
+            if "dte_30" in self._active_quick_filters:
+                dte = int(getattr(strat, 'days_to_maturity', 0))
+                if dte > 30:
+                    continue
+
+            if "roi_15" in self._active_quick_filters:
+                roi = float(getattr(strat, 'return_on_margin', 0.0) or 0.0)
+                if roi < 15.0:
+                    continue
+
+            filtered.append(strat)
+
+        self.populate_table(filtered)
 
     def _create_separator(self) -> QFrame:
         separator = QFrame()
@@ -556,6 +380,8 @@ class MainWindow(QMainWindow):
         table.setColumnCount(len(all_headers))
         table.setHorizontalHeaderLabels(all_headers)
         
+        table.setItemDelegate(StrategyCellDelegate(table))
+
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSortIndicatorShown(True)
@@ -601,26 +427,67 @@ class MainWindow(QMainWindow):
         if not item:
             return
         row = item.row()
-        if row < 0:
+        if row < 0 or row >= self.table.rowCount():
             return
-        
+
         check_item = self.table.item(row, 0)
         strategy = check_item.data(Qt.ItemDataRole.UserRole + 1) if check_item else None
+        if not strategy and row < len(self.current_results):
+            strategy = self.current_results[row]
+
         if not strategy:
             return
-        
+
         menu = QMenu(self.table)
-        chart_action = menu.addAction("📊 ترسیم نمودار سود و زیان (Payoff)")
-        chart_action.triggered.connect(lambda: self._open_payoff_chart_for_row(row))
+        action_chart = menu.addAction("📊 ترسیم نمودار سود و زیان (Payoff)")
+        action_chart.triggered.connect(lambda: self._open_payoff_chart_for_row(row))
         
         menu.addSeparator()
-        send_broker_action = menu.addAction("🚀 ارسال به کارگزاری")
-        send_broker_action.triggered.connect(lambda: self._send_to_broker_from_row(row))
-        
-        send_bale_action = menu.addAction("📱 ارسال به بله")
-        send_bale_action.triggered.connect(lambda: self._send_to_bale_from_row(row))
-        
+        action_broker = menu.addAction("🚀 ارسال مستقیم به کارگزاری")
+        action_broker.triggered.connect(lambda: self._send_to_broker_from_row(row))
+
+        action_bale = menu.addAction("📱 ارسال به پیام‌رسان بله")
+        action_bale.triggered.connect(lambda: self._send_to_bale_from_row(row))
+
+        menu.addSeparator()
+        action_copy = menu.addAction("📋 کپی مشخصات استراتژی")
+        action_copy.triggered.connect(lambda: self._copy_strategy_to_clipboard(strategy))
+
         menu.exec(self.table.mapToGlobal(pos))
+
+    def _send_to_broker_from_row(self, row: int):
+        if row < 0 or row >= self.table.rowCount():
+            return
+        check_item = self.table.item(row, 0)
+        if check_item and check_item.checkState() != Qt.CheckState.Checked:
+            check_item.setCheckState(Qt.CheckState.Checked)
+        self.send_selected_to_broker()
+
+    def _send_to_bale_from_row(self, row: int):
+        if row < 0 or row >= self.table.rowCount():
+            return
+        check_item = self.table.item(row, 0)
+        strategy = check_item.data(Qt.ItemDataRole.UserRole + 1) if check_item else None
+        if strategy:
+            self._bale_notifier.send_scan_results([strategy], top_n=1)
+            self.status_update_signal.emit(f"📱 استراتژی {getattr(strategy, 'strategy_name', '')} به بله ارسال شد")
+
+    def _copy_strategy_to_clipboard(self, strategy: Any):
+        strat_name = str(getattr(strategy, 'strategy_name', 'استراتژی'))
+        ticker = str(getattr(strategy, 'underlying_ticker', '-'))
+        legs = getattr(strategy, 'legs', [])
+        parts = []
+        for leg in legs:
+            contract = getattr(leg, 'contract', None)
+            t = contract.ticker if contract else 'سهام'
+            s = "خرید" if str(getattr(leg, 'side', '')).upper() in ("BUY", "SIDE.BUY") else "فروش"
+            r = getattr(leg, 'ratio', 1)
+            parts.append(f"{t} ({r}x{s})")
+        positions_str = " | ".join(parts)
+
+        text = f"🎯 استراتژی: {strat_name}\n📌 نماد پایه: {ticker}\n📋 پایه‌ها: {positions_str}"
+        QApplication.clipboard().setText(text)
+        self.status_update_signal.emit("📋 اطلاعات استراتژی در کلیپ‌بورد کپی شد")
 
     def _open_payoff_chart_for_row(self, row: int):
         if row < 0 or row >= self.table.rowCount():
@@ -642,22 +509,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Error opening payoff chart: {e}")
             QMessageBox.critical(self, "خطا", f"خطا در باز کردن نمودار:\n{e}")
-
-    def _send_to_broker_from_row(self, row: int):
-        if row < 0:
-            return
-        check_item = self.table.item(row, 0)
-        if check_item and check_item.checkState() != Qt.CheckState.Checked:
-            check_item.setCheckState(Qt.CheckState.Checked)
-        self.send_selected_to_broker()
-
-    def _send_to_bale_from_row(self, row: int):
-        if row < 0:
-            return
-        check_item = self.table.item(row, 0)
-        if check_item and check_item.checkState() != Qt.CheckState.Checked:
-            check_item.setCheckState(Qt.CheckState.Checked)
-        self.send_selected_to_bale()
 
     def _on_checkbox_changed(self, item: QTableWidgetItem):
         if item.column() != 0:
@@ -718,8 +569,6 @@ class MainWindow(QMainWindow):
     def load_settings(self):
         auto_scan_enabled = self.config.get('auto_scan_enabled', True)
         self.chk_auto_scan.setChecked(auto_scan_enabled)
-
-    # ==================== متدهای اسکن و اجرا ====================
 
     def start_scan(self):
         if self.worker is not None and self.worker.isRunning():
@@ -956,17 +805,15 @@ class MainWindow(QMainWindow):
         self.btn_symbol_filter.setEnabled(enabled)
         self.btn_settings.setEnabled(enabled)
 
-    # ==================== دیالوگ‌ها و تنظیمات ====================
-
     def open_strategy_settings_dialog(self):
-        """باز کردن دیالوگ تنظیم و انتخاب استراتژی‌های فعال"""
+        """باز کردن پنجره یکپارچه فعال‌سازی استراتژی‌ها و تنظیم دامنه‌های سودآوری"""
         dialog = StrategySettingsDialog(self)
         dialog.strategies_updated.connect(self._on_active_strategies_updated)
         dialog.exec()
 
     def _on_active_strategies_updated(self, active_strategies: list):
         count = len(active_strategies)
-        self.status_update_signal.emit(f"🎯 تعداد {count} استراتژی برای اسکن فعال شد.")
+        self.status_update_signal.emit(f"🎯 تعداد {count} استراتژی با فیلترهای بازه به‌روزرسانی و فعال شدند.")
         logger.info(f"Updated active strategies: {active_strategies}")
 
     def open_symbol_filter_dialog(self):
@@ -1002,7 +849,87 @@ class MainWindow(QMainWindow):
         self._apply_theme(new_settings.get("theme", ui_theme.THEME_LIGHT))
         self._apply_layout_direction(new_settings.get("layout_direction", "راست‌چین (RTL)"))
 
-    # ==================== عملیات اشتراک‌گذاری و اجرای سفارش ====================
+    def _apply_theme(self, theme_setting: str) -> None:
+        self._theme_mode = ui_theme.resolve_theme(theme_setting)
+        app = QApplication.instance()
+        if app is not None:
+            ui_theme.apply_app_theme(app, theme_setting)
+        self._refresh_widget_styles()
+        self.inspector.set_theme_mode(self._theme_mode)
+        self._refresh_chips_style()
+        if self.current_results:
+            self.populate_table(self.current_results)
+        elif self.table.rowCount() == 1:
+            self._show_empty_state()
+
+    def _refresh_widget_styles(self) -> None:
+        mode = self._theme_mode
+        if hasattr(self, "_top_toolbar"):
+            self._top_toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(mode))
+        if hasattr(self, "_filter_toolbar"):
+            self._filter_toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(mode))
+        if hasattr(self, "_bottom_toolbar"):
+            self._bottom_toolbar.setStyleSheet(ui_theme.get_toolbar_frame_style(mode))
+        if hasattr(self, "lbl_interval_min"):
+            self.lbl_interval_min.setStyleSheet(ui_theme.get_interval_label_style(mode))
+
+    def _setup_status_bar(self):
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
+
+        self.lbl_broker_badge = QLabel("○ کارگزاری: قطع")
+        self.lbl_broker_badge.setStyleSheet("color: #8c9bae; margin-left: 10px;")
+        
+        self.lbl_bale_badge = QLabel("○ بله: غیرفعال")
+        self.lbl_bale_badge.setStyleSheet("color: #8c9bae; margin-left: 10px;")
+
+        self.lbl_ping = QLabel("پینگ TSETMC: -- ms")
+        self.lbl_ping.setStyleSheet("color: #8c9bae; margin-left: 10px;")
+
+        self.lbl_ram = QLabel("RAM: -- MB")
+        self.lbl_ram.setStyleSheet("color: #8c9bae; margin-left: 10px;")
+
+        self.status_bar.addPermanentWidget(self.lbl_broker_badge)
+        self.status_bar.addPermanentWidget(self.lbl_bale_badge)
+        self.status_bar.addPermanentWidget(self.lbl_ping)
+        self.status_bar.addPermanentWidget(self.lbl_ram)
+        
+        self.status_update_signal.connect(self.status_bar.showMessage)
+        self.status_bar.showMessage("✅ آماده به کار — برای شروع، دکمه '🔄 اسکن بازار' را بزنید")
+
+    def _init_background_services(self):
+        self.batch_manager = BatchUpdateManager(interval_ms=150, parent=self)
+        self.telemetry_worker = TelemetryWorker(host="tsetmc.com", interval_sec=2.5, parent=self)
+        self.telemetry_worker.telemetry_updated.connect(self._on_telemetry_updated)
+        self.telemetry_worker.start()
+
+    @Slot(dict)
+    def _on_telemetry_updated(self, data: dict):
+        ping = data.get("ping_ms", -1)
+        ram = data.get("ram_usage_mb", 0.0)
+
+        if ping >= 0:
+            self.lbl_ping.setText(f"🌐 پینگ TSETMC: {ping}ms")
+            self.lbl_ping.setStyleSheet("color: #3fb950; margin-left: 10px;")
+        else:
+            self.lbl_ping.setText("🌐 پینگ TSETMC: قطع")
+            self.lbl_ping.setStyleSheet("color: #f85149; margin-left: 10px;")
+
+        self.lbl_ram.setText(f"💾 RAM: {ram:.1f} MB")
+
+        if self._bale_enabled and self._bale_notifier.is_configured:
+            self.lbl_bale_badge.setText("● بله: آنلاین")
+            self.lbl_bale_badge.setStyleSheet("color: #3fb950; margin-left: 10px;")
+        else:
+            self.lbl_bale_badge.setText("○ بله: غیرفعال")
+            self.lbl_bale_badge.setStyleSheet("color: #8c9bae; margin-left: 10px;")
+
+        if self._broker_connected:
+            self.lbl_broker_badge.setText("● کارگزاری: متصل")
+            self.lbl_broker_badge.setStyleSheet("color: #3fb950; margin-left: 10px;")
+        else:
+            self.lbl_broker_badge.setText("○ کارگزاری: قطع")
+            self.lbl_broker_badge.setStyleSheet("color: #8c9bae; margin-left: 10px;")
 
     def send_selected_to_broker(self):
         checked_rows = [

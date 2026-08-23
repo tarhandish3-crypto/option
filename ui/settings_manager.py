@@ -3,21 +3,6 @@
 
 """
 مدیریت متمرکز تنظیمات برنامه با پشتیبانی از پروفایل‌های چندگانه.
-
-ساختار فایل ذخیره‌سازی (data/user_settings.json):
-{
-    "active_profile": "نام پروفایل فعال",
-    "profiles": {
-        "پروفایل من": { ...settings dict... },
-        "تنظیمات محافظه‌کار": { ...settings dict... }
-    }
-}
-
-قوانین:
-- تنظیمات پیش‌فرض همیشه از config.py خوانده می‌شود (هرگز تغییر نمی‌کند).
-- هر تغییر کاربر در یک پروفایل ذخیره می‌شود.
-- پروفایل فعال در بین اجراهای برنامه حفظ می‌شود.
-- "پیش‌فرض" یک نام رزرو است که نمی‌توان آن را ذخیره یا حذف کرد.
 """
 
 import json
@@ -40,7 +25,6 @@ _SETTINGS_FILE = config.BASE_DIR / "user_settings.json"
 def _build_defaults_from_config() -> Dict[str, Any]:
     """
     استخراج تنظیمات پیش‌فرض مستقیم از config.py.
-    این تابع تنها منبع حقیقت برای مقادیر پیش‌فرض است.
     """
     return {
         # شبکه و API
@@ -81,7 +65,8 @@ def _build_defaults_from_config() -> Dict[str, Any]:
         "broker_username": "",
         "broker_password": "",
 
-        # نمادهای بلاک‌شده (پیش‌فرض: هیچ‌کدام)
+        # استراتژی‌های فعال و نمادهای بلاک‌شده
+        "active_strategies": getattr(config, "ACTIVE_STRATEGIES", []),
         "excluded_symbols": [],
     }
 
@@ -89,13 +74,6 @@ def _build_defaults_from_config() -> Dict[str, Any]:
 class SettingsManager:
     """
     مدیر تنظیمات برنامه — Singleton برای استفاده یکپارچه در کل پروژه.
-
-    استفاده:
-        from ui.settings_manager import settings_manager
-
-        current = settings_manager.get_active_settings()
-        settings_manager.save_profile("پروفایل جدید", current)
-        settings_manager.set_active_profile("پروفایل جدید")
     """
 
     def __init__(self):
@@ -104,34 +82,34 @@ class SettingsManager:
         self._excluded_symbols: List[str] = []
         self._load()
 
-    # =====================================================
-    # بارگذاری و ذخیره‌سازی فایل
-    # =====================================================
-
     def _load(self) -> None:
-        """بارگذاری تنظیمات از فایل؛ اگر فایل نبود از پیش‌فرض شروع می‌کند."""
+        """بارگذاری تنظیمات از فایل"""
         if _SETTINGS_FILE.exists():
             try:
                 with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 self._profiles = data.get("profiles", {})
-                self._active_profile = data.get("active_profile", _DEFAULT_PROFILE_NAME)
-                self._excluded_symbols = sorted(data.get("excluded_symbols", []))
+                self._active_profile = data.get(
+                    "active_profile", _DEFAULT_PROFILE_NAME)
+                self._excluded_symbols = sorted(
+                    data.get("excluded_symbols", []))
                 logger.info(
                     f"Settings loaded -- active profile: '{self._active_profile}'"
                     f" | profiles: {len(self._profiles)}"
                     f" | blocked symbols: {len(self._excluded_symbols)}"
                 )
             except Exception as e:
-                logger.warning(f"Failed to load settings: {e} -- using defaults")
+                logger.warning(
+                    f"Failed to load settings: {e} -- using defaults")
                 self._profiles = {}
                 self._active_profile = _DEFAULT_PROFILE_NAME
                 self._excluded_symbols = []
         else:
-            logger.info("Settings file not found -- using defaults from config.py")
+            logger.info(
+                "Settings file not found -- using defaults from config.py")
 
     def _save(self) -> None:
-        """ذخیره‌سازی کل وضعیت در فایل JSON."""
+        """ذخیره‌سازی کل وضعیت در فایل JSON"""
         try:
             data = {
                 "active_profile": self._active_profile,
@@ -144,20 +122,12 @@ class SettingsManager:
         except Exception as e:
             logger.error(f"Failed to save settings: {e}")
 
-    # =====================================================
-    # دریافت تنظیمات
-    # =====================================================
-
     def get_defaults(self) -> Dict[str, Any]:
-        """تنظیمات پیش‌فرض خالص از config.py — هرگز تغییر نمی‌کند."""
+        """تنظیمات پیش‌فرض خالص از config.py"""
         return _build_defaults_from_config()
 
     def get_active_settings(self) -> Dict[str, Any]:
-        """
-        تنظیمات جاری برنامه:
-        - اگر پروفایل فعال 'پیش‌فرض' باشد → مستقیم از config.py
-        - در غیر این صورت → از پروفایل ذخیره‌شده (با fallback به پیش‌فرض)
-        """
+        """دریافت تنظیمات جاری برنامه با احتساب مقادیر دیفالت"""
         if self._active_profile == _DEFAULT_PROFILE_NAME:
             return self.get_defaults()
 
@@ -169,20 +139,28 @@ class SettingsManager:
             self._active_profile = _DEFAULT_PROFILE_NAME
             return self.get_defaults()
 
-        # merge: پیش‌فرض + override با مقادیر پروفایل
         merged = self.get_defaults()
         merged.update(profile_data)
         return merged
 
+    def save_settings(self, settings: Dict[str, Any]) -> bool:
+        """
+        متد کمکی برای ذخیره مستقیم دیکشنری تنظیمات در پروفایل فعال یا پروفایل اختصاصی
+        """
+        active = self._active_profile
+        if active == _DEFAULT_PROFILE_NAME:
+            active = "تنظیمات سفارشی"
+            self._active_profile = active
+
+        return self.save_profile(active, settings)
+
     def get_profile_names(self) -> List[str]:
-        """لیست نام پروفایل‌های کاربر (بدون 'پیش‌فرض')."""
         return sorted(self._profiles.keys())
 
     def get_active_profile_name(self) -> str:
         return self._active_profile
 
     def get_profile(self, name: str) -> Optional[Dict[str, Any]]:
-        """دریافت یک پروفایل خاص؛ برای 'پیش‌فرض' → config.py."""
         if name == _DEFAULT_PROFILE_NAME:
             return self.get_defaults()
         profile = self._profiles.get(name)
@@ -192,15 +170,7 @@ class SettingsManager:
         merged.update(profile)
         return merged
 
-    # =====================================================
-    # مدیریت پروفایل‌ها
-    # =====================================================
-
     def save_profile(self, name: str, settings: Dict[str, Any]) -> bool:
-        """
-        ذخیره یا به‌روزرسانی یک پروفایل.
-        نام 'پیش‌فرض' رزرو است و قابل ذخیره نیست.
-        """
         if name == _DEFAULT_PROFILE_NAME:
             logger.warning("Name 'default' is reserved and cannot be saved.")
             return False
@@ -216,7 +186,6 @@ class SettingsManager:
         return True
 
     def set_active_profile(self, name: str) -> bool:
-        """تغییر پروفایل فعال."""
         if name == _DEFAULT_PROFILE_NAME:
             self._active_profile = _DEFAULT_PROFILE_NAME
             self._save()
@@ -232,7 +201,6 @@ class SettingsManager:
         return True
 
     def delete_profile(self, name: str) -> bool:
-        """حذف یک پروفایل. 'پیش‌فرض' حذف نمی‌شود."""
         if name == _DEFAULT_PROFILE_NAME:
             logger.warning("Default profile cannot be deleted.")
             return False
@@ -241,8 +209,6 @@ class SettingsManager:
             return False
 
         del self._profiles[name]
-
-        # اگر پروفایل حذف‌شده فعال بود، برگرد به پیش‌فرض
         if self._active_profile == name:
             self._active_profile = _DEFAULT_PROFILE_NAME
 
@@ -251,54 +217,20 @@ class SettingsManager:
         return True
 
     def restore_defaults(self) -> None:
-        """
-        بازگشت به تنظیمات پیش‌فرض config.py.
-        پروفایل‌های ذخیره‌شده دست نخورده باقی می‌مانند.
-        """
         self._active_profile = _DEFAULT_PROFILE_NAME
         self._save()
         logger.info("Active profile reset to 'default'.")
 
-    def rename_profile(self, old_name: str, new_name: str) -> bool:
-        """تغییر نام یک پروفایل."""
-        if old_name == _DEFAULT_PROFILE_NAME or new_name == _DEFAULT_PROFILE_NAME:
-            return False
-        if old_name not in self._profiles:
-            return False
-        new_name = new_name.strip()
-        if not new_name or new_name in self._profiles:
-            return False
-
-        self._profiles[new_name] = self._profiles.pop(old_name)
-        if self._active_profile == old_name:
-            self._active_profile = new_name
-        self._save()
-        logger.info(f"Profile '{old_name}' renamed to '{new_name}'.")
-        return True
-
-    # =====================================================
-    # مدیریت نمادهای بلاک‌شده (جدا از پروفایل — سراسری)
-    # =====================================================
-
     def get_excluded_symbols(self) -> List[str]:
-        """
-        لیست نمادهای بلاک‌شده.
-        این تنظیم سراسری است و وابسته به پروفایل نیست.
-        """
         return list(self._excluded_symbols)
 
     def set_excluded_symbols(self, symbols: List[str]) -> None:
-        """ذخیره لیست نمادهای بلاک‌شده و ثبت دائمی در فایل."""
         self._excluded_symbols = sorted(set(symbols))
         self._save()
-        logger.info(f"Blocked symbols updated: {len(self._excluded_symbols)} symbol(s)")
-
-    # =====================================================
-    # تنظیمات بله (Bale Notifier)
-    # =====================================================
+        logger.info(
+            f"Blocked symbols updated: {len(self._excluded_symbols)} symbol(s)")
 
     def get_bale_config(self) -> Dict[str, Any]:
-        """دریافت تنظیمات بله از پروفایل فعال."""
         s = self.get_active_settings()
         return {
             "bot_token": s.get("bale_bot_token", ""),
@@ -308,36 +240,11 @@ class SettingsManager:
         }
 
     def get_broker_config(self) -> Dict[str, Any]:
-        """دریافت تنظیمات کارگزاری از پروفایل فعال."""
         s = self.get_active_settings()
         return {
             "username": s.get("broker_username", ""),
             "password": s.get("broker_password", ""),
         }
 
-    def save_bale_config(self, bot_token: str, chat_id: str,
-                         top_n: int = 2, enabled: bool = True) -> None:
-        """ذخیره تنظیمات بله در پروفایل فعال."""
-        active = self._active_profile
-        if active == _DEFAULT_PROFILE_NAME:
-            # ایجاد پروفایل «بله-تنظیمات» اگر پروفایل فعال پیش‌فرض است
-            active = "bale-config"
-
-        current = self._profiles.get(active, {})
-        current.update({
-            "bale_bot_token": bot_token.strip(),
-            "bale_chat_id":   chat_id.strip(),
-            "bale_top_n":     top_n,
-            "bale_enabled":   enabled,
-        })
-        self._profiles[active] = current
-        self._active_profile = active
-        self._save()
-        logger.info(f"Bale settings saved -- profile: '{active}'")
-
-
-# =====================================================
-# نمونه Singleton — import کن و استفاده کن
-# =====================================================
 
 settings_manager = SettingsManager()
