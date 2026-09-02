@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from ui.settings_manager import settings_manager
+from ui.strategy_icons_manager import StrategyIconsManager
 from filters.strategy_filters import get_default_filter_config
 import config
 
@@ -221,6 +222,15 @@ class StrategySettingsDialog(QDialog):
         chk.setChecked(self._active_states.get(strat_key, True))
         chk.setStyleSheet("QCheckBox::indicator { width: 16px; height: 16px; }")
 
+        # اضافه کردن تصویر شماتیک استراتژی
+        icon_manager = StrategyIconsManager()
+        strategy_icon = icon_manager.get_icon(strat_key, size=48)
+        icon_label = QLabel()
+        icon_label.setPixmap(strategy_icon)
+        icon_label.setFixedSize(50, 50)
+        icon_label.setScaledContents(False)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         lbl_title = QLabel(
             f"<span style='color: #58a6ff; font-weight: bold; font-size: 11px;'>{info['en']}</span> "
             f"<span style='color: #cdd9e5; font-weight: bold; font-size: 11px;'>({info['fa']})</span> "
@@ -229,6 +239,7 @@ class StrategySettingsDialog(QDialog):
         lbl_title.setTextFormat(Qt.TextFormat.RichText)
 
         header_layout.addWidget(chk)
+        header_layout.addWidget(icon_label)
         header_layout.addWidget(lbl_title, stretch=1)
         main_box.addLayout(header_layout)
 

@@ -156,3 +156,5 @@ data/cache/
 logs/
 *.tmp
 *.temp
+
+output/
