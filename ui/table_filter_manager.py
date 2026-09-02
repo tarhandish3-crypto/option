@@ -58,11 +58,13 @@ class TableFilterManager:
             filter_metadata: اطلاعات فیلتر برای ذخیره و بازیابی
         """
         
+        logger.info(f"set_filter called: column={column_index} ({column_name}), has_func={filter_func is not None}, has_metadata={filter_metadata is not None}")
+        
         if filter_func is None:
             # حذف فیلتر
             if column_index in self.filters:
                 del self.filters[column_index]
-                logger.info(f"فیلتر سرستون {column_name} حذف شد")
+                logger.info(f"Filter removed for column {column_name}")
                 self._update_header_appearance(column_index, False)
         else:
             # اضافه کردن یا بروزرسانی فیلتر
@@ -73,7 +75,7 @@ class TableFilterManager:
                 is_active=True,
                 filter_metadata=filter_metadata
             )
-            logger.info(f"فیلتر سرستون {column_name} تنظیم شد")
+            logger.info(f"Filter set for column {column_name}: active={True}")
             self._update_header_appearance(column_index, True)
         
         # اعمال فیلترها

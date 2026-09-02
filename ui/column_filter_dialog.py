@@ -313,16 +313,17 @@ class ColumnFilterDialog(QDialog):
                 if self.filter_type == FilterType.TEXT:
                     return  # پیام warning قبلاً نمایش داده شد
                 # برای numeric، اگر هیچ چیز انتخاب نشده، فیلتر نیست
+                logger.warning("Filter function is None - no filter selected")
                 return
             
             # ذخیره metadata برای restore
             self.filter_metadata = self._get_filter_metadata()
-            logger.info(f"فیلتر اعمال شد برای {self.column_name}: {self.filter_metadata}")
+            logger.info(f"Filter applied for {self.column_name}: type={self.filter_type.value}, has_func={self.filter_result is not None}")
             
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "خطا", f"خطای فیلتر: {str(e)}")
-            logger.error(f"Filter error: {e}")
+            logger.error(f"Filter error: {e}", exc_info=True)
     
     def _get_filter_metadata(self) -> Dict[str, Any]:
         """دریافت metadata فیلتر برای ذخیره و بازیابی"""

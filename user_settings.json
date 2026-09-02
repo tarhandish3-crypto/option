@@ -29,19 +29,19 @@
             "broker_username": "",
             "broker_password": "",
             "active_strategies": [
-                "covered_call"
+                "bull_call_spread"
             ],
             "excluded_symbols": [],
             "strategy_filters": {
                 "covered_call": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "above_level",
                     "profit_above_pct": -4.5,
                     "min_profit_pct": 2.5,
                     "use_dte_factor": true
                 },
                 "bull_call_spread": {
-                    "enabled": false,
+                    "enabled": true,
                     "rule_type": "above_level",
                     "profit_above_pct": 3.0,
                     "min_profit_pct": 5.0,
