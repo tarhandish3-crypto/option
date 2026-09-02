@@ -194,15 +194,70 @@ class StrategySettingsDialog(QDialog):
             if category_key is None or v["cat"] == category_key
         ]
 
+        # اضافه کردن چک‌باکس انتخاب/لغو انتخاب همه استراتژی‌های این تب
+        select_all_frame = QFrame()
+        select_all_frame.setStyleSheet("""
+            QFrame {
+                background-color: #161b22;
+                border: 1px solid #30363d;
+                border-radius: 5px;
+                padding: 8px 10px;
+                margin-bottom: 4px;
+            }
+        """)
+        select_all_layout = QHBoxLayout(select_all_frame)
+        select_all_layout.setContentsMargins(0, 0, 0, 0)
+        
+        select_all_chk = QCheckBox("📋 انتخاب/لغو انتخاب همه استراتژی‌های این تب")
+        select_all_chk.setStyleSheet("""
+            QCheckBox {
+                font-weight: bold;
+                color: #58a6ff;
+                font-size: 11px;
+            }
+            QCheckBox::indicator { width: 16px; height: 16px; }
+        """)
+        
+        # تابع برای مدیریت انتخاب/لغو انتخاب همه
+        def on_select_all_toggled(checked: bool):
+            for strat_key, _ in filtered:
+                self._active_states[strat_key] = checked
+                for c in self._card_controls.get(strat_key, []):
+                    c["chk"].blockSignals(True)
+                    c["chk"].setChecked(checked)
+                    c["chk"].blockSignals(False)
+                    c["panel"].setVisible(checked)
+            self._update_counter_label()
+        
+        # تابع برای بروزرسانی وضعیت چک‌باکس "انتخاب همه" براساس تغییرات فردی
+        def update_select_all_state():
+            selected_count = sum(1 for strat_key, _ in filtered if self._active_states.get(strat_key, False))
+            total_count = len(filtered)
+            
+            select_all_chk.blockSignals(True)
+            if selected_count == total_count:
+                select_all_chk.setChecked(True)
+            else:
+                select_all_chk.setChecked(False)
+            select_all_chk.blockSignals(False)
+        
+        select_all_chk.toggled.connect(on_select_all_toggled)
+        select_all_layout.addWidget(select_all_chk)
+        select_all_layout.addStretch()
+        layout.addWidget(select_all_frame)
+
         for strat_key, strat_info in filtered:
-            card = self._create_interactive_strategy_card(strat_key, strat_info)
+            card = self._create_interactive_strategy_card(strat_key, strat_info, update_select_all_state)
             layout.addWidget(card)
 
+        # بروزرسانی اولیه وضعیت چک‌باکس "انتخاب همه"
+        update_select_all_state()
+        
         layout.addStretch()
         scroll.setWidget(container)
         return scroll
 
-    def _create_interactive_strategy_card(self, strat_key: str, info: Dict[str, Any]) -> QFrame:
+    def _create_interactive_strategy_card(self, strat_key: str, info: Dict[str, Any], update_callback=None) -> QFrame:
         frame = QFrame()
         frame.setStyleSheet("""
             QFrame {
@@ -352,6 +407,10 @@ class StrategySettingsDialog(QDialog):
                     c["chk"].blockSignals(False)
                 c["panel"].setVisible(checked)
             self._update_counter_label()
+            
+            # بروزرسانی وضعیت چک‌باکس "انتخاب همه" تب جاری
+            if update_callback:
+                update_callback()
 
         chk.toggled.connect(_on_chk_toggled)
         sub_panel.setVisible(chk.isChecked())
