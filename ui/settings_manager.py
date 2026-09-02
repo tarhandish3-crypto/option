@@ -229,6 +229,11 @@ class SettingsManager:
         self._save()
         logger.info(
             f"Blocked symbols updated: {len(self._excluded_symbols)} symbol(s)")
+    
+    def get_active_strategies(self) -> List[str]:
+        """دریافت لیست استراتژی‌های فعال"""
+        s = self.get_active_settings()
+        return s.get("active_strategies", [])
 
     def get_bale_config(self) -> Dict[str, Any]:
         s = self.get_active_settings()

@@ -29,6 +29,8 @@ from ui.settings_manager import settings_manager
 from ui.payoff_chart_dialog import PayoffChartDialog
 from ui.strategy_inspector import StrategyInspectorWidget
 from ui.table_components import StrategyCellDelegate
+from ui.column_filter_dialog import ColumnFilterDialog, FilterType
+from ui.table_filter_manager import TableFilterManager
 from ui import theme as ui_theme
 from alerts.bale_notifier import BaleNotifier
 
@@ -216,6 +218,10 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._bottom_toolbar)
 
         self._setup_status_bar()
+        
+        # ۳. مدیریت فیلترهای جدول
+        self.table_filter_manager = TableFilterManager(self.table)
+        self._setup_table_context_menu()
 
     def _create_toolbar(self) -> QFrame:
         toolbar = QFrame()
@@ -606,12 +612,23 @@ class MainWindow(QMainWindow):
 
     def on_scan_finished(self, results):
         all_results = results or []
+        
+        # فیلتر کردن بر اساس نمادهای بلاک‌شده
         excluded = set(settings_manager.get_excluded_symbols())
         if excluded:
             all_results = [
                 opp for opp in all_results
                 if getattr(opp, 'underlying_ticker', '') not in excluded
             ]
+        
+        # فیلتر کردن بر اساس استراتژی‌های فعال
+        active_strategies = settings_manager.get_active_strategies()
+        if active_strategies:
+            all_results = [
+                opp for opp in all_results
+                if getattr(opp, 'strategy_name', '') in active_strategies
+            ]
+            logger.info(f"Filtered by active strategies: {len(active_strategies)} strategies, {len(all_results)} results")
 
         self.current_results = all_results
         count = len(self.current_results)
@@ -1163,3 +1180,121 @@ class MainWindow(QMainWindow):
 
         event.accept()
         logger.info("Application terminated cleanly")
+
+    # =========================================================================
+    # منوی فیلتر متقدم سرستون‌ها
+    # =========================================================================
+    
+    def _setup_table_context_menu(self):
+        """تنظیم منوی راست‌کلیک برای هدر جدول"""
+        self.table.horizontalHeader().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.horizontalHeader().customContextMenuRequested.connect(self._show_column_filter_menu)
+    
+    def _show_column_filter_menu(self, pos):
+        """نمایش منوی فیلتر برای سرستون"""
+        header = self.table.horizontalHeader()
+        column_index = header.logicalIndexAt(pos)
+        
+        if column_index < 0:
+            return
+        
+        column_name = self.table.horizontalHeaderItem(column_index).text()
+        
+        # ایجاد منوی راست‌کلیک
+        menu = QMenu(self)
+        menu.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        
+        # تعیین نوع فیلتر براساس نام سرستون
+        filter_type = self._determine_filter_type(column_index, column_name)
+        
+        # دکمه: باز کردن فیلتر
+        action_filter = menu.addAction(f"🔍 فیلتر: {column_name}")
+        action_filter.triggered.connect(lambda: self._open_column_filter(column_index, column_name, filter_type))
+        
+        menu.addSeparator()
+        
+        # دکمه: مرتب‌سازی صعودی
+        action_asc = menu.addAction("📈 مرتب‌سازی صعودی")
+        action_asc.triggered.connect(lambda: self.table.sortByColumn(column_index, Qt.SortOrder.AscendingOrder))
+        
+        # دکمه: مرتب‌سازی نزولی
+        action_desc = menu.addAction("📉 مرتب‌سازی نزولی")
+        action_desc.triggered.connect(lambda: self.table.sortByColumn(column_index, Qt.SortOrder.DescendingOrder))
+        
+        menu.addSeparator()
+        
+        # دکمه: حذف فیلترهای این سرستون
+        if self.table_filter_manager and column_index in self.table_filter_manager.filters:
+            action_clear = menu.addAction("🧹 حذف فیلتر این سرستون")
+            action_clear.triggered.connect(lambda: self._clear_column_filter(column_index, column_name))
+        
+        # دکمه: حذف تمام فیلترها
+        if self.table_filter_manager and self.table_filter_manager.filters:
+            action_clear_all = menu.addAction("🧹 حذف تمام فیلترها")
+            action_clear_all.triggered.connect(self._clear_all_filters)
+        
+        menu.exec(self.table.horizontalHeader().mapToGlobal(pos))
+    
+    def _determine_filter_type(self, column_index: int, column_name: str) -> FilterType:
+        """تعیین نوع فیلتر براساس نام یا محتوای سرستون"""
+        
+        # سرستون‌های عددی
+        numeric_keywords = ["Rank", "DTE", "سررسید", "قیمت", "درصد", "%", "ریسک", "سود", "Breakeven"]
+        
+        for keyword in numeric_keywords:
+            if keyword in column_name:
+                return FilterType.NUMERIC
+        
+        return FilterType.TEXT
+    
+    def _open_column_filter(self, column_index: int, column_name: str, filter_type: FilterType):
+        """باز کردن دیالوگ فیلتر برای سرستون"""
+        
+        dialog = ColumnFilterDialog(
+            column_name, 
+            filter_type, 
+            self,
+            table_filter_manager=self.table_filter_manager,
+            column_index=column_index
+        )
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            filter_func = dialog.filter_result
+            filter_metadata = dialog.filter_metadata
+            
+            logger.info(f"فیلتر برای {column_name}: filter_func={filter_func is not None}, metadata={filter_metadata}")
+            
+            # اگر filter_func None باشد، فیلتر حذف شود
+            self.table_filter_manager.set_filter(column_index, column_name, filter_func, filter_metadata)
+            
+            # بروزرسانی نوار وضعیت
+            active_count = self.table_filter_manager.get_active_filter_count()
+            visible_count = self.table_filter_manager.get_visible_row_count()
+            total_count = self.table.rowCount()
+            
+            status_msg = f"فیلتر‌های فعال: {active_count} | ردیف‌های قابل نمایش: {visible_count}/{total_count}"
+            self.status_update_signal.emit(status_msg)
+    
+    def _clear_column_filter(self, column_index: int, column_name: str):
+        """حذف فیلتر یک سرستون"""
+        
+        self.table_filter_manager.set_filter(column_index, column_name, None)
+        
+        # بروزرسانی نوار وضعیت
+        active_count = self.table_filter_manager.get_active_filter_count()
+        visible_count = self.table_filter_manager.get_visible_row_count()
+        total_count = self.table.rowCount()
+        
+        if active_count > 0:
+            status_msg = f"فیلتر‌های فعال: {active_count} | ردیف‌های قابل نمایش: {visible_count}/{total_count}"
+        else:
+            status_msg = f"تمام فیلترها حذف شدند | {total_count} ردیف نمایش داده می‌شود"
+        
+        self.status_update_signal.emit(status_msg)
+    
+    def _clear_all_filters(self):
+        """حذف تمام فیلترها"""
+        
+        self.table_filter_manager.clear_all_filters()
+        total_count = self.table.rowCount()
+        self.status_update_signal.emit(f"تمام فیلترها حذف شدند | {total_count} ردیف نمایش داده می‌شود")
