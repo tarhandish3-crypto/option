@@ -246,6 +246,17 @@ class SettingsManager:
         self._save()
         logger.info(f"Custom prices updated: {len(prices)} symbols")
     
+    def get_custom_prices_enabled(self) -> bool:
+        """آیا قیمت‌های دستی فعال هستند؟"""
+        s = self.get_active_settings()
+        return s.get("custom_prices_enabled", True)
+    
+    def set_custom_prices_enabled(self, enabled: bool) -> None:
+        """فعال/غیرفعال کردن قیمت‌های دستی"""
+        self._active_profile["custom_prices_enabled"] = enabled
+        self._save()
+        logger.info(f"Custom prices enabled: {enabled}")
+    
     def get_custom_price(self, symbol: str) -> Optional[float]:
         """دریافت قیمت دستی برای یک نماد خاص"""
         prices = self.get_custom_prices()

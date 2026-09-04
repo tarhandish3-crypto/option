@@ -63,8 +63,8 @@ class SymbolFilterDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("مدیریت و فیلتر نمادها")
-        self.resize(620, 720)
-        self.setMinimumSize(520, 620)
+        self.resize(620, 680)
+        self.setMinimumSize(520, 580)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         self.available_symbols: List[str] = available_symbols or []

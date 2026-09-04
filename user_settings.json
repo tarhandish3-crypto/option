@@ -9,196 +9,36 @@
             "min_open_interest": 50,
             "min_days_to_maturity": 2,
             "max_days_to_maturity": 365,
-            "volatility_step_percent": 5.0,
             "volatility_range_min": -45.0,
             "volatility_range_max": 45.0,
-            "auto_refresh_enabled": false,
-            "auto_refresh_interval_sec": 120,
+            "price_range": {
+                "min_percent": -45.0,
+                "max_percent": 45.0,
+                "num_points": 26,
+                "step_size": null,
+                "labels_format": "{:.1f}%"
+            },
             "theme": "تاریک (Dark)",
             "layout_direction": "راست‌چین (RTL)",
             "log_level": "INFO",
+            "auto_scan_enabled": false,
+            "auto_scan_interval": 120,
             "export_dir": "F:\\python_project\\boors\\Ekhtiyar\\generate_strategyV4\\output",
             "enable_parallel_processing": false,
             "max_parallel_workers": 3,
             "cache_enabled": true,
             "cache_ttl_seconds": 6,
-            "bale_enabled": true,
-            "bale_bot_token": "2144104837:M-1qbeWfXUTducuJS0aV4zu70P8xTr8Jzjk",
-            "bale_chat_id": "@Option_Mehdi",
-            "bale_top_n": 1,
-            "broker_username": "",
-            "broker_password": "",
-            "active_strategies": [
-                "covered_call",
-                "bull_call_spread"
-            ],
-            "excluded_symbols": [],
-            "strategy_filters": {
-                "covered_call": {
-                    "enabled": true,
-                    "rule_type": "above_level",
-                    "profit_above_pct": -4.5,
-                    "min_profit_pct": 2.5,
-                    "use_dte_factor": true
-                },
-                "bull_call_spread": {
-                    "enabled": true,
-                    "rule_type": "above_level",
-                    "profit_above_pct": 3.0,
-                    "min_profit_pct": 5.0,
-                    "use_dte_factor": true
-                },
-                "bull_put_spread": {
-                    "enabled": false,
-                    "rule_type": "above_level",
-                    "profit_above_pct": -4.0,
-                    "min_profit_pct": 3.0,
-                    "use_dte_factor": true
-                },
-                "long_call": {
-                    "enabled": false,
-                    "rule_type": "above_level",
-                    "profit_above_pct": 4.0,
-                    "min_profit_pct": 15.0,
-                    "use_dte_factor": true
-                },
-                "short_put": {
-                    "enabled": false,
-                    "rule_type": "above_level",
-                    "profit_above_pct": -5.0,
-                    "min_profit_pct": 2.5,
-                    "use_dte_factor": true
-                },
-                "collar": {
-                    "enabled": false,
-                    "rule_type": "above_level",
-                    "profit_above_pct": -5.0,
-                    "min_profit_pct": 2.0,
-                    "use_dte_factor": true
-                },
-                "married_put": {
-                    "enabled": false,
-                    "rule_type": "above_level",
-                    "profit_above_pct": 2.0,
-                    "min_profit_pct": 4.0,
-                    "use_dte_factor": true
-                },
-                "bear_put_spread": {
-                    "enabled": false,
-                    "rule_type": "below_level",
-                    "profit_below_pct": -3.0,
-                    "min_profit_pct": 5.0,
-                    "use_dte_factor": true
-                },
-                "bear_call_spread": {
-                    "enabled": false,
-                    "rule_type": "below_level",
-                    "profit_below_pct": 4.0,
-                    "min_profit_pct": 3.0,
-                    "use_dte_factor": true
-                },
-                "long_put": {
-                    "enabled": false,
-                    "rule_type": "below_level",
-                    "profit_below_pct": 3.5,
-                    "min_profit_pct": 15.0,
-                    "use_dte_factor": true
-                },
-                "short_call": {
-                    "enabled": false,
-                    "rule_type": "below_level",
-                    "profit_below_pct": 5.0,
-                    "min_profit_pct": 2.5,
-                    "use_dte_factor": true
-                },
-                "iron_condor": {
-                    "enabled": false,
-                    "rule_type": "inside_range",
-                    "profit_range_min": -8.0,
-                    "profit_range_max": 8.0,
-                    "min_profit_pct": 1.0,
-                    "use_dte_factor": true
-                },
-                "iron_butterfly": {
-                    "enabled": false,
-                    "rule_type": "inside_range",
-                    "profit_range_min": -6.0,
-                    "profit_range_max": 6.0,
-                    "min_profit_pct": 4.0,
-                    "use_dte_factor": true
-                },
-                "short_straddle": {
-                    "enabled": false,
-                    "rule_type": "inside_range",
-                    "profit_range_min": -6.0,
-                    "profit_range_max": 6.0,
-                    "min_profit_pct": 4.0,
-                    "use_dte_factor": true
-                },
-                "short_strangle": {
-                    "enabled": false,
-                    "rule_type": "inside_range",
-                    "profit_range_min": -8.0,
-                    "profit_range_max": 8.0,
-                    "min_profit_pct": 3.5,
-                    "use_dte_factor": true
-                },
-                "strap": {
-                    "enabled": false,
-                    "rule_type": "outside_range",
-                    "loss_range_min": -5.0,
-                    "loss_range_max": 5.0,
-                    "min_profit_pct": 0.0,
-                    "use_dte_factor": true
-                },
-                "strip": {
-                    "enabled": false,
-                    "rule_type": "outside_range",
-                    "loss_range_min": -8.0,
-                    "loss_range_max": 5.0,
-                    "min_profit_pct": 3.5,
-                    "use_dte_factor": true
-                },
-                "long_straddle": {
-                    "enabled": false,
-                    "rule_type": "outside_range",
-                    "loss_range_min": -2.5,
-                    "loss_range_max": 7.0,
-                    "min_profit_pct": 2.0,
-                    "use_dte_factor": true
-                },
-                "long_strangle": {
-                    "enabled": false,
-                    "rule_type": "outside_range",
-                    "loss_range_min": -9.0,
-                    "loss_range_max": 9.0,
-                    "min_profit_pct": 8.5,
-                    "use_dte_factor": true
-                },
-                "long_guts": {
-                    "enabled": false,
-                    "rule_type": "outside_range",
-                    "loss_range_min": -8.0,
-                    "loss_range_max": 8.0,
-                    "min_profit_pct": 2.0,
-                    "use_dte_factor": true
-                },
-                "conversion": {
-                    "enabled": false,
-                    "rule_type": "inside_range",
-                    "profit_range_min": -45.0,
-                    "profit_range_max": 45.0,
-                    "min_profit_pct": 0.0,
-                    "use_dte_factor": true
-                },
-                "long_box": {
-                    "enabled": false,
-                    "rule_type": "inside_range",
-                    "profit_range_min": -45.0,
-                    "profit_range_max": 45.0,
-                    "min_profit_pct": 0.0,
-                    "use_dte_factor": true
-                }
+            "bale": {
+                "enabled": true,
+                "bot_token": "2144104837:M-1qbeWfXUTducuJS0aV4zu70P8xTr8Jzjk",
+                "chat_id": "@Option_Mehdi",
+                "top_n": 1
+            },
+            "broker": {
+                "broker_name": "خوارزمی / خبرگان",
+                "username": "",
+                "password": "",
+                "headless": false
             }
         }
     },

@@ -10,10 +10,10 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QTableWidget, QTableWidgetItem, QPushButton, QGroupBox,
     QMessageBox, QDialogButtonBox, QHeaderView, QAbstractItemView,
-    QWidget, QListWidget, QListWidgetItem
+    QWidget, QListWidget, QListWidgetItem, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QBrush, QColor, QDoubleValidator
+from PySide6.QtGui import QFont, QBrush, QColor, QDoubleValidator, QPalette
 
 from ui.settings_manager import settings_manager
 from ui import theme as ui_theme
@@ -31,8 +31,8 @@ class SymbolSelectionDialog(QDialog):
     def __init__(self, option_symbols: List[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("انتخاب نماد پایه")
-        self.setMinimumSize(380, 420)
-        self.resize(380, 450)
+        self.setMinimumSize(380, 400)
+        self.resize(380, 420)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         self.selected_symbol: str | None = None
@@ -41,10 +41,9 @@ class SymbolSelectionDialog(QDialog):
 
         self._init_ui()
 
-    # ------------------------------------------------------------------
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         lbl = QLabel("یک نماد پایه را انتخاب کنید:")
         lbl.setStyleSheet("font-weight: bold; color: #58a6ff;")
@@ -52,7 +51,7 @@ class SymbolSelectionDialog(QDialog):
 
         # جستجو
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍  جستجو ...")
+        self.search_input.setPlaceholderText("🔍 جستجو...")
         self.search_input.textChanged.connect(self._filter)
         layout.addWidget(self.search_input)
 
@@ -72,10 +71,8 @@ class SymbolSelectionDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_ok = QPushButton("✅ تأیید")
-        btn_ok.setStyleSheet(
-            "background-color:#238636; color:white; font-weight:bold; padding:6px 18px;"
-        )
-        btn_ok.clicked.connect(self._accept)
+        btn_ok.setStyleSheet("background-color:#238636; color:white; font-weight:bold; padding:6px 18px;")
+        btn_ok.clicked.connect(self._accept_selection)
         btn_row.addWidget(btn_ok)
 
         btn_cancel = QPushButton("❌ انصراف")
@@ -83,7 +80,6 @@ class SymbolSelectionDialog(QDialog):
         btn_row.addWidget(btn_cancel)
         layout.addLayout(btn_row)
 
-    # ------------------------------------------------------------------
     def _filter(self, text: str) -> None:
         t = text.strip().upper()
         for i in range(self.list_widget.count()):
@@ -91,9 +87,7 @@ class SymbolSelectionDialog(QDialog):
             item.setHidden(bool(t) and t not in item.text().upper())
 
     def _on_item_changed(self, item: QListWidgetItem) -> None:
-        """تک‌انتخابی: وقتی آیتمی تیک می‌خورد، بقیه را پاک کن"""
         if item.checkState() == Qt.CheckState.Checked:
-            # بلاک کردن سیگنال برای جلوگیری از حلقه
             self.list_widget.blockSignals(True)
             for i in range(self.list_widget.count()):
                 other = self.list_widget.item(i)
@@ -105,7 +99,7 @@ class SymbolSelectionDialog(QDialog):
             if self._current_checked is item:
                 self._current_checked = None
 
-    def _accept(self) -> None:
+    def _accept_selection(self) -> None:
         if self._current_checked is None:
             QMessageBox.warning(self, "خطا", "لطفاً یک نماد را انتخاب کنید.")
             return
@@ -123,7 +117,7 @@ class PriceInputDialog(QDialog):
     def __init__(self, symbol: str, current_price: float = 0, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"تنظیم قیمت — {symbol}")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(350)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         self.symbol = symbol
@@ -131,19 +125,14 @@ class PriceInputDialog(QDialog):
 
         self._init_ui()
 
-    # ------------------------------------------------------------------
     def _init_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
-        # نام نماد
-        sym_lbl = QLabel(f"نماد پایه:  {self.symbol}")
-        sym_lbl.setStyleSheet(
-            "font-size:16px; font-weight:bold; color:#f0883e; padding:4px;"
-        )
+        sym_lbl = QLabel(f"نماد پایه: {self.symbol}")
+        sym_lbl.setStyleSheet("font-size:16px; font-weight:bold; color:#f0883e; padding:4px;")
         layout.addWidget(sym_lbl)
 
-        # فیلد قیمت
         price_lbl = QLabel("قیمت دستی (ریال):")
         price_lbl.setStyleSheet("font-weight:bold;")
         layout.addWidget(price_lbl)
@@ -154,25 +143,19 @@ class PriceInputDialog(QDialog):
             self.price_input.setText(str(int(self.price)))
         self.price_input.setValidator(QDoubleValidator(0, 999_999_999, 0))
         self.price_input.setStyleSheet("font-size:14px; padding:8px;")
-        self.price_input.returnPressed.connect(self._accept)
+        self.price_input.returnPressed.connect(self._accept_price)
         layout.addWidget(self.price_input)
 
-        # راهنما
-        hint = QLabel(
-            "💡 این قیمت جایگزین قیمت فعلی بازار در تمام محاسبات اسکنر می‌شود."
-        )
+        hint = QLabel("💡 این قیمت جایگزین قیمت فعلی بازار در تمام محاسبات اسکنر می‌شود.")
         hint.setStyleSheet("color:#888; font-size:11px;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
-        # دکمه‌ها
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_ok = QPushButton("✅ تأیید")
-        btn_ok.setStyleSheet(
-            "background-color:#238636; color:white; font-weight:bold; padding:8px 24px;"
-        )
-        btn_ok.clicked.connect(self._accept)
+        btn_ok.setStyleSheet("background-color:#238636; color:white; font-weight:bold; padding:8px 24px;")
+        btn_ok.clicked.connect(self._accept_price)
         btn_row.addWidget(btn_ok)
 
         btn_cancel = QPushButton("❌ انصراف")
@@ -180,11 +163,9 @@ class PriceInputDialog(QDialog):
         btn_row.addWidget(btn_cancel)
         layout.addLayout(btn_row)
 
-        # فوکوس خودکار
         self.price_input.setFocus()
 
-    # ------------------------------------------------------------------
-    def _accept(self) -> None:
+    def _accept_price(self) -> None:
         text = self.price_input.text().strip().replace(",", "")
         if not text:
             QMessageBox.warning(self, "خطا", "لطفاً قیمت را وارد کنید.")
@@ -211,61 +192,55 @@ class CustomPriceDialog(QDialog):
     def __init__(self, option_symbols: List[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("⚙️ تنظیم قیمت دستی نمادهای پایه")
-        self.resize(620, 520)
-        self.setMinimumSize(500, 420)
+        self.resize(620, 580)
+        self.setMinimumSize(500, 480)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         self.option_symbols = option_symbols
         self.custom_prices: Dict[str, float] = settings_manager.get_custom_prices()
+        self._custom_prices_enabled: bool = settings_manager.get_custom_prices_enabled()
 
         self._init_ui()
         self._populate_table()
+        self._update_table_state()
 
-    # ──────────────────────────────────────────────────────────────────
     def _init_ui(self) -> None:
         main = QVBoxLayout(self)
-        main.setSpacing(12)
-        main.setContentsMargins(15, 15, 15, 15)
+        main.setSpacing(8)
+        main.setContentsMargins(12, 12, 12, 12)
 
-        # ---- راهنما ----
-        info_box = QGroupBox("راهنما")
-        info_layout = QVBoxLayout(info_box)
-        info_lbl = QLabel(
-            "۱. دکمه «📋 انتخاب نماد» را بزنید\n"
-            "۲. نماد مورد نظر را در لیست تیک بزنید و تأیید کنید\n"
-            "۳. قیمت دستی را وارد کنید\n"
-            "در جدول: دابل‌کلیک روی قیمت یا دکمه ✏️ برای ویرایش"
-        )
-        info_lbl.setStyleSheet("color:#58a6ff; padding:4px;")
-        info_lbl.setWordWrap(True)
-        info_layout.addWidget(info_lbl)
-        main.addWidget(info_box)
+        # ---- چک‌باکس فعال/غیرفعال ----
+        self.enable_checkbox = QCheckBox("✅ فعال‌سازی قیمت‌های دستی")
+        self.enable_checkbox.setChecked(self._custom_prices_enabled)
+        self.enable_checkbox.setStyleSheet("font-weight: bold; font-size: 13px; color: #2ecc71;")
+        self.enable_checkbox.stateChanged.connect(self._on_enable_changed)
+        main.addWidget(self.enable_checkbox)
 
-        # ---- دکمه انتخاب نماد ----
-        add_box = QGroupBox("افزودن قیمت دستی")
-        add_layout = QHBoxLayout(add_box)
+        # ---- دکمه انتخاب نماد (کوچکتر) ----
+        add_layout = QHBoxLayout()
         add_layout.addStretch()
-
+        
         self.btn_select = QPushButton("📋 انتخاب نماد")
         self.btn_select.setStyleSheet(
             "background-color:#1f6feb; color:white; font-weight:bold;"
-            " padding:10px 32px; font-size:14px; border-radius:6px;"
+            " padding:6px 20px; font-size:12px; border-radius:4px;"
         )
         self.btn_select.clicked.connect(self._open_symbol_selection)
         add_layout.addWidget(self.btn_select)
-
         add_layout.addStretch()
-        main.addWidget(add_box)
+        
+        main.addLayout(add_layout)
 
         # ---- جدول ----
         table_box = QGroupBox("لیست قیمت‌های دستی تنظیم‌شده")
         table_layout = QVBoxLayout(table_box)
+        table_layout.setSpacing(4)
 
-        # جستجو در جدول
+        # جستجو
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("🔍 جستجو:"))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("جستجو در جدول ...")
+        self.search_input.setPlaceholderText("جستجو در جدول...")
         self.search_input.textChanged.connect(self._filter_table)
         search_row.addWidget(self.search_input)
         table_layout.addLayout(search_row)
@@ -274,12 +249,8 @@ class CustomPriceDialog(QDialog):
         self.price_table.setColumnCount(3)
         self.price_table.setHorizontalHeaderLabels(["نماد", "قیمت دستی", "عملیات"])
         self.price_table.setAlternatingRowColors(True)
-        self.price_table.setSelectionBehavior(
-            QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.price_table.setEditTriggers(
-            QAbstractItemView.EditTrigger.NoEditTriggers
-        )
+        self.price_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.price_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.price_table.itemDoubleClicked.connect(self._on_double_click)
 
         hdr = self.price_table.horizontalHeader()
@@ -291,7 +262,7 @@ class CustomPriceDialog(QDialog):
 
         table_layout.addWidget(self.price_table)
 
-        # دکمه پاک کردن همه
+        # دکمه پاک کردن
         clear_row = QHBoxLayout()
         clear_row.addStretch()
         btn_clear = QPushButton("🧹 پاک کردن همه")
@@ -304,8 +275,7 @@ class CustomPriceDialog(QDialog):
 
         # ---- دکمه‌های پایین ----
         btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok |
-            QDialogButtonBox.StandardButton.Cancel,
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             Qt.Orientation.Horizontal, self
         )
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("✅ ذخیره و خروج")
@@ -318,26 +288,41 @@ class CustomPriceDialog(QDialog):
         main.addWidget(btn_box)
 
     # ──────────────────────────────────────────────────────────────────
-    # عملیات اصلی
+    # عملیات
     # ──────────────────────────────────────────────────────────────────
 
+    def _on_enable_changed(self, state: int) -> None:
+        self._custom_prices_enabled = state == Qt.CheckState.Checked.value
+        self._update_table_state()
+        settings_manager.set_custom_prices_enabled(self._custom_prices_enabled)
+
+    def _update_table_state(self) -> None:
+        """فعال/غیرفعال کردن جدول"""
+        enabled = self._custom_prices_enabled
+        
+        # رنگ جدول
+        if enabled:
+            self.price_table.setStyleSheet("")
+            self.price_table.setDisabled(False)
+            self.enable_checkbox.setStyleSheet("font-weight: bold; font-size: 13px; color: #2ecc71;")
+            self.enable_checkbox.setText("✅ فعال‌سازی قیمت‌های دستی")
+        else:
+            self.price_table.setStyleSheet("QTableWidget { background-color: #3a3a3a; color: #666; }")
+            self.price_table.setDisabled(True)
+            self.enable_checkbox.setStyleSheet("font-weight: bold; font-size: 13px; color: #888;")
+            self.enable_checkbox.setText("❌ غیرفعال - قیمت‌های دستی استفاده نمی‌شوند")
+
     def _open_symbol_selection(self) -> None:
-        """مرحله ۱: انتخاب نماد"""
         dlg = SymbolSelectionDialog(self.option_symbols, self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_symbol:
             self._open_price_input(dlg.selected_symbol)
 
     def _open_price_input(self, symbol: str) -> None:
-        """مرحله ۲: وارد کردن قیمت"""
         current = self.custom_prices.get(symbol, 0.0)
         dlg = PriceInputDialog(symbol, current, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.custom_prices[symbol] = dlg.price
             self._populate_table()
-
-    # ──────────────────────────────────────────────────────────────────
-    # جدول
-    # ──────────────────────────────────────────────────────────────────
 
     def _populate_table(self) -> None:
         self.price_table.setRowCount(0)
@@ -367,8 +352,7 @@ class CustomPriceDialog(QDialog):
 
             btn_edit = QPushButton("✏️ تغییر")
             btn_edit.setStyleSheet(
-                "background-color:#1f6feb; color:white;"
-                " border-radius:4px; font-weight:bold;"
+                "background-color:#1f6feb; color:white; border-radius:4px; font-weight:bold;"
             )
             btn_edit.setFixedHeight(26)
             btn_edit.clicked.connect(lambda _, s=sym: self._open_price_input(s))
@@ -376,8 +360,7 @@ class CustomPriceDialog(QDialog):
 
             btn_del = QPushButton("🗑️ حذف")
             btn_del.setStyleSheet(
-                "background-color:#d73a49; color:white;"
-                " border-radius:4px; font-weight:bold;"
+                "background-color:#d73a49; color:white; border-radius:4px; font-weight:bold;"
             )
             btn_del.setFixedHeight(26)
             btn_del.clicked.connect(lambda _, s=sym: self._delete_price(s))
@@ -396,7 +379,6 @@ class CustomPriceDialog(QDialog):
                 self.price_table.setRowHidden(row, bool(t) and t not in item.text().upper())
 
     def _on_double_click(self, item) -> None:
-        """دابل‌کلیک روی ستون قیمت = ویرایش"""
         if item.column() == 1:
             sym_item = self.price_table.item(item.row(), 0)
             if sym_item:
@@ -426,19 +408,20 @@ class CustomPriceDialog(QDialog):
             self.custom_prices.clear()
             self._populate_table()
 
-    # ──────────────────────────────────────────────────────────────────
-    # ذخیره
-    # ──────────────────────────────────────────────────────────────────
-
     def _save_and_accept(self) -> None:
-        settings_manager.set_custom_prices(self.custom_prices)
-        self.prices_updated.emit(self.custom_prices)
-        self.accept()
-        QMessageBox.information(
-            self.parent(),
-            "موفق",
-            f"✅ {len(self.custom_prices)} قیمت دستی ذخیره شد."
-        )
+        """ذخیره و خروج"""
+        try:
+            settings_manager.set_custom_prices(self.custom_prices)
+            settings_manager.set_custom_prices_enabled(self._custom_prices_enabled)
+            self.prices_updated.emit(self.custom_prices)
+            
+            # لاگ برای دیباگ
+            logger.info(f"Custom prices saved: {len(self.custom_prices)} symbols, enabled: {self._custom_prices_enabled}")
+            
+            self.accept()
+        except Exception as e:
+            logger.error(f"Error saving custom prices: {e}")
+            QMessageBox.critical(self, "خطا", f"خطا در ذخیره‌سازی:\n{str(e)}")
 
     def get_custom_prices(self) -> Dict[str, float]:
         return self.custom_prices.copy()

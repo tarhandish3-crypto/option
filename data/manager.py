@@ -161,6 +161,11 @@ class DataManager:
         try:
             from ui.settings_manager import settings_manager
             
+            # بررسی فعال بودن قیمت‌های دستی
+            if not settings_manager.get_custom_prices_enabled():
+                logger.debug("Custom prices are disabled, using market prices")
+                return df
+            
             custom_prices = settings_manager.get_custom_prices()
             if not custom_prices:
                 return df
