@@ -2,6 +2,47 @@
     "active_profile": "mehdi",
     "profiles": {
         "mehdi": {
+            "theme": "تاریک (Dark)",
+            "layout_direction": "راست‌چین (RTL)",
+            "auto_scan_enabled": false,
+            "auto_scan_interval": 120,
+            "bale_enabled": false,
+            "bale_bot_token": "",
+            "bale_chat_id": "",
+            "bale_top_n": 2,
+            "broker_username": "",
+            "broker_password": "",
+            "excluded_symbols": [
+                "ذوب",
+                "فزر"
+            ],
+            "custom_prices": {
+                "تاصیکو": 2000.0
+            },
+            "custom_prices_enabled": true,
+            "active_strategies": [
+                "covered_call",
+                "bull_call_spread",
+                "bear_put_spread",
+                "iron_condor",
+                "long_straddle",
+                "long_strangle",
+                "collar",
+                "conversion",
+                "married_put",
+                "strip",
+                "strap",
+                "long_call",
+                "long_put"
+            ],
+            "column_visibility": {},
+            "price_range": {
+                "min_percent": -45.0,
+                "max_percent": 45.0,
+                "num_points": 26,
+                "step_size": null,
+                "labels_format": "{:.1f}%"
+            },
             "api_timeout": 30,
             "api_max_retries": 3,
             "request_delay_ms": 5000,
@@ -11,18 +52,7 @@
             "max_days_to_maturity": 365,
             "volatility_range_min": -45.0,
             "volatility_range_max": 45.0,
-            "price_range": {
-                "min_percent": -45.0,
-                "max_percent": 45.0,
-                "num_points": 26,
-                "step_size": null,
-                "labels_format": "{:.1f}%"
-            },
-            "theme": "تاریک (Dark)",
-            "layout_direction": "راست‌چین (RTL)",
             "log_level": "INFO",
-            "auto_scan_enabled": false,
-            "auto_scan_interval": 120,
             "export_dir": "F:\\python_project\\boors\\Ekhtiyar\\generate_strategyV4\\output",
             "enable_parallel_processing": false,
             "max_parallel_workers": 3,
@@ -42,6 +72,25 @@
             }
         }
     },
+    "custom_prices": {
+        "تاصیکو": 2000.0
+    },
+    "custom_prices_enabled": true,
+    "active_strategies": [
+        "covered_call",
+        "bull_call_spread",
+        "bear_put_spread",
+        "iron_condor",
+        "long_straddle",
+        "long_strangle",
+        "collar",
+        "conversion",
+        "married_put",
+        "strip",
+        "strap",
+        "long_call",
+        "long_put"
+    ],
     "excluded_symbols": [
         "ذوب",
         "فزر"

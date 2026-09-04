@@ -2,298 +2,400 @@
 # -*- coding: utf-8 -*-
 
 """
-مدیریت متمرکز تنظیمات برنامه با پشتیبانی از پروفایل‌های چندگانه.
+ماژول مدیریت تنظیمات، پروفایل‌ها و ذخیره‌سازی پایدار در فایل user_settings.json
+بدون باگ انتساب به رشته و مجهز به مکانیزم اعتبارسنجی خودکار.
 """
 
+from __future__ import annotations
+
+import os
 import json
 import logging
-from copy import deepcopy
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+from threading import RLock
+from typing import Dict, Any, List, Optional, Union
 
 import config
 
 logger = logging.getLogger("OptionScanner.UI.SettingsManager")
 
-# نام رزرو برای تنظیمات پیش‌فرض config.py
 _DEFAULT_PROFILE_NAME = "پیش‌فرض"
-
-# مسیر فایل ذخیره‌سازی تنظیمات کاربر (روت پروژه)
-_SETTINGS_FILE = config.BASE_DIR / "user_settings.json"
+SETTINGS_FILE_PATH = "user_settings.json"
 
 
-def _build_defaults_from_config() -> Dict[str, Any]:
-    """
-    استخراج تنظیمات پیش‌فرض مستقیم از config.py.
-    """
-    return {
-        # شبکه و API
-        "api_timeout":      config.DOWNLOAD_CONFIG.get("timeout", 30),
-        "api_max_retries":  config.DOWNLOAD_CONFIG.get("max_attempts", 3),
-        "request_delay_ms": config.DOWNLOAD_CONFIG.get("retry_delay", 5) * 1000,
+# =========================================================================
+# تنظیمات پیش‌فرض پایه سیستم
+# =========================================================================
 
-        # پارامترهای اسکنر
-        "risk_free_rate":           config.RISK_FREE_RATE,
-        "min_open_interest":        config.MIN_OPEN_INTEREST,
-        "min_days_to_maturity":     config.DaysToMaturity,
-        "max_days_to_maturity":     365,
-        "volatility_step_percent":  5.0,
-        "volatility_range_min":     float(config.PRICE_RANGE_CONFIG.get("min_percent", -45)),
-        "volatility_range_max":     float(config.PRICE_RANGE_CONFIG.get("max_percent", 45)),
-
-        # عمومی و UI
-        "auto_refresh_enabled":       False,
-        "auto_refresh_interval_sec":  int(config.SYSTEM_CONFIG.get("scan_interval_minutes", 2) * 60),
-        "theme":                      "روشن (Light)",
-        "layout_direction":           "راست‌چین (RTL)",
-        "log_level":                  "INFO",
-        "export_dir":                 str(config.OUTPUT_DIR),
-
-        # پیشرفته
-        "enable_parallel_processing": config.SYSTEM_CONFIG.get("parallel_enabled", False),
-        "max_parallel_workers":       config.SYSTEM_CONFIG.get("max_workers", 3),
-        "cache_enabled":              config.CACHE_ENABLED,
-        "cache_ttl_seconds":          config.CACHE_TTL_SECONDS,
-
-        # پیام‌رسان بله
-        "bale_enabled":   False,
-        "bale_bot_token": "",
-        "bale_chat_id":   "",
-        "bale_top_n":     2,
-
-        # کارگزاری اومکس
-        "broker_username": "",
-        "broker_password": "",
-
-        # استراتژی‌های فعال و نمادهای بلاک‌شده
-        "active_strategies": getattr(config, "ACTIVE_STRATEGIES", []),
-        "excluded_symbols": [],
+DEFAULT_SETTINGS: Dict[str, Any] = {
+    "theme": "تاریک (Dark)",
+    "layout_direction": "راست‌چین (RTL)",
+    "auto_scan_enabled": True,
+    "auto_scan_interval": 60,
+    "bale_enabled": False,
+    "bale_bot_token": "",
+    "bale_chat_id": "",
+    "bale_top_n": 2,
+    "broker_username": "",
+    "broker_password": "",
+    "excluded_symbols": [],
+    "custom_prices": {},
+    "custom_prices_enabled": True,
+    "active_strategies": [
+        "covered_call",
+        "bull_call_spread",
+        "bear_put_spread",
+        "iron_condor",
+        "long_straddle",
+        "long_strangle",
+        "collar",
+        "conversion",
+        "married_put",
+        "strip",
+        "strap",
+        "long_call",
+        "long_put",
+    ],
+    "column_visibility": {},
+    "price_range": {
+        "min_percent": -45,
+        "max_percent": 45,
+        "num_points": 21,
+        "step_size": None,
+        "labels_format": "{:.0f}%",
     }
+}
 
 
 class SettingsManager:
     """
-    مدیر تنظیمات برنامه — Singleton برای استفاده یکپارچه در کل پروژه.
+    مدیریت جامع خواندن، ویرایش، پشتیبان‌گیری و ذخیره‌سازی تنظیمات سیستم
     """
+    _instance: Optional[SettingsManager] = None
+    _lock = RLock()
 
-    def __init__(self):
-        self._profiles: Dict[str, Dict[str, Any]] = {}
-        self._active_profile: str = _DEFAULT_PROFILE_NAME
-        self._excluded_symbols: List[str] = []
-        self._load()
+    def __new__(cls, *args, **kwargs) -> SettingsManager:
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
+            return cls._instance
 
-    def _load(self) -> None:
-        """بارگذاری تنظیمات از فایل"""
-        if _SETTINGS_FILE.exists():
+    def __init__(self, filepath: str = SETTINGS_FILE_PATH):
+        # جلوگیری از مقداردهی مجدد در الگوی Singleton
+        if hasattr(self, "_initialized") and self._initialized:
+            return
+
+        self.filepath = filepath
+        self._active_profile_name: str = "default"
+        self._profiles_data: Dict[str, Dict[str, Any]] = {}
+        self._root_data: Dict[str, Any] = {}
+
+        self.load_from_disk()
+        self._initialized = True
+
+    # =========================================================================
+    # خواندن و نوشتن روی دیسک (Disk I/O)
+    # =========================================================================
+
+    def load_from_disk(self) -> None:
+        """بارگذاری فایل JSON یا ایجاد مقادیر پیش‌فرض در صورت عدم وجود"""
+        with self._lock:
+            if not os.path.exists(self.filepath):
+                logger.info(f"Settings file '{self.filepath}' not found. Creating default settings.")
+                self._create_default_store()
+                self.save_to_disk()
+                return
+
             try:
-                with open(_SETTINGS_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                self._profiles = data.get("profiles", {})
-                self._active_profile = data.get(
-                    "active_profile", _DEFAULT_PROFILE_NAME)
-                self._excluded_symbols = sorted(
-                    data.get("excluded_symbols", []))
-                logger.info(
-                    f"Settings loaded -- active profile: '{self._active_profile}'"
-                    f" | profiles: {len(self._profiles)}"
-                    f" | blocked symbols: {len(self._excluded_symbols)}"
-                )
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    loaded_data = json.load(f)
+
+                if not isinstance(loaded_data, dict):
+                    raise ValueError("Root JSON is not a dictionary.")
+
+                self._root_data = loaded_data
+                self._active_profile_name = str(loaded_data.get("active_profile", "default"))
+                
+                raw_profiles = loaded_data.get("profiles", {})
+                if isinstance(raw_profiles, dict) and raw_profiles:
+                    self._profiles_data = {
+                        str(k): self._merge_with_defaults(v)
+                        for k, v in raw_profiles.items()
+                        if isinstance(v, dict)
+                    }
+                else:
+                    self._profiles_data = {"default": self._merge_with_defaults(loaded_data)}
+
+                # تضمین وجود پروفایل فعال معتبر
+                if self._active_profile_name not in self._profiles_data:
+                    if "default" in self._profiles_data:
+                        self._active_profile_name = "default"
+                    else:
+                        self._active_profile_name = list(self._profiles_data.keys())[0]
+
+                logger.info(f"Settings loaded successfully. Active profile: '{self._active_profile_name}'")
+
             except Exception as e:
-                logger.warning(
-                    f"Failed to load settings: {e} -- using defaults")
-                self._profiles = {}
-                self._active_profile = _DEFAULT_PROFILE_NAME
-                self._excluded_symbols = []
-        else:
-            logger.info(
-                "Settings file not found -- using defaults from config.py")
+                logger.error(f"Error reading '{self.filepath}': {e}. Reverting to defaults.")
+                self._create_default_store()
+                self.save_to_disk()
 
-    def _save(self) -> None:
-        """ذخیره‌سازی کل وضعیت در فایل JSON"""
-        try:
-            data = {
-                "active_profile": self._active_profile,
-                "profiles": self._profiles,
-                "excluded_symbols": self._excluded_symbols,
-            }
-            with open(_SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
-            logger.info(f"Settings saved -- profile: '{self._active_profile}'")
-        except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
+    def save_to_disk(self) -> bool:
+        """ذخیره قطعی و اتمیک داده‌ها در فایل user_settings.json"""
+        with self._lock:
+            try:
+                # اطمینان از ساختار سالم دیکشنری ذخیره‌سازی
+                output_payload: Dict[str, Any] = {
+                    "active_profile": self._active_profile_name,
+                    "profiles": self._profiles_data,
+                    # کپی فیلدهای مهم در سطح ریشه برای دسترسی سریع‌تر سایر ماژول‌ها
+                    "custom_prices": self.get_custom_prices(),
+                    "custom_prices_enabled": self.get_custom_prices_enabled(),
+                    "active_strategies": self.get_active_strategies(),
+                    "excluded_symbols": self.get_excluded_symbols(),
+                }
 
-    def get_defaults(self) -> Dict[str, Any]:
-        """تنظیمات پیش‌فرض خالص از config.py"""
-        return _build_defaults_from_config()
+                # نوشتن ایمن
+                temp_path = f"{self.filepath}.tmp"
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    json.dump(output_payload, f, ensure_ascii=False, indent=4)
 
-    def get_active_settings(self) -> Dict[str, Any]:
-        """دریافت تنظیمات جاری برنامه با احتساب مقادیر دیفالت"""
-        if self._active_profile == _DEFAULT_PROFILE_NAME:
-            return self.get_defaults()
+                if os.path.exists(self.filepath):
+                    os.replace(temp_path, self.filepath)
+                else:
+                    os.rename(temp_path, self.filepath)
 
-        profile_data = self._profiles.get(self._active_profile)
-        if profile_data is None:
-            logger.warning(
-                f"Profile '{self._active_profile}' not found -- falling back to defaults"
-            )
-            self._active_profile = _DEFAULT_PROFILE_NAME
-            return self.get_defaults()
+                logger.info(f"Settings successfully written to '{self.filepath}'")
+                return True
 
-        merged = self.get_defaults()
-        merged.update(profile_data)
+            except Exception as e:
+                logger.error(f"Failed to save settings to '{self.filepath}': {e}", exc_info=True)
+                return False
+
+    def _create_default_store(self) -> None:
+        """ایجاد مخزن پیش‌فرض"""
+        self._active_profile_name = "default"
+        self._profiles_data = {"default": DEFAULT_SETTINGS.copy()}
+        self._root_data = {
+            "active_profile": "default",
+            "profiles": self._profiles_data
+        }
+
+    def _merge_with_defaults(self, custom: Dict[str, Any]) -> Dict[str, Any]:
+        """ادغام تنظیمات کاربر با مقادیر پیش‌فرض جهت تضمین وجود تمام کلیدها"""
+        merged = DEFAULT_SETTINGS.copy()
+        if isinstance(custom, dict):
+            for k, v in custom.items():
+                if k in ("custom_prices", "active_strategies", "excluded_symbols"):
+                    merged[k] = v
+                else:
+                    merged[k] = v
         return merged
 
-    def save_settings(self, settings: Dict[str, Any]) -> bool:
-        """
-        متد کمکی برای ذخیره مستقیم دیکشنری تنظیمات در پروفایل فعال یا پروفایل اختصاصی
-        """
-        active = self._active_profile
-        if active == _DEFAULT_PROFILE_NAME:
-            active = "تنظیمات سفارشی"
-            self._active_profile = active
+    # =========================================================================
+    # مدیریت پروفایل‌ها (Profiles API)
+    # =========================================================================
 
-        return self.save_profile(active, settings)
+    def get_active_profile(self) -> str:
+        """بازگرداندن نام متنی پروفایل فعال (String)"""
+        with self._lock:
+            return self._active_profile_name
 
-    def get_profile_names(self) -> List[str]:
-        return sorted(self._profiles.keys())
-
-    def get_active_profile_name(self) -> str:
-        return self._active_profile
-
-    def get_profile(self, name: str) -> Optional[Dict[str, Any]]:
-        if name == _DEFAULT_PROFILE_NAME:
-            return self.get_defaults()
-        profile = self._profiles.get(name)
-        if profile is None:
-            return None
-        merged = self.get_defaults()
-        merged.update(profile)
-        return merged
-
-    def save_profile(self, name: str, settings: Dict[str, Any]) -> bool:
-        if name == _DEFAULT_PROFILE_NAME:
-            logger.warning("Name 'default' is reserved and cannot be saved.")
+    def set_active_profile(self, profile_name: str) -> bool:
+        """تغییر پروفایل فعال"""
+        with self._lock:
+            if profile_name in self._profiles_data:
+                self._active_profile_name = profile_name
+                self.save_to_disk()
+                return True
             return False
 
-        name = name.strip()
-        if not name:
-            return False
+    def get_profiles(self) -> List[str]:
+        """لیست اسامی تمام پروفایل‌ها"""
+        with self._lock:
+            return list(self._profiles_data.keys())
 
-        self._profiles[name] = deepcopy(settings)
-        self._active_profile = name
-        self._save()
-        logger.info(f"Profile '{name}' saved and activated.")
-        return True
-
-    def set_active_profile(self, name: str) -> bool:
-        if name == _DEFAULT_PROFILE_NAME:
-            self._active_profile = _DEFAULT_PROFILE_NAME
-            self._save()
+    def create_profile(self, profile_name: str, base_settings: Optional[Dict[str, Any]] = None) -> bool:
+        """ایجاد پروفایل جدید"""
+        with self._lock:
+            if profile_name in self._profiles_data:
+                return False
+            self._profiles_data[profile_name] = self._merge_with_defaults(base_settings or {})
+            self._active_profile_name = profile_name
+            self.save_to_disk()
             return True
 
-        if name not in self._profiles:
-            logger.warning(f"Profile '{name}' not found.")
+    def delete_profile(self, profile_name: str) -> bool:
+        """حذف پروفایل"""
+        with self._lock:
+            if profile_name == "default" or len(self._profiles_data) <= 1:
+                return False
+            if profile_name in self._profiles_data:
+                del self._profiles_data[profile_name]
+                if self._active_profile_name == profile_name:
+                    self._active_profile_name = list(self._profiles_data.keys())[0]
+                self.save_to_disk()
+                return True
             return False
 
-        self._active_profile = name
-        self._save()
-        logger.info(f"Active profile changed to: '{name}'")
-        return True
+    # =========================================================================
+    # دریافت و ویرایش تنظیمات (Settings CRUD)
+    # =========================================================================
 
-    def delete_profile(self, name: str) -> bool:
-        if name == _DEFAULT_PROFILE_NAME:
-            logger.warning("Default profile cannot be deleted.")
-            return False
+    def get_active_settings(self) -> Dict[str, Any]:
+        """بازگرداندن یک کپی ایمن از دیکشنری تنظیمات پروفایل فعال"""
+        with self._lock:
+            active_dict = self._profiles_data.get(self._active_profile_name, DEFAULT_SETTINGS)
+            return active_dict.copy()
 
-        if name not in self._profiles:
-            return False
+    def get_settings(self) -> Dict[str, Any]:
+        """سازگاری با کدهای قبلی"""
+        return self.get_active_settings()
 
-        del self._profiles[name]
-        if self._active_profile == name:
-            self._active_profile = _DEFAULT_PROFILE_NAME
+    def save_settings(self, new_settings: Dict[str, Any], profile_name: Optional[str] = None) -> bool:
+        """
+        ذخیره و به‌روزرسانی دیکشنری تنظیمات در پروفایل مشخص یا پروفایل جاری
+        """
+        with self._lock:
+            target_profile = profile_name or self._active_profile_name
+            if not isinstance(new_settings, dict):
+                logger.error("save_settings failed: new_settings must be a dictionary.")
+                return False
 
-        self._save()
-        logger.info(f"Profile '{name}' deleted.")
-        return True
+            current = self._profiles_data.get(target_profile, DEFAULT_SETTINGS.copy())
+            current.update(new_settings)
+            self._profiles_data[target_profile] = current
 
-    def restore_defaults(self) -> None:
-        self._active_profile = _DEFAULT_PROFILE_NAME
-        self._save()
-        logger.info("Active profile reset to 'default'.")
+            return self.save_to_disk()
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        """دریافت مقدار یک کلید خاص از تنظیمات فعال"""
+        with self._lock:
+            settings = self.get_active_settings()
+            return settings.get(key, default)
+
+    def set_setting(self, key: str, value: Any) -> bool:
+        """تنظیم و ذخیره مقدار یک کلید خاص"""
+        with self._lock:
+            settings = self.get_active_settings()
+            settings[key] = value
+            return self.save_settings(settings)
+
+    # =========================================================================
+    # متدهای اختصاصی قیمت دستی (Custom Prices) - رفع باگ انتساب به رشته
+    # =========================================================================
+
+    def get_custom_prices(self) -> Dict[str, float]:
+        """دریافت دیکشنری قیمت‌های دستی"""
+        with self._lock:
+            prices = self.get_setting("custom_prices", {})
+            if isinstance(prices, dict):
+                return {str(k): float(v) for k, v in prices.items() if v is not None}
+            elif isinstance(prices, str):
+                try:
+                    parsed = json.loads(prices)
+                    if isinstance(parsed, dict):
+                        return {str(k): float(v) for k, v in parsed.items()}
+                except Exception:
+                    pass
+            return {}
+
+    def set_custom_prices(self, prices: Dict[str, float]) -> bool:
+        """
+        ذخیره قطعی و ایمن قیمت‌های دستی بدون خطا
+        """
+        with self._lock:
+            if not isinstance(prices, dict):
+                logger.warning("set_custom_prices received a non-dict value. Converting to empty dict.")
+                clean_prices = {}
+            else:
+                clean_prices = {
+                    str(k): float(v) for k, v in prices.items()
+                    if v is not None and float(v) > 0
+                }
+
+            # ۱. ذخیره در پروفایل فعال
+            active_dict = self._profiles_data.setdefault(self._active_profile_name, DEFAULT_SETTINGS.copy())
+            active_dict["custom_prices"] = clean_prices
+
+            # ۲. همگام‌سازی با کانفیگ برنامه
+            if hasattr(config, "CUSTOM_PRICES"):
+                config.CUSTOM_PRICES = clean_prices
+
+            return self.save_to_disk()
+
+    def get_custom_prices_enabled(self) -> bool:
+        """بررسی فعال بودن قیمت‌های دستی"""
+        with self._lock:
+            return bool(self.get_setting("custom_prices_enabled", True))
+
+    def set_custom_prices_enabled(self, enabled: bool) -> bool:
+        """فعال یا غیرفعال‌سازی قیمت‌های دستی"""
+        with self._lock:
+            active_dict = self._profiles_data.setdefault(self._active_profile_name, DEFAULT_SETTINGS.copy())
+            active_dict["custom_prices_enabled"] = bool(enabled)
+            return self.save_to_disk()
+
+    # =========================================================================
+    # سایر متدهای دسترسی سریع (Convenience Methods)
+    # =========================================================================
 
     def get_excluded_symbols(self) -> List[str]:
-        return list(self._excluded_symbols)
+        """دریافت نمادهای استثناشده (بلاک‌شده)"""
+        with self._lock:
+            excluded = self.get_setting("excluded_symbols", [])
+            return list(excluded) if isinstance(excluded, (list, tuple, set)) else []
 
-    def set_excluded_symbols(self, symbols: List[str]) -> None:
-        self._excluded_symbols = sorted(set(symbols))
-        self._save()
-        logger.info(
-            f"Blocked symbols updated: {len(self._excluded_symbols)} symbol(s)")
-    
+    def set_excluded_symbols(self, symbols: List[str]) -> bool:
+        """تنظیم نمادهای استثناشده"""
+        with self._lock:
+            clean_list = [str(s).strip() for s in symbols if str(s).strip()]
+            return self.set_setting("excluded_symbols", clean_list)
+
     def get_active_strategies(self) -> List[str]:
-        """دریافت لیست استراتژی‌های فعال"""
-        s = self.get_active_settings()
-        return s.get("active_strategies", [])
-    
-    def get_custom_prices(self) -> Dict[str, float]:
-        """دریافت دیکشنری قیمت‌های دستی نمادها"""
-        s = self.get_active_settings()
-        return s.get("custom_prices", {})
-    
-    def set_custom_prices(self, prices: Dict[str, float]) -> None:
-        """ذخیره قیمت‌های دستی نمادها"""
-        self._active_profile["custom_prices"] = prices
-        self._save()
-        logger.info(f"Custom prices updated: {len(prices)} symbols")
-    
-    def get_custom_prices_enabled(self) -> bool:
-        """آیا قیمت‌های دستی فعال هستند؟"""
-        s = self.get_active_settings()
-        return s.get("custom_prices_enabled", True)
-    
-    def set_custom_prices_enabled(self, enabled: bool) -> None:
-        """فعال/غیرفعال کردن قیمت‌های دستی"""
-        self._active_profile["custom_prices_enabled"] = enabled
-        self._save()
-        logger.info(f"Custom prices enabled: {enabled}")
-    
-    def get_custom_price(self, symbol: str) -> Optional[float]:
-        """دریافت قیمت دستی برای یک نماد خاص"""
-        prices = self.get_custom_prices()
-        return prices.get(symbol)
-    
-    def set_custom_price(self, symbol: str, price: float) -> None:
-        """تنظیم قیمت دستی برای یک نماد"""
-        prices = self.get_custom_prices()
-        prices[symbol] = price
-        self.set_custom_prices(prices)
-    
-    def remove_custom_price(self, symbol: str) -> None:
-        """حذف قیمت دستی یک نماد"""
-        prices = self.get_custom_prices()
-        if symbol in prices:
-            del prices[symbol]
-            self.set_custom_prices(prices)
-    
-    def clear_all_custom_prices(self) -> None:
-        """حذف تمام قیمت‌های دستی"""
-        self.set_custom_prices({})
+        """دریافت استراتژی‌های فعال برای اسکن"""
+        with self._lock:
+            strats = self.get_setting("active_strategies", None)
+            if isinstance(strats, (list, tuple)):
+                return list(strats)
+            return getattr(config, "ACTIVE_STRATEGIES", DEFAULT_SETTINGS["active_strategies"])
+
+    def set_active_strategies(self, strategies: List[str]) -> bool:
+        """تنظیم استراتژی‌های فعال"""
+        with self._lock:
+            clean_list = [str(s).strip() for s in strategies if str(s).strip()]
+            if hasattr(config, "ACTIVE_STRATEGIES"):
+                config.ACTIVE_STRATEGIES = clean_list
+            return self.set_setting("active_strategies", clean_list)
 
     def get_bale_config(self) -> Dict[str, Any]:
-        s = self.get_active_settings()
-        return {
-            "bot_token": s.get("bale_bot_token", ""),
-            "chat_id":   s.get("bale_chat_id", ""),
-            "top_n":     s.get("bale_top_n", 2),
-            "enabled":   s.get("bale_enabled", False),
-        }
+        """دریافت پیکربندی پیام‌رسان بله"""
+        with self._lock:
+            settings = self.get_active_settings()
+            return {
+                "enabled": settings.get("bale_enabled", False),
+                "bot_token": settings.get("bale_bot_token", ""),
+                "chat_id": settings.get("bale_chat_id", ""),
+                "top_n": settings.get("bale_top_n", 2),
+            }
 
     def get_broker_config(self) -> Dict[str, Any]:
-        s = self.get_active_settings()
-        return {
-            "username": s.get("broker_username", ""),
-            "password": s.get("broker_password", ""),
-        }
+        """دریافت تنظیمات احراز هویت کارگزاری"""
+        with self._lock:
+            settings = self.get_active_settings()
+            return {
+                "username": settings.get("broker_username", ""),
+                "password": settings.get("broker_password", ""),
+            }
 
+    def reset_to_defaults(self) -> bool:
+        """بازنشانی کامل تنظیمات به حالت کارخانه"""
+        with self._lock:
+            self._create_default_store()
+            return self.save_to_disk()
+
+
+# =========================================================================
+# نمونه یکتای سراسری (Singleton Instance Export)
+# =========================================================================
 
 settings_manager = SettingsManager()

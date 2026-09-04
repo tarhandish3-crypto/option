@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-دیالوگ تنظیم قیمت دستی برای نمادهای پایه
+دیالوگ تنظیم قیمت دستی برای نمادهای پایه با ذخیره‌سازی پایدار و ایمن در user_settings.json
 """
 
+from __future__ import annotations
+
+import os
+import json
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional, Any
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -13,12 +17,15 @@ from PySide6.QtWidgets import (
     QWidget, QListWidget, QListWidgetItem, QCheckBox
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QBrush, QColor, QDoubleValidator, QPalette
+from PySide6.QtGui import QFont, QBrush, QColor, QDoubleValidator
 
 from ui.settings_manager import settings_manager
 from ui import theme as ui_theme
+import config
 
 logger = logging.getLogger("OptionScanner.UI.CustomPriceDialog")
+
+USER_SETTINGS_FILE = "user_settings.json"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -55,12 +62,12 @@ class SymbolSelectionDialog(QDialog):
         self.search_input.textChanged.connect(self._filter)
         layout.addWidget(self.search_input)
 
-        # لیست
+        # لیست نمادها
         self.list_widget = QListWidget()
         self.list_widget.setAlternatingRowColors(True)
         for sym in self._option_symbols:
             item = QListWidgetItem(sym)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
             item.setCheckState(Qt.CheckState.Unchecked)
             self.list_widget.addItem(item)
 
@@ -185,7 +192,7 @@ class PriceInputDialog(QDialog):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class CustomPriceDialog(QDialog):
-    """دیالوگ تنظیم قیمت دستی برای نمادهای پایه"""
+    """دیالوگ تنظیم قیمت دستی برای نمادهای پایه با ذخیره‌سازی امن"""
 
     prices_updated = Signal(dict)
 
@@ -197,12 +204,68 @@ class CustomPriceDialog(QDialog):
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
         self.option_symbols = option_symbols
-        self.custom_prices: Dict[str, float] = settings_manager.get_custom_prices()
-        self._custom_prices_enabled: bool = settings_manager.get_custom_prices_enabled()
+        
+        # بارگذاری ایمن داده‌ها
+        self.custom_prices: Dict[str, float] = self._safe_load_custom_prices()
+        self._custom_prices_enabled: bool = self._safe_load_enabled_state()
 
         self._init_ui()
         self._populate_table()
         self._update_table_state()
+
+    def _safe_load_custom_prices(self) -> Dict[str, float]:
+        """بارگذاری ایمن قیمت‌های دستی از فایل JSON یا SettingsManager"""
+        prices: Dict[str, float] = {}
+        
+        # ۱. اولویت: خواندن از فایل user_settings.json
+        if os.path.exists(USER_SETTINGS_FILE):
+            try:
+                with open(USER_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        raw = data.get("custom_prices", {})
+                        if isinstance(raw, dict):
+                            prices = {str(k): float(v) for k, v in raw.items() if v is not None}
+                        elif isinstance(raw, str):
+                            try:
+                                parsed = json.loads(raw)
+                                if isinstance(parsed, dict):
+                                    prices = {str(k): float(v) for k, v in parsed.items()}
+                            except Exception:
+                                pass
+            except Exception as e:
+                logger.warning(f"Failed to read custom_prices from JSON: {e}")
+
+        # ۲. فال‌بک: اگر خالی بود از settings_manager بخوان
+        if not prices and settings_manager:
+            try:
+                if hasattr(settings_manager, "get_custom_prices"):
+                    raw = settings_manager.get_custom_prices()
+                    if isinstance(raw, dict):
+                        prices = {str(k): float(v) for k, v in raw.items() if v is not None}
+            except Exception as e:
+                logger.warning(f"Failed to load from settings_manager: {e}")
+
+        return prices
+
+    def _safe_load_enabled_state(self) -> bool:
+        """بارگذاری وضعیت فعال/غیرفعال بودن قیمت‌های دستی"""
+        if os.path.exists(USER_SETTINGS_FILE):
+            try:
+                with open(USER_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict) and "custom_prices_enabled" in data:
+                        return bool(data["custom_prices_enabled"])
+            except Exception:
+                pass
+
+        if settings_manager and hasattr(settings_manager, "get_custom_prices_enabled"):
+            try:
+                return bool(settings_manager.get_custom_prices_enabled())
+            except Exception:
+                pass
+
+        return True
 
     def _init_ui(self) -> None:
         main = QVBoxLayout(self)
@@ -216,11 +279,11 @@ class CustomPriceDialog(QDialog):
         self.enable_checkbox.stateChanged.connect(self._on_enable_changed)
         main.addWidget(self.enable_checkbox)
 
-        # ---- دکمه انتخاب نماد (کوچکتر) ----
+        # ---- دکمه انتخاب نماد ----
         add_layout = QHBoxLayout()
         add_layout.addStretch()
         
-        self.btn_select = QPushButton("📋 انتخاب نماد")
+        self.btn_select = QPushButton("📋 انتخاب نماد و افزودن قیمت")
         self.btn_select.setStyleSheet(
             "background-color:#1f6feb; color:white; font-weight:bold;"
             " padding:6px 20px; font-size:12px; border-radius:4px;"
@@ -247,7 +310,7 @@ class CustomPriceDialog(QDialog):
 
         self.price_table = QTableWidget()
         self.price_table.setColumnCount(3)
-        self.price_table.setHorizontalHeaderLabels(["نماد", "قیمت دستی", "عملیات"])
+        self.price_table.setHorizontalHeaderLabels(["نماد", "قیمت دستی (ریال)", "عملیات"])
         self.price_table.setAlternatingRowColors(True)
         self.price_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.price_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -257,7 +320,7 @@ class CustomPriceDialog(QDialog):
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.price_table.setColumnWidth(0, 100)
+        self.price_table.setColumnWidth(0, 110)
         self.price_table.setColumnWidth(2, 180)
 
         table_layout.addWidget(self.price_table)
@@ -272,16 +335,6 @@ class CustomPriceDialog(QDialog):
         table_layout.addLayout(clear_row)
 
         main.addWidget(table_box)
-        
-        # دکمه تست ذخیره (برای دیباگ)
-        test_save_row = QHBoxLayout()
-        test_save_row.addStretch()
-        btn_test = QPushButton("⚡ تست ذخیره")
-        btn_test.setStyleSheet("background-color:#f39c12; color:white;")
-        btn_test.clicked.connect(self._test_save)
-        test_save_row.addWidget(btn_test)
-        test_save_row.addStretch()
-        main.addLayout(test_save_row)
 
         # ---- دکمه‌های پایین ----
         btn_box = QDialogButtonBox(
@@ -290,7 +343,7 @@ class CustomPriceDialog(QDialog):
         )
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("✅ ذخیره و خروج")
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(
-            "background-color:#2ecc71; color:white; font-weight:bold;"
+            "background-color:#2ecc71; color:white; font-weight:bold; padding:6px 18px;"
         )
         btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
         btn_box.accepted.connect(self._save_and_accept)
@@ -298,29 +351,26 @@ class CustomPriceDialog(QDialog):
         main.addWidget(btn_box)
 
     # ──────────────────────────────────────────────────────────────────
-    # عملیات
+    # عملیات و رویدادها
     # ──────────────────────────────────────────────────────────────────
 
     def _on_enable_changed(self, state: int) -> None:
-        self._custom_prices_enabled = state == Qt.CheckState.Checked.value
+        self._custom_prices_enabled = (state == Qt.CheckState.Checked.value or state == 2)
         self._update_table_state()
-        settings_manager.set_custom_prices_enabled(self._custom_prices_enabled)
 
     def _update_table_state(self) -> None:
-        """فعال/غیرفعال کردن جدول"""
+        """فعال/غیرفعال کردن ویژوال جدول"""
         enabled = self._custom_prices_enabled
-        
-        # رنگ جدول
         if enabled:
             self.price_table.setStyleSheet("")
             self.price_table.setDisabled(False)
             self.enable_checkbox.setStyleSheet("font-weight: bold; font-size: 13px; color: #2ecc71;")
             self.enable_checkbox.setText("✅ فعال‌سازی قیمت‌های دستی")
         else:
-            self.price_table.setStyleSheet("QTableWidget { background-color: #3a3a3a; color: #666; }")
+            self.price_table.setStyleSheet("QTableWidget { background-color: #2b2b2b; color: #777; }")
             self.price_table.setDisabled(True)
             self.enable_checkbox.setStyleSheet("font-weight: bold; font-size: 13px; color: #888;")
-            self.enable_checkbox.setText("❌ غیرفعال - قیمت‌های دستی استفاده نمی‌شوند")
+            self.enable_checkbox.setText("❌ غیرفعال — قیمت‌های دستی در اسکنر استفاده نمی‌شوند")
 
     def _open_symbol_selection(self) -> None:
         dlg = SymbolSelectionDialog(self.option_symbols, self)
@@ -331,7 +381,7 @@ class CustomPriceDialog(QDialog):
         current = self.custom_prices.get(symbol, 0.0)
         dlg = PriceInputDialog(symbol, current, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.custom_prices[symbol] = dlg.price
+            self.custom_prices[symbol] = float(dlg.price)
             self._populate_table()
 
     def _populate_table(self) -> None:
@@ -341,45 +391,42 @@ class CustomPriceDialog(QDialog):
         for row, sym in enumerate(symbols):
             self.price_table.insertRow(row)
 
-            # نماد
+            # ۱. نماد
             sym_item = QTableWidgetItem(sym)
             sym_item.setFlags(sym_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            sym_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             sym_item.setForeground(QBrush(QColor("#f0883e")))
-            sym_item.setFont(QFont("Vazirmatn", 10, QFont.Weight.Bold))
+            font = sym_item.font()
+            font.setBold(True)
+            sym_item.setFont(font)
             self.price_table.setItem(row, 0, sym_item)
 
-            # قیمت
-            price_val = self.custom_prices[sym]
-            price_item = QTableWidgetItem(f"{price_val:,.0f} ریال")
+            # ۲. قیمت دستی
+            price_val = float(self.custom_prices[sym])
+            price_item = QTableWidgetItem(ui_theme.format_rial(price_val))
             price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.price_table.setItem(row, 1, price_item)
 
-            # عملیات
+            # ۳. دکمه‌های عملیات
             cell = QWidget()
             cell_layout = QHBoxLayout(cell)
             cell_layout.setContentsMargins(4, 2, 4, 2)
-            cell_layout.setSpacing(4)
+            cell_layout.setSpacing(6)
 
-            btn_edit = QPushButton("✏️ تغییر")
-            btn_edit.setStyleSheet(
-                "background-color:#1f6feb; color:white; border-radius:4px; font-weight:bold;"
-            )
+            btn_edit = QPushButton("✏️ ویرایش")
+            btn_edit.setStyleSheet("background-color:#1f6feb; color:white; border-radius:4px; font-weight:bold;")
             btn_edit.setFixedHeight(26)
             btn_edit.clicked.connect(lambda _, s=sym: self._open_price_input(s))
             cell_layout.addWidget(btn_edit)
 
             btn_del = QPushButton("🗑️ حذف")
-            btn_del.setStyleSheet(
-                "background-color:#d73a49; color:white; border-radius:4px; font-weight:bold;"
-            )
+            btn_del.setStyleSheet("background-color:#d73a49; color:white; border-radius:4px; font-weight:bold;")
             btn_del.setFixedHeight(26)
             btn_del.clicked.connect(lambda _, s=sym: self._delete_price(s))
             cell_layout.addWidget(btn_del)
 
             self.price_table.setCellWidget(row, 2, cell)
-            self.price_table.setRowHeight(row, 34)
-
-        logger.info(f"Table updated: {len(symbols)} custom prices")
+            self.price_table.setRowHeight(row, 36)
 
     def _filter_table(self, text: str) -> None:
         t = text.strip().upper()
@@ -409,8 +456,8 @@ class CustomPriceDialog(QDialog):
         if not self.custom_prices:
             return
         reply = QMessageBox.question(
-            self, "تأیید",
-            f"پاک کردن تمام {len(self.custom_prices)} قیمت دستی؟",
+            self, "تأیید حذف همه",
+            f"آیا از پاک کردن تمام {len(self.custom_prices)} قیمت دستی مطمئن هستید؟",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -418,35 +465,83 @@ class CustomPriceDialog(QDialog):
             self.custom_prices.clear()
             self._populate_table()
 
+    # ──────────────────────────────────────────────────────────────────
+    # متد ذخیره‌سازی ایمن و مطمئن (بدون خطای TypeError)
+    # ──────────────────────────────────────────────────────────────────
+
     def _save_and_accept(self) -> None:
-        """ذخیره و خروج"""
+        """ذخیره قطعی و ایمن داده‌ها در فایل و اطلاع‌رسانی به سیستم"""
         try:
-            settings_manager.set_custom_prices(self.custom_prices)
-            settings_manager.set_custom_prices_enabled(self._custom_prices_enabled)
-            self.prices_updated.emit(self.custom_prices)
-            
-            # لاگ برای دیباگ
-            logger.info(f"Custom prices saved: {len(self.custom_prices)} symbols, enabled: {self._custom_prices_enabled}")
-            
-            self.accept()
-        except Exception as e:
-            logger.error(f"Error saving custom prices: {e}")
-            QMessageBox.critical(self, "خطا", f"خطا در ذخیره‌سازی:\n{str(e)}")
-    
-    def _test_save(self) -> None:
-        """تست دستی ذخیره‌سازی"""
-        try:
-            settings_manager.set_custom_prices(self.custom_prices)
-            settings_manager.set_custom_prices_enabled(self._custom_prices_enabled)
-            
-            QMessageBox.information(
-                self,
-                "تست موفق",
-                f"✅ {len(self.custom_prices)} قیمت دستی ذخیره شد.\n"
-                f"وضعیت فعال‌سازی: {self._custom_prices_enabled}"
+            clean_prices: Dict[str, float] = {
+                str(k): float(v) for k, v in self.custom_prices.items() 
+                if v is not None and float(v) > 0
+            }
+            enabled = bool(self._custom_prices_enabled)
+
+            # ۱. ذخیره مستقیم و ایمن در فایل user_settings.json
+            user_data: Dict[str, Any] = {}
+            if os.path.exists(USER_SETTINGS_FILE):
+                try:
+                    with open(USER_SETTINGS_FILE, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                        if isinstance(loaded, dict):
+                            user_data = loaded
+                except Exception:
+                    user_data = {}
+
+            # به‌روزرسانی کلیدهای اصلی
+            user_data["custom_prices"] = clean_prices
+            user_data["custom_prices_enabled"] = enabled
+
+            # در صورتی که ساختار پروفایل‌ها وجود دارد، پروفایل فعال را نیز به‌روزرسانی کن
+            if "profiles" in user_data and isinstance(user_data["profiles"], dict):
+                act_prof = user_data.get("active_profile", "default")
+                if isinstance(act_prof, str) and act_prof in user_data["profiles"]:
+                    if isinstance(user_data["profiles"][act_prof], dict):
+                        user_data["profiles"][act_prof]["custom_prices"] = clean_prices
+                        user_data["profiles"][act_prof]["custom_prices_enabled"] = enabled
+
+            with open(USER_SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(user_data, f, ensure_ascii=False, indent=4)
+
+            # ۲. به‌روزرسانی حافظه در settings_manager (بدون کرش در صورت وجود باگ داخلی)
+            if settings_manager:
+                try:
+                    if hasattr(settings_manager, "set_custom_prices"):
+                        settings_manager.set_custom_prices(clean_prices)
+                    if hasattr(settings_manager, "set_custom_prices_enabled"):
+                        settings_manager.set_custom_prices_enabled(enabled)
+                except Exception as ex:
+                    logger.warning(f"SettingsManager method fallback: {ex}")
+                    # فال‌بک: تزریق مستقیم به دیکشنری تنظیمات
+                    if hasattr(settings_manager, "settings") and isinstance(settings_manager.settings, dict):
+                        settings_manager.settings["custom_prices"] = clean_prices
+                        settings_manager.settings["custom_prices_enabled"] = enabled
+                    if hasattr(settings_manager, "_settings") and isinstance(settings_manager._settings, dict):
+                        settings_manager._settings["custom_prices"] = clean_prices
+                        settings_manager._settings["custom_prices_enabled"] = enabled
+
+            # ۳. اعمال روی کانفیگ سراسری برنامه
+            if hasattr(config, "CUSTOM_PRICES"):
+                config.CUSTOM_PRICES = clean_prices
+
+            self.prices_updated.emit(clean_prices)
+            logger.info(f"Custom prices saved: {len(clean_prices)} symbols, enabled: {enabled}")
+
+            # ۴. نمایش پیغام موفقیت و بستن دیالوگ
+            count = len(clean_prices)
+            status_text = "فعال" if enabled else "غیرفعال"
+            msg = (
+                f"✅ قیمت‌های دستی با موفقیت در سیستم ذخیره شدند.\n\n"
+                f"تعداد نمادها: {count}\n"
+                f"وضعیت اعمال: {status_text}"
             )
+            QMessageBox.information(self, "ذخیره موفق", msg)
+            self.accept()
+
         except Exception as e:
-            QMessageBox.critical(self, "خطای تست", f"خطا در ذخیره‌سازی:\n{str(e)}")
+            logger.error(f"Error saving custom prices: {e}", exc_info=True)
+            QMessageBox.critical(self, "خطا در ذخیره‌سازی", f"خطا در ذخیره‌سازی:\n{str(e)}")
 
     def get_custom_prices(self) -> Dict[str, float]:
         return self.custom_prices.copy()
