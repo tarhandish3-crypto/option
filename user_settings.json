@@ -202,5 +202,8 @@
             }
         }
     },
-    "excluded_symbols": []
+    "excluded_symbols": [
+        "ذوب",
+        "فزر"
+    ]
 }
