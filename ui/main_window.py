@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QCheckBox, 
     QSpinBox, QLabel, QHeaderView, QMessageBox, QStatusBar,
     QProgressBar, QFrame, QApplication, QSplitter, QFileDialog,
-    QMenu, QLineEdit
+    QMenu, QLineEdit, QDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QBrush, QColor

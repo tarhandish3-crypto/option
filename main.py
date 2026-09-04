@@ -1,36 +1,36 @@
 # main.py
-# -*- coding: utf-8 -*-
 
 """
 ماژول اصلی سیستم اسکنر (Main Executive Module) - نسخه اختصاصی UI
 این ماژول پنجره برنامه را فوراً لود کرده و پردازش‌های سنگین را به زمان اجرا موکول می‌کند.
 """
 
-import sys
-import time
-import logging
 import gc
-import threading
-import sqlite3
-from datetime import datetime
-from typing import Optional, Callable, List, Any, Dict, Tuple
 import json
+import logging
+import sqlite3
+import sys
+import threading
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
-from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QApplication
 
 import config
+from analytics.risk_engine import RiskEngine
 from data.manager import DataManager
 from engine.scanner_engine import ScannerEngine
-from reports.excel_exporter import ExcelExporter
-from reports.chart_plotter import ChartPlotter
-from scoring.ranker import OpportunityRanker, RankingProfile
-from analytics.risk_engine import RiskEngine
 from filters.strategy_filters import apply_strategy_filter
+from reports.chart_plotter import ChartPlotter
+from reports.excel_exporter import ExcelExporter
+from scoring.ranker import OpportunityRanker, RankingProfile
+from ui import theme as ui_theme
 from ui.main_window import MainWindow
 from ui.settings_manager import settings_manager
-from ui import theme as ui_theme
 
 logger = logging.getLogger("OptionScanner.Main")
 
