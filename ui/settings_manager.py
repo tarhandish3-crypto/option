@@ -234,6 +234,39 @@ class SettingsManager:
         """دریافت لیست استراتژی‌های فعال"""
         s = self.get_active_settings()
         return s.get("active_strategies", [])
+    
+    def get_custom_prices(self) -> Dict[str, float]:
+        """دریافت دیکشنری قیمت‌های دستی نمادها"""
+        s = self.get_active_settings()
+        return s.get("custom_prices", {})
+    
+    def set_custom_prices(self, prices: Dict[str, float]) -> None:
+        """ذخیره قیمت‌های دستی نمادها"""
+        self._active_profile["custom_prices"] = prices
+        self._save()
+        logger.info(f"Custom prices updated: {len(prices)} symbols")
+    
+    def get_custom_price(self, symbol: str) -> Optional[float]:
+        """دریافت قیمت دستی برای یک نماد خاص"""
+        prices = self.get_custom_prices()
+        return prices.get(symbol)
+    
+    def set_custom_price(self, symbol: str, price: float) -> None:
+        """تنظیم قیمت دستی برای یک نماد"""
+        prices = self.get_custom_prices()
+        prices[symbol] = price
+        self.set_custom_prices(prices)
+    
+    def remove_custom_price(self, symbol: str) -> None:
+        """حذف قیمت دستی یک نماد"""
+        prices = self.get_custom_prices()
+        if symbol in prices:
+            del prices[symbol]
+            self.set_custom_prices(prices)
+    
+    def clear_all_custom_prices(self) -> None:
+        """حذف تمام قیمت‌های دستی"""
+        self.set_custom_prices({})
 
     def get_bale_config(self) -> Dict[str, Any]:
         s = self.get_active_settings()

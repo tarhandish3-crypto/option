@@ -23,6 +23,7 @@ from ui.workers import (
     BatchUpdateManager
 )
 from ui.symbol_filter_dialog import SymbolFilterDialog
+from ui.custom_price_dialog import CustomPriceDialog
 from ui.settings_dialog import SettingsDialog
 from ui.strategy_settings_dialog import StrategySettingsDialog
 from ui.settings_manager import settings_manager
@@ -288,7 +289,23 @@ class MainWindow(QMainWindow):
         self.btn_symbol_filter = QPushButton("🔍 فیلتر نمادها")
         self.btn_symbol_filter.clicked.connect(self.open_symbol_filter_dialog)
         layout.addWidget(self.btn_symbol_filter)
-
+        
+        # قیمت دستی نمادها
+        self.btn_custom_price = QPushButton("💰 قیمت دستی نمادها")
+        self.btn_custom_price.setStyleSheet("""
+            QPushButton {
+                background-color: #6f42c1;
+                color: white;
+                font-weight: bold;
+                padding: 8px 15px;
+                border-radius: 5px;
+                border: none;
+            }
+            QPushButton:hover { background-color: #8b5cf6; }
+        """)
+        self.btn_custom_price.clicked.connect(self.open_custom_price_dialog)
+        layout.addWidget(self.btn_custom_price)
+        
         # تنظیمات سیستم
         self.btn_settings = QPushButton("⚙️ تنظیمات سیستم")
         self.btn_settings.clicked.connect(self.open_settings_dialog)
@@ -846,6 +863,24 @@ class MainWindow(QMainWindow):
         self.config['excluded_symbols'] = excluded
         count = len(excluded)
         self.status_update_signal.emit(f"🚫 {count} نماد استثنا شد" if count else "✅ همه نمادها فعالند")
+    
+    def open_custom_price_dialog(self):
+        """باز کردن پنجره تنظیم قیمت دستی نمادها"""
+        # دریافت لیست نمادهای دارای قرارداد اختیار
+        try:
+            available_symbols = list(config.SYMBOL_INFO.keys()) if hasattr(config, 'SYMBOL_INFO') else []
+        except:
+            available_symbols = []
+        
+        dialog = CustomPriceDialog(option_symbols=available_symbols, parent=self)
+        dialog.prices_updated.connect(self._on_custom_prices_updated)
+        dialog.exec()
+    
+    def _on_custom_prices_updated(self, prices: dict):
+        """پس از به‌روزرسانی قیمت‌های دستی"""
+        count = len(prices)
+        self.status_update_signal.emit(f"💰 {count} قیمت دستی برای نمادها تنظیم شد")
+        logger.info(f"Custom prices updated: {count} symbols")
 
     def open_settings_dialog(self):
         try:

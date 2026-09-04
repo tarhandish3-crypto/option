@@ -16,15 +16,38 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QPushButton, QGroupBox,
     QMessageBox, QDialogButtonBox, QFileDialog,
-    QComboBox, QGridLayout
+    QComboBox, QGridLayout, QProgressDialog, QCheckBox, QSpinBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QFont, QBrush, QColor
 
 from ui.settings_manager import settings_manager
 from ui import theme as ui_theme
+from data.market_queue import get_buy_queue_symbols, filter_by_option_symbols
 
 logger = logging.getLogger("OptionScanner.UI.SymbolFilter")
+
+
+class BuyQueueWorker(QThread):
+    """Worker thread برای دریافت نمادهای صف خرید"""
+    finished = Signal(list)  # سیگنال برای ارسال نتایج
+    error = Signal(str)      # سیگنال برای ارسال خطا
+    
+    def __init__(self, option_symbols: List[str], parent=None):
+        super().__init__(parent)
+        self.option_symbols = option_symbols
+    
+    def run(self):
+        """اجرای در thread جداگانه"""
+        try:
+            buy_queue = get_buy_queue_symbols()
+            if buy_queue:
+                filtered = filter_by_option_symbols(buy_queue, self.option_symbols)
+                self.finished.emit(filtered)
+            else:
+                self.finished.emit([])
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class SymbolFilterDialog(QDialog):
@@ -118,31 +141,37 @@ class SymbolFilterDialog(QDialog):
         operation_group = QGroupBox("عملیات گروهی و فایل")
         operation_layout = QGridLayout(operation_group)
 
+        # دکمه نمادهای صف خرید - در بالاترین ردیف
+        self.btn_buy_queue = QPushButton("📈 نمادهای صف خرید")
+        self.btn_buy_queue.clicked.connect(self._load_buy_queue_symbols)
+        self.btn_buy_queue.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold;")
+        operation_layout.addWidget(self.btn_buy_queue, 0, 0, 1, 3)
+
         self.btn_select_all = QPushButton("✅ بلاک کردن همه (نمایشی)")
         self.btn_select_all.clicked.connect(lambda: self._set_all_checks(True))
-        operation_layout.addWidget(self.btn_select_all, 0, 0)
+        operation_layout.addWidget(self.btn_select_all, 1, 0)
 
         self.btn_deselect_all = QPushButton("❌ آن‌بلاک همه (نمایشی)")
         self.btn_deselect_all.clicked.connect(lambda: self._set_all_checks(False))
-        operation_layout.addWidget(self.btn_deselect_all, 0, 1)
+        operation_layout.addWidget(self.btn_deselect_all, 1, 1)
 
         self.btn_remove_selected = QPushButton("🗑️ حذف از لیست")
         self.btn_remove_selected.clicked.connect(self._remove_selected_symbol)
         self.btn_remove_selected.setStyleSheet("background-color: #e74c3c; color: white;")
-        operation_layout.addWidget(self.btn_remove_selected, 0, 2)
+        operation_layout.addWidget(self.btn_remove_selected, 1, 2)
 
         self.btn_import = QPushButton("📥 بارگذاری از فایل")
         self.btn_import.clicked.connect(self._import_list)
-        operation_layout.addWidget(self.btn_import, 1, 0)
+        operation_layout.addWidget(self.btn_import, 2, 0)
 
         self.btn_export = QPushButton("📤 خروجی به فایل")
         self.btn_export.clicked.connect(self._export_list)
-        operation_layout.addWidget(self.btn_export, 1, 1)
+        operation_layout.addWidget(self.btn_export, 2, 1)
 
         self.btn_clear_all = QPushButton("🧹 پاک کردن همه استثناها")
         self.btn_clear_all.clicked.connect(self._clear_all_exclusions)
         self.btn_clear_all.setStyleSheet("background-color: #d35400; color: white;")
-        operation_layout.addWidget(self.btn_clear_all, 1, 2)
+        operation_layout.addWidget(self.btn_clear_all, 2, 2)
 
         list_layout.addWidget(operation_group)
         main_layout.addWidget(list_group)
@@ -161,6 +190,30 @@ class SymbolFilterDialog(QDialog):
         custom_layout.addWidget(self.custom_symbol_input)
         custom_layout.addWidget(self.btn_add_custom)
         main_layout.addWidget(custom_group)
+        
+        # بخش پایش خودکار صف خرید
+        auto_group = QGroupBox("پایش خودکار صف خرید")
+        auto_layout = QHBoxLayout(auto_group)
+        
+        self.chk_auto_monitor = QCheckBox("فعال‌سازی پایش خودکار")
+        self.chk_auto_monitor.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.chk_auto_monitor.stateChanged.connect(self._toggle_auto_monitor)
+        auto_layout.addWidget(self.chk_auto_monitor)
+        
+        auto_layout.addWidget(QLabel("هر"))
+        self.spin_monitor_interval = QSpinBox()
+        self.spin_monitor_interval.setRange(1, 120)
+        self.spin_monitor_interval.setValue(30)
+        self.spin_monitor_interval.setSuffix(" دقیقه")
+        self.spin_monitor_interval.setEnabled(False)
+        auto_layout.addWidget(self.spin_monitor_interval)
+        
+        self.btn_monitor_now = QPushButton("🔍 پایش همین الان")
+        self.btn_monitor_now.clicked.connect(self._load_buy_queue_symbols)
+        self.btn_monitor_now.setEnabled(False)
+        auto_layout.addWidget(self.btn_monitor_now)
+        
+        main_layout.addWidget(auto_group)
 
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok |
@@ -399,6 +452,113 @@ class SymbolFilterDialog(QDialog):
     def _reset_to_initial(self) -> None:
         self.excluded_symbols = set(self._initial_excluded)
         self._populate_list()
+    
+    def _load_buy_queue_symbols(self) -> None:
+        """بارگذاری و تیکدار کردن نمادهای در صف خرید (در thread جداگانه)"""
+        
+        # غیرفعال کردن دکمه
+        self.btn_buy_queue.setEnabled(False)
+        self.btn_buy_queue.setText("⏳ در حال دریافت...")
+        
+        # ایجاد worker thread
+        self.buy_queue_worker = BuyQueueWorker(self.available_symbols, self)
+        self.buy_queue_worker.finished.connect(self._on_buy_queue_loaded)
+        self.buy_queue_worker.error.connect(self._on_buy_queue_error)
+        self.buy_queue_worker.start()
+    
+    def _on_buy_queue_loaded(self, filtered_queue: List[Dict[str, Any]]) -> None:
+        """پردازش نتایج دریافت شده"""
+        # فعال کردن دکمه
+        self.btn_buy_queue.setEnabled(True)
+        self.btn_buy_queue.setText("📈 نمادهای صف خرید")
+        
+        if not filtered_queue:
+            QMessageBox.information(
+                self,
+                "اطلاع",
+                "هیچ نماد دارای قرارداد اختیاری در صف خرید یافت نشد.\n\n"
+                "ممکن است بازار بسته باشد یا ارتباط برقرار نشود."
+            )
+            return
+        
+        # نمایش لیست برای کاربر
+        queue_symbols = [s['symbol'] for s in filtered_queue]
+        queue_details = "\n".join([
+            f"  • {s['symbol']} - قیمت: {s['price']:,} | حجم صف: {s.get('queue_volume', 0):,}"
+            for s in filtered_queue[:20]
+        ])
+        
+        if len(filtered_queue) > 20:
+            queue_details += f"\n  ... و {len(filtered_queue) - 20} نماد دیگر"
+        
+        reply = QMessageBox.question(
+            self,
+            f"نمادهای صف خرید ({len(filtered_queue)} نماد)",
+            f"آیا می‌خواهید {len(filtered_queue)} نماد زیر را به لیست استثناها اضافه کنید؟\n\n"
+            f"این نمادها در صف خرید هستند و امکان خرید سهام پایه برای استراتژی‌هایی مثل "
+            f"کاوردکال وجود ندارد:\n\n{queue_details}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # اضافه کردن به استثناها
+            added_count = 0
+            for symbol in queue_symbols:
+                if symbol not in self.excluded_symbols:
+                    self.excluded_symbols.add(symbol)
+                    if symbol not in self.available_symbols:
+                        self.available_symbols.append(symbol)
+                    added_count += 1
+            
+            self._populate_list()
+            
+            QMessageBox.information(
+                self,
+                "موفق",
+                f"✅ {added_count} نماد صف خرید به لیست استثناها اضافه شد."
+            )
+    
+    def _on_buy_queue_error(self, error_msg: str) -> None:
+        """پردازش خطا"""
+        self.btn_buy_queue.setEnabled(True)
+        self.btn_buy_queue.setText("📈 نمادهای صف خرید")
+        
+        logger.error(f"Error loading buy queue symbols: {error_msg}")
+        QMessageBox.critical(
+            self,
+            "خطا",
+            f"خطا در دریافت اطلاعات صف خرید:\n\n{error_msg}"
+        )
+    
+    def _toggle_auto_monitor(self, state: int) -> None:
+        """فعال/غیرفعال کردن پایش خودکار"""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.spin_monitor_interval.setEnabled(enabled)
+        self.btn_monitor_now.setEnabled(enabled)
+        
+        if enabled:
+            # شروع تایمر
+            interval_minutes = self.spin_monitor_interval.value()
+            interval_ms = interval_minutes * 60 * 1000
+            
+            if not hasattr(self, 'monitor_timer'):
+                from PySide6.QtCore import QTimer
+                self.monitor_timer = QTimer(self)
+                self.monitor_timer.timeout.connect(self._auto_monitor_tick)
+            
+            self.monitor_timer.start(interval_ms)
+            logger.info(f"Auto monitor started: every {interval_minutes} minutes")
+        else:
+            # توقف تایمر
+            if hasattr(self, 'monitor_timer'):
+                self.monitor_timer.stop()
+                logger.info("Auto monitor stopped")
+    
+    def _auto_monitor_tick(self) -> None:
+        """اجرا در هر بازه زمانی"""
+        logger.info("Auto monitor tick - checking buy queue...")
+        self._load_buy_queue_symbols()
 
     def _save_and_accept(self) -> None:
         final_list = sorted(list(self.excluded_symbols))
