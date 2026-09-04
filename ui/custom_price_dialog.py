@@ -272,6 +272,16 @@ class CustomPriceDialog(QDialog):
         table_layout.addLayout(clear_row)
 
         main.addWidget(table_box)
+        
+        # دکمه تست ذخیره (برای دیباگ)
+        test_save_row = QHBoxLayout()
+        test_save_row.addStretch()
+        btn_test = QPushButton("⚡ تست ذخیره")
+        btn_test.setStyleSheet("background-color:#f39c12; color:white;")
+        btn_test.clicked.connect(self._test_save)
+        test_save_row.addWidget(btn_test)
+        test_save_row.addStretch()
+        main.addLayout(test_save_row)
 
         # ---- دکمه‌های پایین ----
         btn_box = QDialogButtonBox(
@@ -422,6 +432,21 @@ class CustomPriceDialog(QDialog):
         except Exception as e:
             logger.error(f"Error saving custom prices: {e}")
             QMessageBox.critical(self, "خطا", f"خطا در ذخیره‌سازی:\n{str(e)}")
+    
+    def _test_save(self) -> None:
+        """تست دستی ذخیره‌سازی"""
+        try:
+            settings_manager.set_custom_prices(self.custom_prices)
+            settings_manager.set_custom_prices_enabled(self._custom_prices_enabled)
+            
+            QMessageBox.information(
+                self,
+                "تست موفق",
+                f"✅ {len(self.custom_prices)} قیمت دستی ذخیره شد.\n"
+                f"وضعیت فعال‌سازی: {self._custom_prices_enabled}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "خطای تست", f"خطا در ذخیره‌سازی:\n{str(e)}")
 
     def get_custom_prices(self) -> Dict[str, float]:
         return self.custom_prices.copy()
