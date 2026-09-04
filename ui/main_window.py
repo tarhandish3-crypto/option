@@ -722,6 +722,14 @@ class MainWindow(QMainWindow):
         font = item_strat.font()
         font.setBold(True)
         item_strat.setFont(font)
+        
+        # بررسی و نشان‌دادن قیمت دستی
+        underlying_ticker = str(getattr(strategy, 'underlying_ticker', 'N/A'))
+        custom_prices = settings_manager.get_custom_prices()
+        if underlying_ticker in custom_prices:
+            item_strat.setText(f"💰 {strat_name}")
+            item_strat.setForeground(QBrush(QColor("#f0883e")))
+        
         self.table.setItem(row, 2, item_strat)
 
         legs = getattr(strategy, 'legs', [])

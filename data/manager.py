@@ -126,6 +126,9 @@ class DataManager:
         # ۱. پاکسازی و استخراج ستون‌ها
         df = DataCleaner.clean(df)
         df = DataCleaner.add_derived_columns(df)
+        
+        # ۱.۵. تزریق قیمت‌های دستی نمادهای پایه
+        df = self._inject_custom_prices(df)
 
         # ۲. محاسبات پیشرفته (BSM, Greeks, IV)
         if calc_advanced:
@@ -147,6 +150,48 @@ class DataManager:
     # =====================================================
     # مدیریت کش (بروزرسانی شده برای کار با اشیاء بومی سیستم)
     # =====================================================
+    
+    def _inject_custom_prices(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        تزریق قیمت‌های دستی نمادهای پایه به دیتافریم
+        
+        این متد قیمت‌های دستی را از settings_manager می‌خواند و 
+        به جای قیمت‌های بازار اعمال می‌کند.
+        """
+        try:
+            from ui.settings_manager import settings_manager
+            
+            custom_prices = settings_manager.get_custom_prices()
+            if not custom_prices:
+                return df
+            
+            # استفاده از ستون‌های استاندارد
+            if 'UnderlyingTicker' not in df.columns:
+                logger.warning("Cannot inject custom prices: UnderlyingTicker column not found")
+                return df
+            
+            if 'UnderlyingPrice' not in df.columns:
+                logger.warning("Cannot inject custom prices: UnderlyingPrice column not found")
+                return df
+            
+            # تزریق قیمت‌های دستی با استفاده از isin
+            symbols_to_inject = list(custom_prices.keys())
+            
+            for ticker, custom_price in custom_prices.items():
+                mask = df['UnderlyingTicker'] == ticker
+                if mask.any():
+                    original_price = df.loc[mask, 'UnderlyingPrice'].iloc[0]
+                    df.loc[mask, 'UnderlyingPrice'] = custom_price
+                    logger.info(
+                        f"Custom price injected for {ticker}: {custom_price:,} (original: {original_price:,}) - {mask.sum()} rows"
+                    )
+            
+            logger.info(f"Custom prices injected for {len(custom_prices)} symbols")
+            return df
+            
+        except Exception as e:
+            logger.error(f"Error injecting custom prices: {e}", exc_info=True)
+            return df
 
     def _save_cache(self, snapshot: MarketSnapshot) -> None:
         """ذخیره شیء کامل دیتامدل در کش پیکل"""

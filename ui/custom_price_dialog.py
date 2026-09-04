@@ -9,7 +9,8 @@ from typing import Dict, Optional, List
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QTableWidget, QTableWidgetItem, QPushButton, QGroupBox,
-    QMessageBox, QDialogButtonBox, QHeaderView, QAbstractItemView
+    QMessageBox, QDialogButtonBox, QHeaderView, QAbstractItemView,
+    QWidget, QInputDialog, QComboBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QBrush, QColor, QDoubleValidator
@@ -174,8 +175,6 @@ class CustomPriceDialog(QDialog):
     def _add_new_price(self) -> None:
         """افزودن قیمت جدید"""
         # دریافت نماد از کاربر
-        from PySide6.QtWidgets import QInputDialog, QComboBox
-        
         dialog = QDialog(self)
         dialog.setWindowTitle("افزودن قیمت دستی")
         dialog.setMinimumWidth(350)
@@ -236,8 +235,6 @@ class CustomPriceDialog(QDialog):
     def _edit_price(self, symbol: str) -> None:
         """ویرایش قیمت یک نماد"""
         current_price = self.custom_prices.get(symbol, 0)
-        
-        from PySide6.QtWidgets import QInputDialog
         
         price, ok = QInputDialog.getDouble(
             self,
