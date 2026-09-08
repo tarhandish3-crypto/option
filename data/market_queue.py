@@ -225,7 +225,8 @@ def filter_by_option_symbols(queue_symbols: List[Dict[str, Any]], option_symbols
     Returns:
         List[Dict]: لیست نمادهای صف که قرارداد اختیار دارند
     """
-    option_set = set(s.upper() for s in option_symbols)
-    filtered = [s for s in queue_symbols if s['symbol'].upper() in option_set]
+    option_set = set(option_symbols)
+    option_set_normalized = {s.replace('ي', 'ی').replace('ك', 'ک') for s in option_set}
+    filtered = [s for s in queue_symbols if s['symbol'].replace('ي', 'ی').replace('ك', 'ک') in option_set_normalized]
     logger.info(f"Filtered {len(filtered)} option symbols from {len(queue_symbols)} queue symbols")
     return filtered

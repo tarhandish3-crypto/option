@@ -63,6 +63,25 @@ def long_call_with_fees(premium_call, stock_price, strike_price, contract_size,
         abs(exercise_fee) / contract_size) if stock_price > strike_price else premium_call
     break_even_price = round(strike_price + total_cost_per_share, 0)
 
+    # ==========
+    if stock_price > 0 and strike_price > 0:
+        distance_to_strike = ((stock_price - strike_price) / stock_price) * 100
+        max_loss_price_percent = round(
+            distance_to_strike, 2) if distance_to_strike > 0 else 0.0
+    else:
+        max_loss_price_percent = 0.0
+
+    if stock_price > strike_price:
+        price_difference = stock_price - strike_price
+        if price_difference > 0:
+            total_premium_cost = premium_call * contract_size + abs(entry_fee)
+            risk_percent = round(
+                (total_premium_cost / (price_difference * contract_size)) * 100, 2)
+        else:
+            risk_percent = 100.0
+    else:
+        risk_percent = 100.0
+
     # ========== 8. درصد فاصله قیمت پایه فعلی تا نقطه سربه‌سر ==========
     # نشان می‌دهد قیمت پایه فعلی چند درصد با نقطه سربه‌سر فاصله دارد
     if break_even_price != 0:
@@ -80,7 +99,9 @@ def long_call_with_fees(premium_call, stock_price, strike_price, contract_size,
         'break_even_price': break_even_price,
         'break_even_percent': break_even_percent,
         'intrinsic_value': intrinsic_value,
-        'fees_total': entry_fee + exercise_fee}
+        'fees_total': entry_fee + exercise_fee,
+        'max_loss_price_percent': max_loss_price_percent,
+        'risk_percent': risk_percent, }
 
 
 def load_and_filter_data():
@@ -147,6 +168,9 @@ def run_long_call_strategy(df_options, max_break_even_percent=12):
                 premium_call, stock_price, strike_price, contract_size,
                 opt_buy_commission, exercise_fee_rate, days)
 
+            max_loss_price_percent_scale = results['max_loss_price_percent'] * ((30 / days) ** 0.5)
+            break_even_percent_scale = results['break_even_percent'] * ((30 / days) ** 0.5)
+        
             # ذخیره نتایج
             results_fee.append({
                 'underlying': underlying_symbol,
@@ -160,6 +184,10 @@ def run_long_call_strategy(df_options, max_break_even_percent=12):
                 'monthly_return_%': results['monthly_return'],
                 'break_even_price': results['break_even_price'],
                 'break_even_percent': results['break_even_percent'],
+                'break_even_percent_scale': round(break_even_percent_scale, 2),
+                'max_loss_price_percent': results['max_loss_price_percent'],
+                'max_loss_price_percent_scale': round(max_loss_price_percent_scale, 2),
+                'risk_percent': results['risk_percent'],
                 'days_to_maturity': days,
                 'volume': int(item.get('Volume', 0))})
 
@@ -186,6 +214,20 @@ def save_results_to_excel(result_df, filename="result_long_call.xlsx"):
                           vertical='center', wrap_text=True)
     body_font = Font(name='Segoe UI', size=10)
     gray_font = Font(color='808080', italic=True, name='Segoe UI', size=10)
+    
+    result_df = result_df.rename(columns={
+        'stock_price': 'قیمت نماد پایه',
+        'strike': 'قیمت اعمال',
+        'premium': 'پریمیوم (قیمت خرید)',
+        'monthly_return_%': 'درصد سود ماهانه',
+        'break_even_price': 'قیمت سربه‌سر',
+        'break_even_percent': 'درصد فاصله تا نقطه سربه‌سر\n(هرچه کمتر = بهتر)',
+        'break_even_percent_scale': 'مقیاس درصد فاصله تا نقطه سربه‌سر\n(هرچه کمتر = بهتر)(به نسبت 30 روز)',
+        'max_loss_price_percent': 'درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)',
+        'max_loss_price_percent_scale': 'مقیاس درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)(به نسبت 30 روز)',
+        'volume': 'حجم معاملات روز جاری',
+        'risk_percent': 'درصد ریسک نسبت به حاشیه امنیت\n(هرچه کمتر = بهتر)'
+    })
 
     # اضافه کردن timestamp به نام فایل
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

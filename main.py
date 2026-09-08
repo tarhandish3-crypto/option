@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple  # noqa: UP035
 
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
@@ -43,13 +43,13 @@ logger = logging.getLogger("OptionScanner.Main")
 class ScanCacheEntry:
     """ورودی کش برای نتایج اسکن"""
     timestamp: datetime
-    results: List[Any]
+    results: list[Any]
     scan_duration: float
     total_opportunities: int
-    filters_used: Dict[str, Any]
+    filters_used: dict[str, Any]
 
     def is_expired(self, ttl_seconds: int = 60) -> bool:
-        return (datetime.now() - self.timestamp).total_seconds() > ttl_seconds
+        return (datetime.now() - self.timestamp).total_seconds() > ttl_seconds  # noqa: DTZ005
 
 
 # =====================================================
@@ -84,11 +84,24 @@ class OptionScanner:
     """
 
     __slots__ = (
-        'is_running', 'data_manager', 'ranker', 'excel_exporter', 
-        'chart_plotter', '_cache', '_cache_ttl', '_scan_timeout', 
-        '_db_enabled', '_db_path', '_user_filters', '_cancel_event', 
-        '_db_lock', '_stats_lock', '_total_scans', '_total_opportunities', 
-        '_last_scan_time', '_is_initialized'
+        '_cache',
+        '_cache_ttl',
+        '_cancel_event',
+        '_db_enabled',
+        '_db_lock',
+        '_db_path',
+        '_is_initialized',
+        '_last_scan_time',
+        '_scan_timeout',
+        '_stats_lock',
+        '_total_opportunities',
+        '_total_scans',
+        '_user_filters',
+        'chart_plotter',
+        'data_manager',
+        'excel_exporter',
+        'is_running',
+        'ranker'
     )
 
     def __init__(self):
@@ -97,18 +110,18 @@ class OptionScanner:
         self._is_initialized = False
         self._cache_ttl = config.CACHE_TTL_SECONDS
         self._scan_timeout = 300
-        self._cache: Optional[ScanCacheEntry] = None
+        self._cache: ScanCacheEntry | None = None
         self._cancel_event = threading.Event()
         self._db_lock = threading.Lock()
         self._stats_lock = threading.Lock()
         
         self._total_scans = 0
         self._total_opportunities = 0
-        self._last_scan_time: Optional[datetime] = None
+        self._last_scan_time: datetime | None = None
 
         self._db_enabled = False  # دیتابیس SQLite در این نسخه غیرفعال است
         self._db_path = config.DATA_DIR / "scans.db"
-        self._user_filters: Dict[str, Any] = {}
+        self._user_filters: dict[str, Any] = {}
 
         # متغیرهای سنگین را در init فقط تعریف می‌کنیم
         self.data_manager = None
@@ -163,7 +176,7 @@ class OptionScanner:
     def _init_database(self) -> None:
         try:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._db_lock:
+            with self._db_lock:  # noqa: SIM117
                 with sqlite3.connect(str(self._db_path), timeout=10.0) as conn:
                     cursor = conn.cursor()
                     cursor.execute("""
@@ -176,15 +189,15 @@ class OptionScanner:
                         )
                     """)
                     conn.commit()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"Database init failed: {e}")
             self._db_enabled = False
 
-    def _save_scan_to_db(self, results: List[Any], duration: float) -> None:
+    def _save_scan_to_db(self, results: list[Any], duration: float) -> None:
         if not self._db_enabled:
             return
         try:
-            with self._db_lock:
+            with self._db_lock:  # noqa: SIM117
                 with sqlite3.connect(str(self._db_path), timeout=10.0) as conn:
                     cursor = conn.cursor()
                     filters_json = json.dumps(self._user_filters, ensure_ascii=False)
@@ -192,9 +205,9 @@ class OptionScanner:
                         INSERT INTO scan_results 
                         (timestamp, total_opportunities, scan_duration, filters_used)
                         VALUES (?, ?, ?, ?)
-                    """, (datetime.now().isoformat(), len(results), duration, filters_json))
+                    """, (datetime.now().isoformat(), len(results), duration, filters_json))  # noqa: DTZ005
                     conn.commit()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"⚠️ Failed to save to database: {e}")
 
     def _load_user_filters(self) -> None:
@@ -203,10 +216,10 @@ class OptionScanner:
             try:
                 with open(filters_path, 'r', encoding='utf-8') as f:
                     self._user_filters = json.load(f)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f"⚠️ Failed to load user filters: {e}")
 
-    def update_user_filters(self, new_filters: Dict[str, Any]) -> None:
+    def update_user_filters(self, new_filters: dict[str, Any]) -> None:
         self._user_filters.update(new_filters)
         filters_path = config.BASE_DIR / "user_filters.json"
         try:
@@ -214,13 +227,13 @@ class OptionScanner:
                 json.dump(self._user_filters, f, indent=4, ensure_ascii=False)
             self.invalidate_cache()
             logger.info(f"✅ User filters updated: {len(self._user_filters)} filters active")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"❌ Failed to save user filters: {e}")
 
-    def get_user_filters(self) -> Dict[str, Any]:
+    def get_user_filters(self) -> dict[str, Any]:
         return self._user_filters.copy()
 
-    def apply_user_filters(self, opportunities: List[Any]) -> List[Any]:
+    def apply_user_filters(self, opportunities: list[Any]) -> list[Any]:
         if not opportunities or not self._user_filters:
             return opportunities
 
@@ -246,10 +259,10 @@ class OptionScanner:
 
         return filtered
 
-    def get_available_symbols(self) -> List[str]:
+    def get_available_symbols(self) -> list[str]:
         if not self._is_initialized and self.data_manager is None:
             if hasattr(config, 'SYMBOL_INFO'):
-                return sorted(list(config.SYMBOL_INFO.keys()))
+                return sorted(config.SYMBOL_INFO.keys())
             return []
 
         try:
@@ -263,11 +276,11 @@ class OptionScanner:
                     symbol = getattr(contract, 'underlying_symbol', getattr(contract, 'symbol', None))
                     if symbol:
                         symbols.add(symbol)
-                return sorted(list(symbols))
-        except Exception as e:
+                return sorted(symbols)
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to get available symbols: {e}")
         
-        return sorted(list(getattr(config, 'SYMBOL_INFO', {}).keys()))
+        return sorted(getattr(config, 'SYMBOL_INFO', {}).keys())
 
     def set_log_level(self, level: str) -> bool:
         level_map = {
