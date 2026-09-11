@@ -114,7 +114,7 @@ class OptionScanner:
         self._cancel_event = threading.Event()
         self._db_lock = threading.Lock()
         self._stats_lock = threading.Lock()
-        
+
         self._total_scans = 0
         self._total_opportunities = 0
         self._last_scan_time: datetime | None = None
@@ -200,7 +200,8 @@ class OptionScanner:
             with self._db_lock:  # noqa: SIM117
                 with sqlite3.connect(str(self._db_path), timeout=10.0) as conn:
                     cursor = conn.cursor()
-                    filters_json = json.dumps(self._user_filters, ensure_ascii=False)
+                    filters_json = json.dumps(
+                        self._user_filters, ensure_ascii=False)
                     cursor.execute("""
                         INSERT INTO scan_results 
                         (timestamp, total_opportunities, scan_duration, filters_used)
@@ -226,7 +227,8 @@ class OptionScanner:
             with open(filters_path, 'w', encoding='utf-8') as f:
                 json.dump(self._user_filters, f, indent=4, ensure_ascii=False)
             self.invalidate_cache()
-            logger.info(f"✅ User filters updated: {len(self._user_filters)} filters active")
+            logger.info(
+                f"✅ User filters updated: {len(self._user_filters)} filters active")
         except Exception as e:  # noqa: BLE001
             logger.error(f"❌ Failed to save user filters: {e}")
 
@@ -267,19 +269,20 @@ class OptionScanner:
 
         try:
             snapshot = self.data_manager.get_market_snapshot(
-                force_refresh=False, 
+                force_refresh=False,
                 calc_advanced=False
             )
             if snapshot and hasattr(snapshot, 'option_contracts'):
                 symbols = set()
                 for contract in snapshot.option_contracts:
-                    symbol = getattr(contract, 'underlying_symbol', getattr(contract, 'symbol', None))
+                    symbol = getattr(contract, 'underlying_symbol',
+                                     getattr(contract, 'symbol', None))
                     if symbol:
                         symbols.add(symbol)
                 return sorted(symbols)
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to get available symbols: {e}")
-        
+
         return sorted(getattr(config, 'SYMBOL_INFO', {}).keys())
 
     def set_log_level(self, level: str) -> bool:
@@ -330,7 +333,7 @@ class OptionScanner:
     # =====================================================
 
     def run_scan_with_progress(
-        self, 
+        self,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         stop_check_callback: Optional[Callable[[], bool]] = None,
         force_refresh: bool = True
@@ -357,20 +360,23 @@ class OptionScanner:
             try:
                 # بارگذاری موارد سنگین در زمینه (برای بار اول)
                 self._lazy_init()
-                
-                res, dur = self._execute_scan(update_progress, is_stopped, force_refresh)
+
+                res, dur = self._execute_scan(
+                    update_progress, is_stopped, force_refresh)
                 scan_output["results"] = res
                 scan_output["duration"] = dur
             except Exception as e:
                 scan_output["error"] = e
 
-        thread = threading.Thread(target=target, daemon=True, name="ScannerThread")
+        thread = threading.Thread(
+            target=target, daemon=True, name="ScannerThread")
         thread.start()
         thread.join(timeout=self._scan_timeout)
 
         if thread.is_alive():
             self._cancel_event.set()
-            logger.error(f"⏱Scan timed out after {self._scan_timeout} seconds!")
+            logger.error(
+                f"⏱Scan timed out after {self._scan_timeout} seconds!")
             update_progress(0, "زمان اسکن به پایان رسید")
             return []
 
@@ -383,20 +389,22 @@ class OptionScanner:
             update_progress(0, " اسکن متوقف شد")
             return []
 
-        result = scan_output["results"] if scan_output["results"] is not None else []
+        result = scan_output["results"] if scan_output["results"] is not None else [
+        ]
         duration = scan_output["duration"]
 
         original_count = len(result)
         result = self.apply_user_filters(result)
-        
+
         with self._stats_lock:
             self._total_scans += 1
             self._total_opportunities += len(result)
             self._last_scan_time = datetime.now()
-        
+
         if len(result) < original_count:
-            logger.info(f" Filters applied: {original_count} → {len(result)} opportunities")
-        
+            logger.info(
+                f" Filters applied: {original_count} → {len(result)} opportunities")
+
         self._save_scan_to_db(result, duration)
         self._cache = ScanCacheEntry(
             timestamp=datetime.now(),
@@ -416,17 +424,18 @@ class OptionScanner:
         is_stopped: Callable[[], bool],
         force_refresh: bool
     ) -> Tuple[List[Any], float]:
-        
+
         from ui.settings_manager import settings_manager
 
         start_time = time.time()
 
         update_progress(10, "🔍 دریافت اطلاعات بازار...")
-        if is_stopped(): return [], 0.0
+        if is_stopped():
+            return [], 0.0
 
         calc_advanced = config.FEATURE_FLAGS.get("calculate_greeks", True)
         snapshot = self.data_manager.get_market_snapshot(
-            force_refresh=force_refresh, 
+            force_refresh=force_refresh,
             calc_advanced=calc_advanced
         )
 
@@ -457,7 +466,8 @@ class OptionScanner:
             )
         # ─────────────────────────────────────────────────────────────
 
-        update_progress(30, f"📊 تحلیل {len(snapshot.option_contracts)} قرارداد...")
+        update_progress(
+            30, f"📊 تحلیل {len(snapshot.option_contracts)} قرارداد...")
         engine = ScannerEngine(snapshot=snapshot)
         scan_result = engine.execute_full_scan()
 
@@ -475,14 +485,17 @@ class OptionScanner:
 
         enriched_opportunities = []
         for opp in filtered_opportunities:
-            if is_stopped(): return [], 0.0
+            if is_stopped():
+                return [], 0.0
             try:
-                enriched_opportunities.append(RiskEngine.evaluate_opportunity(opp))
+                enriched_opportunities.append(
+                    RiskEngine.evaluate_opportunity(opp))
             except Exception:
                 enriched_opportunities.append(opp)
 
         update_progress(85, "🏆 رتبه‌بندی فرصت‌های معاملاتی...")
-        if is_stopped(): return [], 0.0
+        if is_stopped():
+            return [], 0.0
         ranked = self.ranker.rank_opportunities(enriched_opportunities)
 
         top_n_limit = config.OUTPUT_CONFIG.get("top_n", 50)
@@ -493,7 +506,8 @@ class OptionScanner:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"opportunities_gui_{timestamp}.xlsx"
             try:
-                self.excel_exporter.export(opportunities=top_opportunities, filename=filename)
+                self.excel_exporter.export(
+                    opportunities=top_opportunities, filename=filename)
                 logger.info(f"Results exported to {filename}")
             except Exception as exp_err:
                 logger.error(f" Error exporting to excel: {exp_err}")
@@ -519,7 +533,8 @@ def main():
     except Exception:
         pass
 
-    theme_setting = settings_manager.get_active_settings().get("theme", ui_theme.THEME_LIGHT)
+    theme_setting = settings_manager.get_active_settings().get(
+        "theme", ui_theme.THEME_LIGHT)
     ui_theme.apply_app_theme(app, theme_setting)
 
     # ۱. ایجاد موتور (بسیار سبک و بدون دیتابیس/استراتژی اولیه)
@@ -530,7 +545,7 @@ def main():
     window.show()
 
     logger.info(" UI Window Opened successfully")
-    
+
     # ۳. برنامه منتظر کلیک کاربر بر روی دکمه اسکن یا تایمر اتوماتیک UI باقی می‌ماند
     sys.exit(app.exec())
 

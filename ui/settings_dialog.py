@@ -10,7 +10,7 @@ import logging
 from typing import Dict, Any, Optional
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QCheckBox, QPushButton, QGroupBox, QFormLayout,
     QFileDialog, QMessageBox, QDialogButtonBox, QTextEdit,
@@ -69,8 +69,8 @@ class SettingsDialog(QDialog):
         if hasattr(self, "lbl_changes"):
             color = "#f0883e" if mode == "dark" else "#e67e22"
             self.lbl_changes.setStyleSheet(f"color:{color}; font-weight:bold;")
-        if hasattr(self, "lbl_broker_info") and hasattr(ui_theme, "get_dialog_warning_banner_style"):
-            self.lbl_broker_info.setStyleSheet(ui_theme.get_dialog_warning_banner_style(mode))
+        if hasattr(self, "lbl_broker_info") and hasattr(ui_theme, "get_info_banner_style"):
+            self.lbl_broker_info.setStyleSheet(ui_theme.get_info_banner_style(mode))
 
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -80,14 +80,6 @@ class SettingsDialog(QDialog):
         # ── نوار پروفایل ──────────────────────────────
         profile_frame = QFrame()
         self.profile_frame = profile_frame
-        profile_frame.setStyleSheet("""
-            QFrame {
-                background-color: #161b22;
-                border: 1px solid #30363d;
-                border-radius: 6px;
-                padding: 4px;
-            }
-        """)
         pl = QHBoxLayout(profile_frame)
         pl.setContentsMargins(8, 4, 8, 4)
         pl.setSpacing(8)
@@ -119,12 +111,6 @@ class SettingsDialog(QDialog):
 
         # ── تب‌ها ────────────────────────────────────
         self.tab_widget = QTabWidget()
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane { border: 1px solid #30363d; background: #161b22; border-radius: 5px; padding: 6px; }
-            QTabBar::tab { background: #21262d; color: #8b949e; padding: 6px 14px; margin-right: 2px; border-radius: 4px; font-weight: bold; }
-            QTabBar::tab:selected { background: #1f6feb; color: white; }
-        """)
-
         self.tab_widget.addTab(self._create_api_tab(),      "🌐 شبکه و API")
         self.tab_widget.addTab(self._create_scanner_tab(),  "📊 اسکنر و ماتریس سود")
         self.tab_widget.addTab(self._create_general_tab(),  "⚙️ عمومی و پوسته")
@@ -142,12 +128,22 @@ class SettingsDialog(QDialog):
             Qt.Orientation.Horizontal, self
         )
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("💾 اعمال و بستن")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(
-            "background:#238636; color:white; font-weight:bold; padding:6px 16px; border-radius:4px;"
+            ui_theme.get_button_style(mode, role="success")
         )
         btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
+        btn_box.button(QDialogButtonBox.StandardButton.Cancel).setStyleSheet(
+            ui_theme.get_button_style(mode, role="secondary")
+        )
         btn_box.button(QDialogButtonBox.StandardButton.RestoreDefaults).setText("🔄 بازگشت به پیش‌فرض کارخانه")
+        btn_box.button(QDialogButtonBox.StandardButton.RestoreDefaults).setStyleSheet(
+            ui_theme.get_button_style(mode, role="warning")
+        )
         btn_box.button(QDialogButtonBox.StandardButton.Reset).setText("↩️ لغو تغییرات")
+        btn_box.button(QDialogButtonBox.StandardButton.Reset).setStyleSheet(
+            ui_theme.get_button_style(mode, role="secondary")
+        )
 
         btn_box.accepted.connect(self._apply_and_close)
         btn_box.rejected.connect(self.reject)
@@ -359,7 +355,8 @@ class SettingsDialog(QDialog):
 
         self.btn_test_bale = QPushButton("🧪 ارسال پیام تست به بله")
         self.btn_test_bale.clicked.connect(self._test_bale)
-        self.btn_test_bale.setStyleSheet("background-color: #1f6feb; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        self.btn_test_bale.setStyleSheet(ui_theme.get_button_style(mode, role="primary"))
         form.addRow(self.btn_test_bale)
 
         layout.addWidget(grp)
@@ -428,7 +425,16 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(w)
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
-        self.preview_text.setFont(QFont("Courier New", 9))
+        app_font = QApplication.font() if hasattr(QApplication, 'font') else None
+        if app_font is None:
+            from PySide6.QtGui import QFontDatabase
+            families = QFontDatabase.families()
+            for candidate in ["Vazirmatn", "Vazir", "Shabnam", "Sahel", "Segoe UI", "Tahoma"]:
+                if candidate in families:
+                    app_font = QFont(candidate, 9)
+                    break
+        if app_font is not None:
+            self.preview_text.setFont(app_font)
         layout.addWidget(self.preview_text)
         return w
 

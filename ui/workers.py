@@ -326,136 +326,7 @@ class ScannerWorker(QThread):
             return f"خطا: {str(error)}"
 
 
-# =========================================================================
-# ۴. ورکر اسکن خودکار و دوره‌ای (Auto Scanner Worker)
-# =========================================================================
 
-class AutoScannerWorker(QThread):
-    """
-    ورکر خودکار برای اجرای دوره‌ای اسکن در فواصل زمانی معین
-    """
-    
-    scan_requested = Signal()  # درخواست اسکن جدید
-    status_changed = Signal(str)
-    
-    def __init__(
-        self,
-        interval_minutes: int = 5,
-        parent: Optional[Any] = None
-    ):
-        super().__init__(parent)
-        self.interval_minutes = interval_minutes
-        self._is_running = False
-        self._should_stop = False
-        self._mutex = QMutex()
-    
-    def run(self) -> None:
-        """اجرای تایمر خودکار بدون بلوک کردن Thread با msleep"""
-        with QMutexLocker(self._mutex):
-            self._is_running = True
-            self._should_stop = False
-        
-        logger.info(f"Auto-scan timer started - every {self.interval_minutes} minute(s)")
-        self.status_changed.emit(f"⏱️ اسکن خودکار هر {self.interval_minutes} دقیقه")
-        
-        while True:
-            with QMutexLocker(self._mutex):
-                if self._should_stop or not self._is_running:
-                    break
-            
-            # ارسال سیگنال درخواست اسکن
-            self.scan_requested.emit()
-            
-            # منتظر ماندن (بررسی هر ۱۰۰ میلی‌ثانیه برای پاسخ‌دهی سریع به توقف)
-            total_ms = self.interval_minutes * 60 * 1000
-            elapsed = 0
-            while elapsed < total_ms:
-                with QMutexLocker(self._mutex):
-                    if self._should_stop:
-                        break
-                self.msleep(100)
-                elapsed += 100
-        
-        logger.info("Auto-scan timer stopped")
-        self.status_changed.emit("⏹️ اسکن خودکار غیرفعال شد")
-    
-    def stop(self) -> None:
-        """توقف ایمن تایمر خودکار"""
-        with QMutexLocker(self._mutex):
-            self._should_stop = True
-            self._is_running = False
-        logger.info("Auto-scan timer stop request registered")
-
-
-# =========================================================================
-# ۵. ورکر ارسال و اجرای استراتژی در کارگزاری (Strategy Executor Worker)
-# =========================================================================
-
-class StrategyExecutorWorker(QThread):
-    """
-    ورکر برای اجرای خودکار یا دستی استراتژی‌های چندپایه‌ای در سامانه کارگزاری
-    """
-    
-    execution_finished = Signal(bool, str)  # (موفقیت, پیام)
-    progress_updated = Signal(int, str)
-    
-    def __init__(
-        self,
-        strategy_data: dict,
-        broker_adapter: Any,
-        parent: Optional[Any] = None
-    ):
-        super().__init__(parent)
-        self.strategy_data = strategy_data or {}
-        self.broker_adapter = broker_adapter
-    
-    def run(self) -> None:
-        """اجرای استراتژی در کارگزاری"""
-        try:
-            strat_name = self.strategy_data.get('name', self.strategy_data.get('strategy_name', 'Unknown'))
-            logger.info(f"Executing strategy at broker: {strat_name}")
-            self.progress_updated.emit(0, "آماده‌سازی برای اجرا...")
-            
-            if not self._validate_strategy():
-                self.execution_finished.emit(False, "داده‌های استراتژی نامعتبر یا ناقص است")
-                return
-            
-            self.progress_updated.emit(30, "اتصال به کارگزاری...")
-            
-            result = self.broker_adapter.execute_strategy(self.strategy_data)
-            
-            if isinstance(result, dict) and result.get('success', False):
-                logger.info("Strategy executed successfully")
-                self.progress_updated.emit(100, "تکمیل اجرا")
-                self.execution_finished.emit(True, "استراتژی با موفقیت اجرا شد")
-            else:
-                error_msg = result.get('error', 'خطای ناشناخته در کارگزاری') if isinstance(result, dict) else str(result)
-                logger.error(f"Execution error: {error_msg}")
-                self.execution_finished.emit(False, f"خطا: {error_msg}")
-                
-        except Exception as e:
-            logger.error(f"Failed to execute strategy: {str(e)}") 
-            self.execution_finished.emit(False, f"خطا: {str(e)}")
-    
-    def _validate_strategy(self) -> bool:
-        """اعتبارسنجی انعطاف‌پذیر داده‌های استراتژی"""
-        if not self.strategy_data:
-            return False
-            
-        required_fields = ['symbol', 'name']
-        for field in required_fields:
-            if field not in self.strategy_data and not hasattr(self.strategy_data, field):
-                # چک کردن نام‌های جایگزین مانند strategy_name
-                if field == 'name' and 'strategy_name' in self.strategy_data:
-                    continue
-                logger.error(f"Required field '{field}' is missing from strategy data")
-                return False
-        return True
-
-
-# =========================================================================
-# ۶. ورکر ورود به سامانه معاملاتی (Broker Login Worker)
-# =========================================================================
 
 class BrokerLoginWorker(QThread):
     """
@@ -512,3 +383,61 @@ class BrokerLoginWorker(QThread):
 
         except Exception as e:
             self.login_failed.emit(f"خطا در اتصال به کارگزاری: {e}")
+
+
+class BrokerExecutionWorker(QThread):
+    """
+    ورکر پس‌زمینه برای ارسال (پیش‌پرکردن فرم برآورد) یک استراتژی به کارگزاری.
+
+    نکته‌ی مهم درباره‌ی ایمنی معاملاتی: OmexKhobreganBroker.submit_strategy()
+    صرفاً فرم «برآورد جدید» را پر می‌کند (سطرها، بازه‌ی نمودار، عنوان) و در
+    کل مسیر اجرا هیچ دکمه‌ی «ارسال/ثبت نهایی سفارش»ی کلیک نمی‌شود — این مورد
+    مستقیماً در automation/brokers/Omex_khobregan.py بررسی و تأیید شد. یعنی
+    تأیید نهایی همیشه دستی و توسط خودِ کاربر در مرورگر انجام می‌شود، و اجرای
+    این عملیات در یک Thread جدا هیچ تغییری در رفتار معاملاتی برنامه ایجاد
+    نمی‌کند؛ فقط از فریز شدن پنجره‌ی اصلی حین انتظار برای Selenium/شبکه
+    جلوگیری می‌کند.
+
+    Signals:
+        status_changed:     پیام وضعیت میانی برای نوار status
+        execution_finished: (success, message) پس از پایان عملیات
+    """
+
+    status_changed = Signal(str)
+    execution_finished = Signal(bool, str)
+
+    def __init__(self, broker: Any, positions_text: str, parent: Optional[Any] = None):
+        super().__init__(parent)
+        self.broker = broker
+        self.positions_text = positions_text
+        self._should_stop = False
+
+    def stop(self) -> None:
+        self._should_stop = True
+
+    def run(self) -> None:
+        try:
+            self.status_changed.emit("🔎 در حال بررسی موقعیت‌های باز کارگزاری...")
+            existing = (
+                self.broker.extract_open_positions()
+                if hasattr(self.broker, 'extract_open_positions')
+                else []
+            )
+
+            if self._should_stop:
+                return
+
+            self.status_changed.emit("⏳ در حال پر کردن فرم برآورد در کارگزاری...")
+            result = self.broker.submit_strategy(self.positions_text, existing)
+
+            if self._should_stop:
+                return
+
+            success = bool(result.get('success', False))
+            default_msg = 'سفارش با موفقیت ثبت شد' if success else 'خطا در ثبت سفارش'
+            message = result.get('message', default_msg)
+            self.execution_finished.emit(success, message)
+
+        except Exception as e:
+            logger.error(f"خطا در اجرای BrokerExecutionWorker: {e}", exc_info=True)
+            self.execution_finished.emit(False, f"خطا در ارتباط با کارگزاری: {e}")

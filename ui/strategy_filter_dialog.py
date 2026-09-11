@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal
 
 from ui.settings_manager import settings_manager
+from ui import theme as ui_theme
 from filters.strategy_filters import get_default_filter_config
 
 logger = logging.getLogger("OptionScanner.UI.StrategyFilterDialog")
@@ -101,18 +102,18 @@ class StrategyFilterDialog(QDialog):
         btn_bar = QHBoxLayout()
 
         btn_save = QPushButton("💾 ذخیره و اعمال فیلترها")
-        btn_save.setStyleSheet(
-            "background-color: #238636; color: white; font-weight: bold; padding: 8px 20px; border-radius: 5px;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        btn_save.setStyleSheet(ui_theme.get_button_style(mode, role="success"))
         btn_save.clicked.connect(self._save_settings)
         btn_bar.addWidget(btn_save)
 
         btn_defaults = QPushButton("🔄 بازنشانی به پیش‌فرض")
-        btn_defaults.setStyleSheet("padding: 8px 14px;")
+        btn_defaults.setStyleSheet(ui_theme.get_button_style(mode, role="warning"))
         btn_defaults.clicked.connect(self._reset_to_defaults)
         btn_bar.addWidget(btn_defaults)
 
         btn_cancel = QPushButton("انصراف")
-        btn_cancel.setStyleSheet("padding: 8px 14px;")
+        btn_cancel.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         btn_cancel.clicked.connect(self.reject)
         btn_bar.addWidget(btn_cancel)
 

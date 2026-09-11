@@ -78,11 +78,13 @@ class SymbolSelectionDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_ok = QPushButton("✅ تأیید")
-        btn_ok.setStyleSheet("background-color:#238636; color:white; font-weight:bold; padding:6px 18px;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        btn_ok.setStyleSheet(ui_theme.get_button_style(mode, role="success"))
         btn_ok.clicked.connect(self._accept_selection)
         btn_row.addWidget(btn_ok)
 
         btn_cancel = QPushButton("❌ انصراف")
+        btn_cancel.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         btn_cancel.clicked.connect(self.reject)
         btn_row.addWidget(btn_cancel)
         layout.addLayout(btn_row)
@@ -161,11 +163,13 @@ class PriceInputDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         btn_ok = QPushButton("✅ تأیید")
-        btn_ok.setStyleSheet("background-color:#238636; color:white; font-weight:bold; padding:8px 24px;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        btn_ok.setStyleSheet(ui_theme.get_button_style(mode, role="success"))
         btn_ok.clicked.connect(self._accept_price)
         btn_row.addWidget(btn_ok)
 
         btn_cancel = QPushButton("❌ انصراف")
+        btn_cancel.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         btn_cancel.clicked.connect(self.reject)
         btn_row.addWidget(btn_cancel)
         layout.addLayout(btn_row)
@@ -329,7 +333,8 @@ class CustomPriceDialog(QDialog):
         clear_row = QHBoxLayout()
         clear_row.addStretch()
         btn_clear = QPushButton("🧹 پاک کردن همه")
-        btn_clear.setStyleSheet("background-color:#d73a49; color:white;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        btn_clear.setStyleSheet(ui_theme.get_button_style(mode, role="danger"))
         btn_clear.clicked.connect(self._clear_all)
         clear_row.addWidget(btn_clear)
         table_layout.addLayout(clear_row)
@@ -342,8 +347,9 @@ class CustomPriceDialog(QDialog):
             Qt.Orientation.Horizontal, self
         )
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setText("✅ ذخیره و خروج")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
         btn_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(
-            "background-color:#2ecc71; color:white; font-weight:bold; padding:6px 18px;"
+            ui_theme.get_button_style(mode, role="success")
         )
         btn_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
         btn_box.accepted.connect(self._save_and_accept)
@@ -361,13 +367,14 @@ class CustomPriceDialog(QDialog):
     def _update_table_state(self) -> None:
         """فعال/غیرفعال کردن ویژوال جدول"""
         enabled = self._custom_prices_enabled
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
         if enabled:
             self.price_table.setStyleSheet("")
             self.price_table.setDisabled(False)
             self.enable_checkbox.setStyleSheet("font-weight: bold; font-size: 13px; color: #2ecc71;")
             self.enable_checkbox.setText("✅ فعال‌سازی قیمت‌های دستی")
         else:
-            self.price_table.setStyleSheet("QTableWidget { background-color: #2b2b2b; color: #777; }")
+            self.price_table.setStyleSheet(ui_theme.get_disabled_table_style(mode))
             self.price_table.setDisabled(True)
             self.enable_checkbox.setStyleSheet("font-weight: bold; font-size: 13px; color: #888;")
             self.enable_checkbox.setText("❌ غیرفعال — قیمت‌های دستی در اسکنر استفاده نمی‌شوند")
@@ -414,13 +421,14 @@ class CustomPriceDialog(QDialog):
             cell_layout.setSpacing(6)
 
             btn_edit = QPushButton("✏️ ویرایش")
-            btn_edit.setStyleSheet("background-color:#1f6feb; color:white; border-radius:4px; font-weight:bold;")
+            mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+            btn_edit.setStyleSheet(ui_theme.get_button_style(mode, role="primary"))
             btn_edit.setFixedHeight(26)
             btn_edit.clicked.connect(lambda _, s=sym: self._open_price_input(s))
             cell_layout.addWidget(btn_edit)
 
             btn_del = QPushButton("🗑️ حذف")
-            btn_del.setStyleSheet("background-color:#d73a49; color:white; border-radius:4px; font-weight:bold;")
+            btn_del.setStyleSheet(ui_theme.get_button_style(mode, role="danger"))
             btn_del.setFixedHeight(26)
             btn_del.clicked.connect(lambda _, s=sym: self._delete_price(s))
             cell_layout.addWidget(btn_del)

@@ -143,33 +143,38 @@ class SymbolFilterDialog(QDialog):
         # دکمه نمادهای صف خرید - در بالاترین ردیف
         self.btn_buy_queue = QPushButton("📈 نمادهای صف خرید")
         self.btn_buy_queue.clicked.connect(self._load_buy_queue_symbols)
-        self.btn_buy_queue.setStyleSheet("background-color: #e67e22; color: white; font-weight: bold;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        self.btn_buy_queue.setStyleSheet(ui_theme.get_button_style(mode, role="warning"))
         operation_layout.addWidget(self.btn_buy_queue, 0, 0, 1, 3)
 
         self.btn_select_all = QPushButton("✅ بلاک کردن همه (نمایشی)")
         self.btn_select_all.clicked.connect(lambda: self._set_all_checks(True))
+        self.btn_select_all.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         operation_layout.addWidget(self.btn_select_all, 1, 0)
 
         self.btn_deselect_all = QPushButton("❌ آن‌بلاک همه (نمایشی)")
         self.btn_deselect_all.clicked.connect(lambda: self._set_all_checks(False))
+        self.btn_deselect_all.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         operation_layout.addWidget(self.btn_deselect_all, 1, 1)
 
         self.btn_remove_selected = QPushButton("🗑️ حذف از لیست")
         self.btn_remove_selected.clicked.connect(self._remove_selected_symbol)
-        self.btn_remove_selected.setStyleSheet("background-color: #e74c3c; color: white;")
+        self.btn_remove_selected.setStyleSheet(ui_theme.get_button_style(mode, role="danger"))
         operation_layout.addWidget(self.btn_remove_selected, 1, 2)
 
         self.btn_import = QPushButton("📥 بارگذاری از فایل")
         self.btn_import.clicked.connect(self._import_list)
+        self.btn_import.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         operation_layout.addWidget(self.btn_import, 2, 0)
 
         self.btn_export = QPushButton("📤 خروجی به فایل")
         self.btn_export.clicked.connect(self._export_list)
+        self.btn_export.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         operation_layout.addWidget(self.btn_export, 2, 1)
 
         self.btn_clear_all = QPushButton("🧹 پاک کردن همه استثناها")
         self.btn_clear_all.clicked.connect(self._clear_all_exclusions)
-        self.btn_clear_all.setStyleSheet("background-color: #d35400; color: white;")
+        self.btn_clear_all.setStyleSheet(ui_theme.get_button_style(mode, role="danger"))
         operation_layout.addWidget(self.btn_clear_all, 2, 2)
 
         list_layout.addWidget(operation_group)
@@ -184,7 +189,7 @@ class SymbolFilterDialog(QDialog):
         
         self.btn_add_custom = QPushButton("➕ افزودن به استثناها")
         self.btn_add_custom.clicked.connect(self._add_custom_symbol)
-        self.btn_add_custom.setStyleSheet("background-color: #27ae60; color: white; font-weight: bold;")
+        self.btn_add_custom.setStyleSheet(ui_theme.get_button_style(mode, role="success"))
 
         custom_layout.addWidget(self.custom_symbol_input)
         custom_layout.addWidget(self.btn_add_custom)
@@ -221,7 +226,8 @@ class SymbolFilterDialog(QDialog):
             Qt.Orientation.Horizontal, self
         )
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("✅ تایید و ذخیره")
-        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet("background-color: #2ecc71; color: white; font-weight: bold;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setStyleSheet(ui_theme.get_button_style(mode, role="success"))
         self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("❌ انصراف")
         self.button_box.button(QDialogButtonBox.StandardButton.Reset).setText("↩️ بازنشانی اولیه")
         

@@ -69,7 +69,8 @@ def apply_app_layout(app: QApplication) -> None:
 
 
 def setup_persian_font(app: QApplication, preferred_font: str = "Vazirmatn", base_size: int = 10) -> None:
-    font_candidates = [preferred_font, "Vazirmatn", "Shabnam", "Sahel", "Segoe UI", "Tahoma"]
+    font_candidates = [preferred_font, "Vazirmatn",
+                       "Shabnam", "Sahel", "Segoe UI", "Tahoma"]
     installed_fonts = QFontDatabase.families()
 
     chosen_family = "Segoe UI"
@@ -156,7 +157,8 @@ def format_jalali_date(
     if isinstance(date_val, str):
         for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S"):
             try:
-                date_val = datetime.datetime.strptime(date_val.split()[0], fmt).date()
+                date_val = datetime.datetime.strptime(
+                    date_val.split()[0], fmt).date()
                 break
             except ValueError:
                 pass
@@ -164,7 +166,8 @@ def format_jalali_date(
     if not isinstance(date_val, (datetime.date, datetime.datetime)):
         return str(date_val)
 
-    target_date = date_val.date() if isinstance(date_val, datetime.datetime) else date_val
+    target_date = date_val.date() if isinstance(
+        date_val, datetime.datetime) else date_val
     today = datetime.date.today()
     dte = (target_date - today).days
 
@@ -233,39 +236,31 @@ def get_kpi_card_style(mode: ThemeMode, accent_color: str = "#388bfd") -> str:
     """
 
 
-def get_filter_chip_style(active: bool, mode: ThemeMode) -> str:
+def get_filter_chip_style(active: bool, mode: str) -> str:
+    """استایل یکپارچه چیپ‌های فیلتر سریع"""
+    is_dark = (mode == "dark")
     if active:
-        return """
-            QPushButton {
-                background-color: #1f6feb;
-                color: #ffffff;
-                border: 1px solid #388bfd;
-                border-radius: 14px;
-                padding: 4px 12px;
-                font-weight: bold;
-                font-size: 11px;
-            }
-            QPushButton:hover { background-color: #388bfd; }
-        """
+        bg = "#1f6feb" if is_dark else "#0969da"
+        color = "#ffffff"
+        border = "1px solid #388bfd" if is_dark else "1px solid #0969da"
     else:
-        bg = "#21262d" if mode == "dark" else "#f0f2f5"
-        fg = "#8b949e" if mode == "dark" else "#57606a"
-        border = "#30363d" if mode == "dark" else "#d0d7de"
-        return f"""
-            QPushButton {{
-                background-color: {bg};
-                color: {fg};
-                border: 1px solid {border};
-                border-radius: 14px;
-                padding: 4px 12px;
-                font-weight: 500;
-                font-size: 11px;
-            }}
-            QPushButton:hover {{
-                border-color: #58a6ff;
-                color: #58a6ff;
-            }}
-        """
+        bg = "#21262d" if is_dark else "#f6f8fa"
+        color = "#cdd9e5" if is_dark else "#57606a"
+        border = "1px solid #30363d" if is_dark else "1px solid #d0d7de"
+
+    return f"""
+        QPushButton {{
+            background-color: {bg};
+            color: {color};
+            border: {border};
+            border-radius: 14px;
+            padding: 4px 12px;
+            font-size: 11px;
+        }}
+        QPushButton:hover {{
+            border-color: {"#58a6ff" if is_dark else "#0969da"};
+        }}
+    """
 
 
 def get_toolbar_frame_style(mode: ThemeMode) -> str:
@@ -302,6 +297,55 @@ def get_symbol_filter_info_style(mode: ThemeMode) -> str:
     return f"font-weight: bold; color: {color};"
 
 
+def get_info_banner_style(mode: ThemeMode) -> str:
+    bg = "#161b22" if mode == "dark" else "#f0f2f5"
+    border = "#30363d" if mode == "dark" else "#d0d7de"
+    color = "#8b949e" if mode == "dark" else "#2c3e50"
+    return f"background-color: {bg}; border: 1px solid {border}; border-radius: 4px; padding: 8px; color: {color};"
+
+
+def get_sub_panel_style(mode: ThemeMode) -> str:
+    bg = "#161b22" if mode == "dark" else "#f0f2f5"
+    border = "#30363d" if mode == "dark" else "#d0d7de"
+    return f"background-color: {bg}; border: 1px dashed {border}; border-radius: 4px; padding: 2px;"
+
+
+def get_disabled_table_style(mode: ThemeMode) -> str:
+    bg = "#2b2b2b" if mode == "dark" else "#f0f2f5"
+    fg = "#777" if mode == "dark" else "#666"
+    return f"QTableWidget {{ background-color: {bg}; color: {fg}; }}"
+
+
+def get_greek_label_style(mode: ThemeMode) -> str:
+    bg = "rgba(255,255,255,0.04)" if mode == "dark" else "rgba(0,0,0,0.04)"
+    return f"font-weight: bold; background-color: {bg}; border-radius: 4px; padding: 4px;"
+
+
+def get_preset_button_style(mode: ThemeMode) -> str:
+    bg = "#21262d" if mode == "dark" else "#f0f2f5"
+    fg = "#8b949e" if mode == "dark" else "#57606a"
+    border = "#30363d" if mode == "dark" else "#d0d7de"
+    hover_bg = "#30363d" if mode == "dark" else "#e1e4e8"
+    hover_fg = "#58a6ff"
+    hover_border = "#58a6ff"
+    return f"""
+        QPushButton {{
+            background-color: {bg};
+            color: {fg};
+            border: 1px solid {border};
+            border-radius: 4px;
+            padding: 2px 7px;
+            font-size: 11px;
+            font-weight: bold;
+        }}
+        QPushButton:hover {{
+            background-color: {hover_bg};
+            color: {hover_fg};
+            border-color: {hover_border};
+        }}
+    """
+
+
 def get_symbol_filter_stats_style(mode: ThemeMode) -> str:
     if mode == "dark":
         return (
@@ -318,6 +362,85 @@ def get_dialog_profile_frame_style(mode: ThemeMode) -> str:
     if mode == "dark":
         return "QFrame { background:#21262d; border-radius:8px; padding:6px; }"
     return "QFrame { background:#f0f2f5; border-radius:8px; padding:6px; }"
+
+
+def get_button_style(mode: str, role: str = "primary") -> str:
+    """تولید استایل یکپارچه برای تمام دکمه‌های برنامه"""
+    is_dark = (mode == "dark")
+
+    styles = {
+        "primary": {
+            "bg": "#1f6feb" if is_dark else "#0969da",
+            "hover": "#388bfd" if is_dark else "#1f883d",
+            "text": "#ffffff",
+            "border": "none"
+        },
+        "secondary": {
+            "bg": "#21262d" if is_dark else "#f6f8fa",
+            "hover": "#30363d" if is_dark else "#eef1f5",
+            "text": "#cdd9e5" if is_dark else "#24292f",
+            "border": "1px solid #30363d" if is_dark else "1px solid #d0d7de"
+        },
+        "success": {
+            "bg": "#238636" if is_dark else "#1f883d",
+            "hover": "#2ea043" if is_dark else "#1a7f37",
+            "text": "#ffffff",
+            "border": "none"
+        },
+        "danger": {
+            "bg": "#da3633" if is_dark else "#cf222e",
+            "hover": "#f85149" if is_dark else "#a40e26",
+            "text": "#ffffff",
+            "border": "none"
+        },
+        "warning": {
+            "bg": "#9e6a03" if is_dark else "#d97706",
+            "hover": "#b07804" if is_dark else "#b45309",
+            "text": "#ffffff",
+            "border": "none"
+        }
+    }
+
+    style = styles.get(role, styles["primary"])
+
+    return f"""
+        QPushButton {{
+            background-color: {style['bg']};
+            color: {style['text']};
+            border: {style['border']};
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-weight: bold;
+        }}
+        QPushButton:hover {{
+            background-color: {style['hover']};
+        }}
+        QPushButton:disabled {{
+            background-color: {"#161b22" if is_dark else "#eef1f5"};
+            color: {"#484f58" if is_dark else "#8c959f"};
+            border: {"1px solid #30363d" if is_dark else "1px solid #d0d7de"};
+        }}
+    """
+
+
+def get_accent_button_style(mode: ThemeMode, accent: str = "#8a2be2", hover: str = "#a855f7") -> str:
+    if mode == "light":
+        bg = "#7b1fa2"
+        hover_bg = "#9c27b0"
+    else:
+        bg = accent
+        hover_bg = hover
+    return f"""
+        QPushButton {{
+            background-color: {bg};
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 8px 15px;
+            font-weight: bold;
+        }}
+        QPushButton:hover {{ background-color: {hover_bg}; }}
+    """
 
 
 def get_dialog_tab_style(mode: ThemeMode) -> str:
@@ -360,7 +483,8 @@ def _apply_palette(app: QApplication, mode: ThemeMode) -> None:
         palette.setColor(QPalette.ColorRole.Button, QColor(33, 38, 45))
         palette.setColor(QPalette.ColorRole.ButtonText, QColor(205, 217, 229))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(56, 139, 253))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.HighlightedText,
+                         QColor(255, 255, 255))
     else:
         palette = app.style().standardPalette()
     app.setPalette(palette)
@@ -388,14 +512,18 @@ QHeaderView::section {
     font-size: 11px;
 }
 QPushButton {
-    background-color: #4a6fa5;
-    color: white;
-    border: none;
+    background-color: #f6f8fa;
+    color: #24292f;
+    border: 1px solid #d0d7de;
     padding: 6px 14px;
-    border-radius: 5px;
+    border-radius: 6px;
     font-weight: bold;
 }
-QPushButton:hover { background-color: #3d5f8a; }
+QPushButton:hover {
+    background-color: #f3f4f6;
+    border-color: #0969da;
+    color: #0969da;
+}
 QMenu { background-color: white; color: #24292e; border: 1px solid #d0d7de; border-radius: 6px; padding: 4px 0; }
 QMenu::item { padding: 8px 24px 8px 16px; }
 QMenu::item:selected { background-color: #e8f0fe; color: #1a73e8; }
@@ -432,10 +560,14 @@ QPushButton {
     color: #cdd9e5;
     border: 1px solid #30363d;
     padding: 6px 14px;
-    border-radius: 5px;
+    border-radius: 6px;
     font-weight: bold;
 }
-QPushButton:hover { background-color: #30363d; border-color: #58a6ff; color: #58a6ff; }
+QPushButton:hover {
+    background-color: #30363d;
+    border-color: #58a6ff;
+    color: #58a6ff;
+}
 QMenu { background-color: #161b22; color: #cdd9e5; border: 1px solid #30363d; border-radius: 6px; padding: 4px 0; }
 QMenu::item { padding: 8px 24px 8px 16px; }
 QMenu::item:selected { background-color: #1f3a5f; color: #58a6ff; }

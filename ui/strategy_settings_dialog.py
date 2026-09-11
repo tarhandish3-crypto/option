@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, Signal
 
 from ui.settings_manager import settings_manager
 from ui.strategy_icons_manager import StrategyIconsManager
+from ui import theme as ui_theme
 from filters.strategy_filters import get_default_filter_config
 import config
 
@@ -160,17 +161,18 @@ class StrategySettingsDialog(QDialog):
         bottom_bar = QHBoxLayout()
         
         btn_save = QPushButton("💾 ذخیره و اعمال تغییرات")
-        btn_save.setStyleSheet("background-color: #238636; color: white; font-weight: bold; padding: 6px 20px; border-radius: 5px; font-size: 11px;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        btn_save.setStyleSheet(ui_theme.get_button_style(mode, role="success"))
         btn_save.clicked.connect(self._save_all)
         bottom_bar.addWidget(btn_save)
 
         btn_defaults = QPushButton("🔄 بازنشانی فیلترها به پیش‌فرض")
-        btn_defaults.setStyleSheet("padding: 6px 12px; font-size: 11px;")
+        btn_defaults.setStyleSheet(ui_theme.get_button_style(mode, role="warning"))
         btn_defaults.clicked.connect(self._reset_filters_to_defaults)
         bottom_bar.addWidget(btn_defaults)
 
         btn_cancel = QPushButton("انصراف")
-        btn_cancel.setStyleSheet("padding: 6px 12px; font-size: 11px;")
+        btn_cancel.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         btn_cancel.clicked.connect(self.reject)
         bottom_bar.addWidget(btn_cancel)
 
@@ -300,7 +302,8 @@ class StrategySettingsDialog(QDialog):
 
         # ۲. پنل تنظیم فیلترهای بازه
         sub_panel = QFrame()
-        sub_panel.setStyleSheet("background-color: #161b22; border: 1px dashed #30363d; border-radius: 4px; padding: 2px;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        sub_panel.setStyleSheet(ui_theme.get_sub_panel_style(mode))
         grid = QGridLayout(sub_panel)
         grid.setContentsMargins(6, 4, 6, 4)
         grid.setSpacing(4)

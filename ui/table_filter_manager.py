@@ -5,7 +5,7 @@
 
 import logging
 from typing import Dict, Optional, Callable, List, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from copy import deepcopy
 
 from PySide6.QtWidgets import QTableWidget
@@ -42,12 +42,11 @@ class TableFilterManager:
         self._saved_filters: Dict[int, ColumnFilter] = {}  # ذخیره فیلترها برای restore
     
     def set_filter(
-        self,
-        column_index: int,
-        column_name: str,
-        filter_func: Optional[Callable],
-        filter_metadata: Optional[Dict[str, Any]] = None
-    ) -> None:
+            self,
+            column_index: int,
+            column_name: str,
+            filter_func: Optional[Callable],
+            filter_metadata: Optional[Dict[str, Any]] = None) -> None:
         """
         تنظیم فیلتر برای یک سرستون
         
@@ -64,7 +63,6 @@ class TableFilterManager:
             # حذف فیلتر
             if column_index in self.filters:
                 del self.filters[column_index]
-                logger.info(f"Filter removed for column {column_name}")
                 self._update_header_appearance(column_index, False)
         else:
             # اضافه کردن یا بروزرسانی فیلتر
@@ -73,51 +71,72 @@ class TableFilterManager:
                 column_name=column_name,
                 filter_func=filter_func,
                 is_active=True,
-                filter_metadata=filter_metadata
-            )
-            logger.info(f"Filter set for column {column_name}: active={True}")
+                filter_metadata=filter_metadata)
+
             self._update_header_appearance(column_index, True)
         
         # اعمال فیلترها
         self.apply_filters()
     
     def apply_filters(self) -> None:
-        """اعمال تمام فیلترهای فعال بر روی جدول"""
-        
-        if not self.filters:
-            # نمایش تمام ردیف‌ها
-            logger.info("No active filters, showing all rows")
+        """
+        اعمال تمام فیلترهای فعال روی ردیف‌های فعلی جدول.
+
+        نکته مهم:
+        این متد همیشه rowCount() فعلی جدول را می‌خواند.
+        بنابراین بعد از بازسازی جدول در Refresh/Scan نیز
+        می‌تواند همان Filter State را روی داده‌های جدید اعمال کند.
+        """
+
+        row_count = self.table_widget.rowCount()
+
+        if row_count <= 0:
+            self._original_rows = []
+            self._filtered_rows = []
+            return
+
+        if not self.has_active_filters():
+            self._original_rows = list(range(row_count))
+            self._filtered_rows = list(range(row_count))
+
             self._show_all_rows()
             return
-        
-        # کپی لیست ردیف‌های اصلی
-        filtered_rows = list(range(self.table_widget.rowCount()))
-        logger.info(f"Starting with {len(filtered_rows)} rows")
-        
-        # اعمال هر فیلتر
+
+        # همیشه از Rowهای فعلی جدول شروع می‌کنیم.
+        filtered_rows = list(range(row_count))
+
+        self._original_rows = list(filtered_rows)
+
+        # تمام فیلترهای فعال با AND ترکیب می‌شوند.
         for column_index, column_filter in self.filters.items():
-            if not column_filter.is_active or column_filter.filter_func is None:
-                logger.warning(f"Filter for column {column_index} is not active or has no function")
+
+            if (not column_filter.is_active or column_filter.filter_func is None):
+
                 continue
-            
-            before_count = len(filtered_rows)
-            filtered_rows = [
-                row for row in filtered_rows
-                if self._passes_filter(row, column_index, column_filter.filter_func)
-            ]
-            after_count = len(filtered_rows)
-            logger.info(f"Applied filter to column {column_index}: {before_count} -> {after_count} rows")
-        
-        # نمایش/مخفی کردن ردیف‌ها
+
+            # اگر ستون دیگر وجود نداشته باشد، آن فیلتر را
+            # روی جدول فعلی اعمال نمی‌کنیم.
+            if (column_index < 0 or column_index >= self.table_widget.columnCount()):
+
+                continue
+
+            filtered_rows = [row for row in filtered_rows
+                             if self._passes_filter(row, column_index, column_filter.filter_func,)]
+
+        self._filtered_rows = list(filtered_rows)
+
+        # نمایش/مخفی کردن Rowها
         self._update_row_visibility(filtered_rows)
-        logger.info(f"Final filtered rows: {len(filtered_rows)}/{self.table_widget.rowCount()}")
+
+        logger.info("Final filtered rows: %s/%s",
+                    len(filtered_rows), row_count,)
+
     
     def _passes_filter(
-        self,
-        row: int,
-        column_index: int,
-        filter_func: Callable
-    ) -> bool:
+            self,
+            row: int,
+            column_index: int,
+            filter_func: Callable) -> bool:
         """بررسی اینکه یک ردیف از فیلتر می‌گذرد یا نه"""
         
         try:
@@ -126,7 +145,6 @@ class TableFilterManager:
                 return False
             
             # ابتدا مقدار عددی (UserRole) را امتحان کن، سپس متن را
-            from PySide6.QtCore import Qt
             user_value = item.data(Qt.ItemDataRole.UserRole)
             
             # اگر UserRole یک عدد است، آن را استفاده کن
@@ -136,11 +154,11 @@ class TableFilterManager:
                 # در غیر اینصورت، متن را استفاده کن
                 value = item.text()
             
-            result = filter_func(value)
-            return result
+            return bool(filter_func(value))
         
         except Exception as e:
-            logger.warning(f"خطا در فیلتر کردن ردیف {row}: {e}")
+            logger.warning("Error filtering row %s, column %s: %s",
+                           row, column_index, e,)
             return False
     
     def _show_all_rows(self) -> None:
@@ -209,11 +227,14 @@ class TableFilterManager:
     
     def has_active_filters(self) -> bool:
         """بررسی وجود فیلترهای فعال"""
-        return len(self._saved_filters) > 0
+        return any(column_filter.is_active
+                   and column_filter.filter_func is not None
+                   for column_filter in self.filters.values())
     
     def get_active_filter_count(self) -> int:
         """دریافت تعداد فیلترهای فعال"""
-        return len(self.filters)
+        return sum(1 for column_filter in self.filters.values()
+                   if (column_filter.is_active and column_filter.filter_func is not None))
     
     def get_filter(self, column_index: int) -> Optional[ColumnFilter]:
         """دریافت فیلتر فعلی برای یک سرستون"""
@@ -223,5 +244,4 @@ class TableFilterManager:
         """دریافت تعداد ردیف‌های قابل نمایش"""
         return sum(
             1 for row in range(self.table_widget.rowCount())
-            if not self.table_widget.isRowHidden(row)
-        )
+            if not self.table_widget.isRowHidden(row))

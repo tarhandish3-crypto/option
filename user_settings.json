@@ -3,7 +3,7 @@
     "profiles": {
         "mehdi": {
             "theme": "تاریک (Dark)",
-            "layout_direction": "راست‌چین (RTL)",
+            "layout_direction": "چپ‌چین (LTR)",
             "auto_scan_enabled": false,
             "auto_scan_interval": 120,
             "bale_enabled": false,
@@ -13,8 +13,13 @@
             "broker_username": "",
             "broker_password": "",
             "excluded_symbols": [
+                "اهرم",
+                "توان",
                 "ذوب",
-                "فزر"
+                "شستا",
+                "فزر",
+                "فملي",
+                "موج"
             ],
             "custom_prices": {},
             "custom_prices_enabled": true,
@@ -273,7 +278,12 @@
         "long_box"
     ],
     "excluded_symbols": [
+        "اهرم",
+        "توان",
         "ذوب",
-        "فزر"
+        "شستا",
+        "فزر",
+        "فملي",
+        "موج"
     ]
 }

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QPushButton, QFrame, QCheckBox, QSlider, QSizePolicy, 
     QGraphicsDropShadowEffect
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 
 # تنظیم Backend متناسب با PySide6
@@ -316,7 +316,10 @@ class PayoffChartDialog(QDialog):
                 border: 2px solid #ffffff;
             }
         """)
-        self.slider_range.valueChanged.connect(self._on_slider_range_changed)
+        self.slider_range.valueChanged.connect(self._on_slider_value_changed)
+        self._slider_debounce_timer = QTimer(self)
+        self._slider_debounce_timer.setSingleShot(True)
+        self._slider_debounce_timer.timeout.connect(self._on_slider_range_changed)
         control_layout.addWidget(self.slider_range)
 
         # نشانگر درصد بازه انتخابی
@@ -333,22 +336,8 @@ class PayoffChartDialog(QDialog):
         for pct in (15, 30, 50, 100):
             btn_preset = QPushButton(f"±{pct}٪")
             btn_preset.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn_preset.setStyleSheet("""
-                QPushButton {
-                    background-color: #21262d;
-                    color: #8b949e;
-                    border: 1px solid #30363d;
-                    border-radius: 4px;
-                    padding: 2px 7px;
-                    font-size: 11px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #30363d;
-                    color: #58a6ff;
-                    border-color: #58a6ff;
-                }
-            """)
+            mode = self._theme_mode
+            btn_preset.setStyleSheet(ui_theme.get_preset_button_style(mode))
             btn_preset.clicked.connect(lambda checked=False, p=pct: self._set_range_preset(p))
             control_layout.addWidget(btn_preset)
 
@@ -412,7 +401,8 @@ class PayoffChartDialog(QDialog):
 
         self.btn_close = QPushButton("بستن")
         self.btn_close.setFixedWidth(90)
-        self.btn_close.setStyleSheet("font-weight: bold; padding: 6px;")
+        mode = self._theme_mode
+        self.btn_close.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         self.btn_close.clicked.connect(self.accept)
         bottom_layout.addWidget(self.btn_close)
 
@@ -422,9 +412,12 @@ class PayoffChartDialog(QDialog):
     # اسلات‌های کنترلی بازه و کارمزد
     # =========================================================================
 
-    def _on_slider_range_changed(self, value: int):
+    def _on_slider_value_changed(self, value: int):
         self._current_span_pct = float(value)
         self.lbl_range_val.setText(f"±{value}٪")
+        self._slider_debounce_timer.start(120)
+
+    def _on_slider_range_changed(self):
         if self.strategy:
             self._plot_payoff()
 

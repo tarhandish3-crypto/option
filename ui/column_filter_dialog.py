@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QRadioButton, QMessageBox, QSpinBox
 )
 from PySide6.QtCore import Qt
+from ui import theme as ui_theme
 
 logger = logging.getLogger("OptionScanner.UI.ColumnFilterDialog")
 
@@ -99,17 +100,19 @@ class ColumnFilterDialog(QDialog):
         button_layout = QHBoxLayout()
         
         btn_apply = QPushButton("✅ اعمال فیلتر")
-        btn_apply.setStyleSheet("background-color: #238636; color: white; font-weight: bold; padding: 6px 15px;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        btn_apply.setStyleSheet(ui_theme.get_button_style(mode, role="success"))
         btn_apply.clicked.connect(self._apply_filter)
         button_layout.addWidget(btn_apply)
         
         btn_clear = QPushButton("🧹 حذف فیلتر")
-        btn_clear.setStyleSheet("padding: 6px 15px;")
+        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
+        btn_clear.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         btn_clear.clicked.connect(self._clear_filter)
         button_layout.addWidget(btn_clear)
         
         btn_cancel = QPushButton("❌ انصراف")
-        btn_cancel.setStyleSheet("padding: 6px 15px;")
+        btn_cancel.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
         btn_cancel.clicked.connect(self.reject)
         button_layout.addWidget(btn_cancel)
         
