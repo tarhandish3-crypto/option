@@ -537,6 +537,13 @@ def main():
         "theme", ui_theme.THEME_LIGHT)
     ui_theme.apply_app_theme(app, theme_setting)
 
+    # همگام‌سازی پیکربندی بازه قیمت از تنظیمات کاربر با ماژول config
+    # تا محاسبه payoff و ستون‌های UI از یک تعداد نقطه استفاده کنند
+    active_settings = settings_manager.get_active_settings()
+    user_price_range = active_settings.get("price_range")
+    if user_price_range:
+        config.PRICE_RANGE_CONFIG.update(user_price_range)
+
     # ۱. ایجاد موتور (بسیار سبک و بدون دیتابیس/استراتژی اولیه)
     scanner_engine = OptionScanner()
 

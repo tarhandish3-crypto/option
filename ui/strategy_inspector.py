@@ -178,12 +178,36 @@ class StrategyInspectorWidget(QGroupBox):
             lbl.setStyleSheet(ui_theme.get_greek_label_style(mode))
 
     def _copy_contract_to_clipboard(self, symbol_str: str) -> None:
-        """کپی نام نماد قرارداد به کلیپ بورد و نمایش Tooltip"""
+        """کپی نام نماد قرارداد به کلیپ بورد و نمایش Tooltip با استایل هماهنگ با تم"""
         clipboard = QApplication.clipboard()
         clipboard.setText(symbol_str)
+        
+        # تنظیم استایل ToolTip متناسب با تم فعلی (تاریک/روشن)
+        if self._theme_mode == "dark":
+            QToolTip.setStyleSheet("""
+                QToolTip {
+                    color: #c9d1d9;
+                    background-color: #21262d;
+                    border: 1px solid #30363d;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                }
+            """)
+        else:
+            QToolTip.setStyleSheet("""
+                QToolTip {
+                    color: #24292f;
+                    background-color: #ffffff;
+                    border: 1px solid #d0d7de;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                }
+            """)
 
         pos = QCursor.pos()
-        QToolTip.showText(pos, f"📋 قرارداد '{symbol_str}' کپی شد", None)
+        QToolTip.showText(pos, f"📋 قرارداد '{symbol_str}' کپی شد", self)
 
     def load_strategy(self, strategy: Any) -> None:
         """بارگذاری اطلاعات استراتژی انتخاب‌شده"""

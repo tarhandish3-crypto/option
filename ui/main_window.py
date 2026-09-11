@@ -443,7 +443,10 @@ class MainWindow(QMainWindow):
         table.setColumnWidth(6, 110)
 
         for col_idx in range(len(fixed_headers), len(all_headers)):
-            table.setColumnWidth(col_idx, 75)
+            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.ResizeToContents)
+            table.setColumnWidth(col_idx, 85)
+
+        self._fixed_column_count = len(fixed_headers)
 
         table.setSortingEnabled(True)
         table.setAlternatingRowColors(True)
@@ -741,6 +744,10 @@ class MainWindow(QMainWindow):
 
         self.table.setSortingEnabled(True)
         self.table.blockSignals(False)
+
+        for col_idx in range(self._fixed_column_count, self.table.columnCount()):
+            self.table.resizeColumnToContents(col_idx)
+
         # جایگزینی نقشه‌ی مقادیر قبلی؛ اسکن بعدی بر مبنای همین مقادیر، تغییرات را
         # تشخیص داده و سلول‌های مربوطه را فلش می‌زند.
         self._prev_cell_values = new_cell_values
@@ -819,10 +826,8 @@ class MainWindow(QMainWindow):
         dte_val = int(getattr(strategy, 'days_to_maturity', 0))
         contract = legs[0].contract if legs else None
         expiry_val = getattr(contract, 'expiry_date', None)
-        dte_str = ui_theme.format_jalali_date(
-            expiry_val, include_dte=True) if expiry_val else f"{dte_val} روز"
 
-        dte_item = NumericTableWidgetItem(dte_str)
+        dte_item = NumericTableWidgetItem(f"{dte_val}")
         dte_item.setData(Qt.ItemDataRole.UserRole, dte_val)
         dte_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, 4, dte_item)
@@ -859,7 +864,7 @@ class MainWindow(QMainWindow):
                 try:
                     num_val = float(val)
                     item_pnl = NumericTableWidgetItem(
-                        ui_theme.format_rial(num_val, show_sign=True))
+                        ui_theme.format_rial(num_val))
                     item_pnl.setData(Qt.ItemDataRole.UserRole, num_val)
                     item_pnl.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 

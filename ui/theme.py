@@ -147,44 +147,6 @@ def format_greek(value: Union[int, float, None], decimals: int = 3) -> str:
         return str(value)
 
 
-def format_jalali_date(
-    date_val: Union[datetime.date, datetime.datetime, str, None],
-    include_dte: bool = True
-) -> str:
-    if not date_val:
-        return "-"
-
-    if isinstance(date_val, str):
-        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S"):
-            try:
-                date_val = datetime.datetime.strptime(
-                    date_val.split()[0], fmt).date()
-                break
-            except ValueError:
-                pass
-
-    if not isinstance(date_val, (datetime.date, datetime.datetime)):
-        return str(date_val)
-
-    target_date = date_val.date() if isinstance(
-        date_val, datetime.datetime) else date_val
-    today = datetime.date.today()
-    dte = (target_date - today).days
-
-    j_date = jdatetime.date.fromgregorian(date=target_date)
-    j_str = j_date.strftime("%Y/%m/%d")
-
-    if include_dte:
-        if dte > 0:
-            return f"{j_str} ({dte} روز)"
-        elif dte == 0:
-            return f"{j_str} (امروز)"
-        else:
-            return f"{j_str} (منقضی)"
-
-    return j_str
-
-
 # =========================================================================
 # ۳. توابع رنگی سود/زیان و پویانمایی
 # =========================================================================
@@ -485,12 +447,27 @@ def _apply_palette(app: QApplication, mode: ThemeMode) -> None:
         palette.setColor(QPalette.ColorRole.Highlight, QColor(56, 139, 253))
         palette.setColor(QPalette.ColorRole.HighlightedText,
                          QColor(255, 255, 255))
+
+        # تنظیم رنگ ToolTip در Palette سیستم (جهت پشتیبانی کامل‌تر)
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(33, 38, 45))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(201, 209, 217))
     else:
         palette = app.style().standardPalette()
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 255))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(36, 41, 47))
     app.setPalette(palette)
 
 
 _LIGHT_GLOBAL_STYLE = """
+QToolTip {
+    color: #24292f;
+    background-color: #ffffff;
+    border: 1px solid #d0d7de;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: 'Vazirmatn', 'Shabnam', 'Segoe UI', Tahoma, sans-serif;
+}
 QMainWindow, QDialog { background-color: #f6f8fa; }
 QWidget { color: #24292e; font-family: 'Vazirmatn', 'Shabnam', 'Segoe UI', Tahoma, sans-serif; }
 QTableView, QTableWidget {
@@ -535,6 +512,15 @@ QStatusBar { background-color: #ffffff; border-top: 1px solid #d0d7de; color: #5
 """
 
 _DARK_GLOBAL_STYLE = """
+QToolTip {
+    color: #c9d1d9;
+    background-color: #21262d;
+    border: 1px solid #30363d;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: 'Vazirmatn', 'Shabnam', 'Segoe UI', Tahoma, sans-serif;
+}
 QMainWindow, QDialog { background-color: #0d1117; }
 QWidget { color: #cdd9e5; font-family: 'Vazirmatn', 'Shabnam', 'Segoe UI', Tahoma, sans-serif; }
 QTableView, QTableWidget {
