@@ -213,5 +213,4 @@ class ScannerEngine:
                 total_combinations_generated=self.total_generated_stats,
                 total_combinations_filtered=self.total_filtered_stats,
                 opportunities=opportunities,
-                execution_time_ms=duration
-            )
+                execution_time_ms=duration)

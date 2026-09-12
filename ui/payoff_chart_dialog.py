@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect
 )
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QCloseEvent
 
 # تنظیم Backend متناسب با PySide6
 import matplotlib
@@ -25,6 +25,7 @@ except ImportError:
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
+import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import matplotlib.ticker as ticker
 
@@ -123,6 +124,7 @@ class OptionBaazTooltipWidget(QFrame):
         layout.addWidget(self.lbl_content)
 
         self.hide()
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
     def update_data(
         self, 
@@ -182,13 +184,16 @@ class OptionBaazTooltipWidget(QFrame):
 class PayoffChartDialog(QDialog):
     """
     پنجره مستقل و فوق‌پیشرفته نمایش نمودار Payoff با تنظیمات کارمزد و تسویه فیزیکی
-    و نمایش نقطه توپر قیمت فعلی سهم همراه با تولتیپ هوشمند
+    و نمایش نقطه توپر قیمت فعلی سهم همراه با تولتیپ هوشمند و مدیریت عاری از Memory Leak.
     """
     def __init__(self, parent: Optional[Any] = None):
         super().__init__(parent)
         self.setWindowTitle("📊 تحلیل پیشرفته سود و زیان استراتژی (Payoff Explorer)")
         self.resize(1080, 720)
         self.setMinimumSize(920, 600)
+
+        # اصلاح نکته ۲: آزادسازی حافظه دیالوگ پس از بسته شدن
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         self.strategy: Any = None
         self._theme_mode: ui_theme.ThemeMode = "dark"
@@ -198,11 +203,15 @@ class PayoffChartDialog(QDialog):
         self._underlying_price: float = 0.0
         self._capital_base: float = 0.0
         self._current_span_pct: float = 50.0  # مقدار دیفالت بازه ۵۰٪±
-        
+
+        self.figure: Optional[Figure] = None
+        self.canvas: Optional[FigureCanvas] = None
+        self.toolbar: Optional[NavigationToolbar] = None
+        self.ax = None
+
         self._cursor_line = None
         self._cursor_dot = None
         self._spot_dot = None
-        self.ax = None
 
         self._init_ui()
 
@@ -225,7 +234,8 @@ class PayoffChartDialog(QDialog):
         header_layout.setContentsMargins(0, 0, 0, 0)
 
         self.lbl_title = QLabel("در حال بارگذاری استراتژی...")
-        self.lbl_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #58a6ff;")
+        self.lbl_title.setStyleSheet(
+            "font-size: 14px; font-weight: bold; color: #58a6ff;")
         header_layout.addWidget(self.lbl_title)
 
         header_layout.addStretch()
@@ -285,7 +295,8 @@ class PayoffChartDialog(QDialog):
         control_layout.setSpacing(10)
 
         lbl_range_icon = QLabel("🔍 دامنه نوسان قیمت:")
-        lbl_range_icon.setStyleSheet("font-weight: bold; color: #cdd9e5; font-size: 12px;")
+        lbl_range_icon.setStyleSheet(
+            "font-weight: bold; color: #cdd9e5; font-size: 12px;")
         control_layout.addWidget(lbl_range_icon)
 
         # کشویی تنظیم درصد بازه (پیش‌فرض ۵۰٪)
@@ -319,7 +330,8 @@ class PayoffChartDialog(QDialog):
         self.slider_range.valueChanged.connect(self._on_slider_value_changed)
         self._slider_debounce_timer = QTimer(self)
         self._slider_debounce_timer.setSingleShot(True)
-        self._slider_debounce_timer.timeout.connect(self._on_slider_range_changed)
+        self._slider_debounce_timer.timeout.connect(
+            self._on_slider_range_changed)
         control_layout.addWidget(self.slider_range)
 
         # نشانگر درصد بازه انتخابی
@@ -338,7 +350,8 @@ class PayoffChartDialog(QDialog):
             btn_preset.setCursor(Qt.CursorShape.PointingHandCursor)
             mode = self._theme_mode
             btn_preset.setStyleSheet(ui_theme.get_preset_button_style(mode))
-            btn_preset.clicked.connect(lambda checked=False, p=pct: self._set_range_preset(p))
+            btn_preset.clicked.connect(
+                lambda checked=False, p=pct: self._set_range_preset(p))
             control_layout.addWidget(btn_preset)
 
         control_layout.addStretch()
@@ -354,15 +367,19 @@ class PayoffChartDialog(QDialog):
         control_layout.addWidget(self.chk_apply_fees)
 
         # چک‌باکس ۲: تسویه فیزیکی
-        default_is_physical = FEATURE_FLAGS.get("exercise_settlement_type", "PHYSICAL") == "PHYSICAL"
-        self.chk_physical_settlement = QCheckBox("تسویه فیزیکی (مالیات واگذاری)")
+        default_is_physical = FEATURE_FLAGS.get(
+            "exercise_settlement_type", "PHYSICAL") == "PHYSICAL"
+        self.chk_physical_settlement = QCheckBox(
+            "تسویه فیزیکی (مالیات واگذاری)")
         self.chk_physical_settlement.setChecked(default_is_physical)
-        self.chk_physical_settlement.setToolTip("در صورت فعال بودن، مالیات ۰.۵٪ انتقال فیزیکی سهم در سررسید از واگذارکننده کسر می‌شود.")
+        self.chk_physical_settlement.setToolTip(
+            "در صورت فعال بودن، مالیات ۰.۵٪ انتقال فیزیکی سهم در سررسید از واگذارکننده کسر می‌شود.")
         self.chk_physical_settlement.setStyleSheet("""
             QCheckBox { font-weight: bold; color: #79c0ff; }
             QCheckBox::indicator { width: 15px; height: 15px; }
         """)
-        self.chk_physical_settlement.stateChanged.connect(self._on_fees_toggled)
+        self.chk_physical_settlement.stateChanged.connect(
+            self._on_fees_toggled)
         control_layout.addWidget(self.chk_physical_settlement)
 
         layout.addWidget(control_frame)
@@ -370,14 +387,15 @@ class PayoffChartDialog(QDialog):
         # ── ۳. بوم رسم نمودار Matplotlib و تولتیپ OptionBaaz ──
         self.figure = Figure(figsize=(9, 5), dpi=100)
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.canvas.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.toolbar = NavigationToolbar(self.canvas, self)
-        
+
         self.hud_tooltip = OptionBaazTooltipWidget(self.canvas)
 
         self.canvas.mpl_connect("motion_notify_event", self._on_mouse_move)
         self.canvas.mpl_connect("axes_leave_event", self._on_mouse_leave)
-        
+
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas, stretch=1)
 
@@ -395,14 +413,16 @@ class PayoffChartDialog(QDialog):
         bottom_layout.setContentsMargins(5, 4, 5, 4)
 
         self.lbl_legs_summary = QLabel("پایه‌ها: در حال بارگذاری...")
-        self.lbl_legs_summary.setStyleSheet("font-size: 12px; color: #adbac7; font-weight: 500;")
+        self.lbl_legs_summary.setStyleSheet(
+            "font-size: 12px; color: #adbac7; font-weight: 500;")
         self.lbl_legs_summary.setWordWrap(True)
         bottom_layout.addWidget(self.lbl_legs_summary, stretch=1)
 
         self.btn_close = QPushButton("بستن")
         self.btn_close.setFixedWidth(90)
         mode = self._theme_mode
-        self.btn_close.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
+        self.btn_close.setStyleSheet(
+            ui_theme.get_button_style(mode, role="secondary"))
         self.btn_close.clicked.connect(self.accept)
         bottom_layout.addWidget(self.btn_close)
 
@@ -425,7 +445,8 @@ class PayoffChartDialog(QDialog):
         self.slider_range.setValue(pct)
 
     def _on_fees_toggled(self):
-        self.chk_physical_settlement.setEnabled(self.chk_apply_fees.isChecked())
+        self.chk_physical_settlement.setEnabled(
+            self.chk_apply_fees.isChecked())
         if self.strategy:
             self._plot_payoff()
 
@@ -436,13 +457,16 @@ class PayoffChartDialog(QDialog):
     def load_strategy(self, strategy: Any, theme_mode: ui_theme.ThemeMode = "dark") -> None:
         self.strategy = strategy
         self._theme_mode = theme_mode
-        
-        strat_name = str(getattr(strategy, 'strategy_name', 'استراتژی') or 'استراتژی')
+
+        strat_name = str(
+            getattr(strategy, 'strategy_name', 'استراتژی') or 'استراتژی')
         ticker_name = str(getattr(strategy, 'underlying_ticker', '-') or '-')
-        self.lbl_title.setText(f"📈 نمودار سررسید استراتژی {strat_name} ({ticker_name})")
+        self.lbl_title.setText(
+            f"📈 نمودار سررسید استراتژی {strat_name} ({ticker_name})")
 
         legs_text = self._build_legs_summary_text(strategy)
-        self.lbl_legs_summary.setText(f"📌 <b>استراتژی:</b> {strat_name} | <b>پایه‌ها:</b> {legs_text}")
+        self.lbl_legs_summary.setText(
+            f"📌 <b>استراتژی:</b> {strat_name} | <b>پایه‌ها:</b> {legs_text}")
 
         self._plot_payoff()
 
@@ -454,28 +478,41 @@ class PayoffChartDialog(QDialog):
         parts = []
         for leg in legs:
             contract = getattr(leg, 'contract', None)
-            ticker = contract.ticker if contract else getattr(strategy, 'underlying_ticker', 'سهام')
-            side_fa = "خرید" if getattr(leg, 'side', Side.BUY) == Side.BUY else "فروش"
+            ticker_name = contract.ticker if contract else getattr(
+                strategy, 'underlying_ticker', 'سهام')
+            side_fa = "خرید" if getattr(
+                leg, 'side', Side.BUY) == Side.BUY else "فروش"
             ratio = int(_safe_to_float(getattr(leg, 'ratio', 1), 1.0))
-            
+
             entry_price = getattr(leg, 'entry_price', None)
             if entry_price is None and contract:
-                entry_price = getattr(contract, 'last_price', 0.0) or getattr(contract, 'close_price', 0.0)
+                entry_price = getattr(contract, 'last_price', 0.0) or getattr(
+                    contract, 'close_price', 0.0)
             entry_price_str = f"@{ui_theme.format_rial(_safe_to_float(entry_price))} ریال" if entry_price else ""
 
             if contract:
                 is_call = contract.option_type == OptionType.CALL
-                opt_type = "اختیار خرید" if is_call else ("اختیار فروش" if contract.option_type == OptionType.PUT else "سهام پایه")
+                opt_type = "اختیار خرید" if is_call else (
+                    "اختیار فروش" if contract.option_type == OptionType.PUT else "سهام پایه")
                 strike_str = f"| اعمال: {ui_theme.format_rial(contract.strike_price)}" if contract.strike_price > 0 else ""
-                parts.append(f"<b>{ticker}</b> ({ratio}× {side_fa} {opt_type} {entry_price_str} {strike_str})")
+                parts.append(
+                    f"<b>{ticker_name}</b> ({ratio}× {side_fa} {opt_type} {entry_price_str} {strike_str})")
             else:
-                parts.append(f"<b>{ticker}</b> ({ratio}× {side_fa} سهام پایه {entry_price_str})")
+                parts.append(
+                    f"<b>{ticker_name}</b> ({ratio}× {side_fa} سهام پایه {entry_price_str})")
 
         return " ، ".join(parts)
 
     def _plot_payoff(self) -> None:
+        if self.figure is None:
+            return
+
         self.figure.clear()
         self.ax = self.figure.add_subplot(111)
+
+        self._cursor_line = None
+        self._cursor_dot = None
+        self._spot_dot = None
 
         is_dark = (self._theme_mode == "dark")
         bg_color = "#1a1d24" if is_dark else "#ffffff"
@@ -485,19 +522,24 @@ class PayoffChartDialog(QDialog):
         self.figure.patch.set_facecolor(bg_color)
         self.ax.set_facecolor(bg_color)
 
-        legs: List[LegDefinition] = _safe_to_list(getattr(self.strategy, 'legs', []))
+        legs: List[LegDefinition] = _safe_to_list(
+            getattr(self.strategy, 'legs', []))
         if not legs:
             self.canvas.draw()
             return
 
         # ۱. استخراج نماد و قیمت دارایی پایه
-        self._underlying_price = _safe_to_float(getattr(self.strategy, 'underlying_price', 0.0))
+        self._underlying_price = _safe_to_float(
+            getattr(self.strategy, 'underlying_price', 0.0))
         metadata = getattr(self.strategy, 'metadata', {})
         if self._underlying_price <= 0 and isinstance(metadata, dict):
-            self._underlying_price = _safe_to_float(metadata.get('underlying_price', 0.0))
+            self._underlying_price = _safe_to_float(
+                metadata.get('underlying_price', 0.0))
 
-        first_opt = next((l for l in legs if l.contract and l.contract.option_type != OptionType.STOCK), None)
-        underlying_ticker = first_opt.contract.underlying_ticker if first_opt else getattr(self.strategy, 'underlying_ticker', '')
+        first_opt = next(
+            (l for l in legs if l.contract and l.contract.option_type != OptionType.STOCK), None)
+        underlying_ticker = first_opt.contract.underlying_ticker if first_opt else getattr(
+            self.strategy, 'underlying_ticker', '')
 
         # ۲. آماده‌سازی آرایه‌ها برای تابع Numba
         num_legs = len(legs)
@@ -513,11 +555,13 @@ class PayoffChartDialog(QDialog):
 
         for idx, leg in enumerate(legs):
             weights[idx] = float(getattr(leg, 'ratio', 1.0))
-            sides[idx] = 1 if getattr(leg, 'side', Side.BUY) == Side.BUY else -1
+            sides[idx] = 1 if getattr(
+                leg, 'side', Side.BUY) == Side.BUY else -1
             contract = getattr(leg, 'contract', None)
 
             if contract is not None:
-                strikes[idx] = float(getattr(contract, 'strike_price', 0.0) or 0.0)
+                strikes[idx] = float(
+                    getattr(contract, 'strike_price', 0.0) or 0.0)
                 has_contract[idx] = 1
 
                 if contract.option_type == OptionType.STOCK:
@@ -525,33 +569,39 @@ class PayoffChartDialog(QDialog):
                     contract_sizes[idx] = base_option_size
                 elif contract.option_type == OptionType.CALL:
                     option_types[idx] = 1
-                    contract_sizes[idx] = int(getattr(contract, 'contract_size', base_option_size) or base_option_size)
+                    contract_sizes[idx] = int(
+                        getattr(contract, 'contract_size', base_option_size) or base_option_size)
                 else:
                     option_types[idx] = 2
-                    contract_sizes[idx] = int(getattr(contract, 'contract_size', base_option_size) or base_option_size)
+                    contract_sizes[idx] = int(
+                        getattr(contract, 'contract_size', base_option_size) or base_option_size)
 
                 ep = getattr(leg, 'entry_price', None)
                 if ep and ep > 0:
                     entry_prices[idx] = ep
                 else:
-                    lp = getattr(contract, 'last_price', 0.0) or getattr(contract, 'close_price', 0.0)
-                    entry_prices[idx] = lp if lp > 0 else (self._underlying_price if self._underlying_price > 0 else strikes[idx])
+                    lp = getattr(contract, 'last_price', 0.0) or getattr(
+                        contract, 'close_price', 0.0)
+                    entry_prices[idx] = lp if lp > 0 else (
+                        self._underlying_price if self._underlying_price > 0 else strikes[idx])
             else:
                 ep = getattr(leg, 'entry_price', None)
-                entry_prices[idx] = ep if (ep and ep > 0) else self._underlying_price
+                entry_prices[idx] = ep if (
+                    ep and ep > 0) else self._underlying_price
                 option_types[idx] = 0
                 contract_sizes[idx] = base_option_size
                 has_contract[idx] = 1
 
         if self._underlying_price <= 0.0:
             valid_strikes = strikes[strikes > 0]
-            self._underlying_price = float(valid_strikes[0]) if len(valid_strikes) > 0 else 10000.0
+            self._underlying_price = float(valid_strikes[0]) if len(
+                valid_strikes) > 0 else 10000.0
 
         # ۳. محاسبه بازه افقی X بر اساس مقدار کشویی (پیش‌فرض ±۵۰٪)
         span_ratio = self._current_span_pct / 100.0
         min_p = float(self._underlying_price * (1.0 - span_ratio))
         max_p = float(self._underlying_price * (1.0 + span_ratio))
-        
+
         if min_p <= 0:
             min_p = 10.0
 
@@ -580,19 +630,32 @@ class PayoffChartDialog(QDialog):
                 net_profits -= costs.total_entry_cost
                 option_entry_fees = costs.total_entry_cost
 
-                prev_settlement = FEATURE_FLAGS.get("exercise_settlement_type", "PHYSICAL")
-                FEATURE_FLAGS["exercise_settlement_type"] = "PHYSICAL" if is_physical else "CASH"
-
+                # اصلاح نکته ۳: فراخوانی تابع با پارامتر مستقیم یا مکانیزم ایمن
                 try:
+                    # بررسی پشتیبانی از settlement_type ایمن
                     exercise_costs = IranMarketCostCalculator.generate_exercise_cost_vector(
                         underlying_symbol=underlying_ticker,
                         legs=legs,
                         price_levels=self._prices_array,
-                        include_exercise_fee=True
+                        include_exercise_fee=True,
+                        settlement_type="PHYSICAL" if is_physical else "CASH"
                     )
-                    net_profits -= exercise_costs
-                finally:
-                    FEATURE_FLAGS["exercise_settlement_type"] = prev_settlement
+                except TypeError:
+                    # fallback در صورت عدم پشتیبانی نسخه قدیم از این پارامتر
+                    prev_settlement = FEATURE_FLAGS.get(
+                        "exercise_settlement_type", "PHYSICAL")
+                    FEATURE_FLAGS["exercise_settlement_type"] = "PHYSICAL" if is_physical else "CASH"
+                    try:
+                        exercise_costs = IranMarketCostCalculator.generate_exercise_cost_vector(
+                            underlying_symbol=underlying_ticker,
+                            legs=legs,
+                            price_levels=self._prices_array,
+                            include_exercise_fee=True
+                        )
+                    finally:
+                        FEATURE_FLAGS["exercise_settlement_type"] = prev_settlement
+
+                net_profits -= exercise_costs
 
             except Exception as e:
                 logger.warning(f"Cost calculation error: {e}")
@@ -609,7 +672,8 @@ class PayoffChartDialog(QDialog):
             has_contract=has_contract
         )
 
-        req_margin = _safe_to_float(getattr(self.strategy, 'required_margin', 0.0))
+        req_margin = _safe_to_float(
+            getattr(self.strategy, 'required_margin', 0.0))
         if req_margin <= 0 and isinstance(metadata, dict):
             req_margin = _safe_to_float(metadata.get('required_margin', 0.0))
 
@@ -618,7 +682,8 @@ class PayoffChartDialog(QDialog):
             self._capital_base = 1.0
 
         # ۷. نقاط سربه‌سر و حداکثر سود/زیان
-        be_points = IranMarketPayoffCalculator._find_break_even_points(self._prices_array, self._payoff_array)
+        be_points = IranMarketPayoffCalculator._find_break_even_points(
+            self._prices_array, self._payoff_array)
         if len(be_points) > 0:
             be_str = " | ".join(ui_theme.format_rial(p) for p in be_points)
             self.lbl_be_points.setText(f"نقاط سربه‌سر: {be_str}")
@@ -633,18 +698,24 @@ class PayoffChartDialog(QDialog):
 
         # به‌روزرسانی هدر با قیمت فعلی
         if self._underlying_price > 0:
-            spot_pnl = float(np.interp(self._underlying_price, self._prices_array, self._payoff_array))
-            spot_pct = (spot_pnl / self._capital_base) * 100.0 if self._capital_base > 0 else 0.0
-            self.lbl_spot_info.setText(f"قیمت فعلی: {self._underlying_price:,.0f} ({spot_pct:+.1f}٪)")
+            spot_pnl = float(np.interp(self._underlying_price,
+                             self._prices_array, self._payoff_array))
+            spot_pct = (spot_pnl / self._capital_base) * \
+                100.0 if self._capital_base > 0 else 0.0
+            self.lbl_spot_info.setText(
+                f"قیمت فعلی: {self._underlying_price:,.0f} ({spot_pct:+.1f}٪)")
 
         # ۸. ترسیم المان‌های گرافیکی
-        self.ax.axhline(0, color="#8c9bae", linestyle="--", linewidth=1.2, alpha=0.7)
+        self.ax.axhline(0, color="#8c9bae", linestyle="--",
+                        linewidth=1.2, alpha=0.7)
 
         pos_mask = np.asarray(self._payoff_array >= 0.0, dtype=bool)
         neg_mask = np.asarray(self._payoff_array < 0.0, dtype=bool)
 
-        self.ax.fill_between(self._prices_array, self._payoff_array, 0, where=pos_mask, color="#3fb950", alpha=0.25, interpolate=True)
-        self.ax.fill_between(self._prices_array, self._payoff_array, 0, where=neg_mask, color="#f85149", alpha=0.25, interpolate=True)
+        self.ax.fill_between(self._prices_array, self._payoff_array, 0,
+                             where=pos_mask, color="#3fb950", alpha=0.25, interpolate=True)
+        self.ax.fill_between(self._prices_array, self._payoff_array, 0,
+                             where=neg_mask, color="#f85149", alpha=0.25, interpolate=True)
 
         if apply_fees:
             fee_desc = "با کارمزد + تسویه فیزیکی" if is_physical else "با کارمزد + تسویه نقدی"
@@ -652,41 +723,45 @@ class PayoffChartDialog(QDialog):
             fee_desc = "بدون کارمزد"
 
         # رسم خط اصلی Payoff
-        self.ax.plot(self._prices_array, self._payoff_array, color="#58a6ff", linewidth=2.5, label=f"سود/زیان سررسید ({fee_desc})", zorder=4)
+        self.ax.plot(self._prices_array, self._payoff_array, color="#58a6ff",
+                     linewidth=2.5, label=f"سود/زیان سررسید ({fee_desc})", zorder=4)
 
         # استرایک‌ها
         for k in sorted(list(set(strikes[strikes > 0]))):
             if min_p <= k <= max_p:
-                self.ax.axvline(k, color="#805ad5", linestyle="--", linewidth=0.9, alpha=0.6)
+                self.ax.axvline(k, color="#805ad5",
+                                linestyle="--", linewidth=0.9, alpha=0.6)
 
         # ── نقطه توپر دائمی قیمت فعلی و خط‌چین عمودی ──
         if self._underlying_price > 0.0 and min_p <= self._underlying_price <= max_p:
-            spot_pnl = float(np.interp(self._underlying_price, self._prices_array, self._payoff_array))
-            
+            spot_pnl = float(np.interp(self._underlying_price,
+                             self._prices_array, self._payoff_array))
+
             # خط‌چین عمودی قیمت فعلی
             self.ax.axvline(
-                self._underlying_price, 
-                color="#f39c12", 
-                linestyle=":", 
-                linewidth=1.8, 
-                alpha=0.85, 
+                self._underlying_price,
+                color="#f39c12",
+                linestyle=":",
+                linewidth=1.8,
+                alpha=0.85,
                 zorder=5,
                 label=f"قیمت فعلی ({self._underlying_price:,.0f})"
             )
 
             # دایره توپر برجسته (Solid Dot)
             self._spot_dot = self.ax.scatter(
-                [self._underlying_price], 
-                [spot_pnl], 
-                color="#f39c12", 
-                edgecolors="#ffffff", 
-                s=130, 
-                linewidths=2.0, 
+                [self._underlying_price],
+                [spot_pnl],
+                color="#f39c12",
+                edgecolors="#ffffff",
+                s=130,
+                linewidths=2.0,
                 zorder=7
             )
 
             # برچسب دائمی کنار نقطه قیمت فعلی
-            spot_pct = (spot_pnl / self._capital_base) * 100.0 if self._capital_base > 0 else 0.0
+            spot_pct = (spot_pnl / self._capital_base) * \
+                100.0 if self._capital_base > 0 else 0.0
             callout_text = f"Spot: {self._underlying_price:,.0f}\n({spot_pct:+.1f}%)"
             y_offset = 14 if spot_pnl >= 0 else -28
             self.ax.annotate(
@@ -698,31 +773,40 @@ class PayoffChartDialog(QDialog):
                 fontsize=9,
                 fontweight='bold',
                 color="#f39c12",
-                bbox=dict(boxstyle="round,pad=0.3", fc=bg_color, ec="#f39c12", lw=1.2, alpha=0.9),
+                bbox=dict(boxstyle="round,pad=0.3", fc=bg_color,
+                          ec="#f39c12", lw=1.2, alpha=0.9),
                 zorder=8
             )
 
         # مکان‌نما (Cursor)
-        self._cursor_line = self.ax.axvline(self._prices_array[0], color="#a0aec0", linestyle="--", linewidth=1.0, alpha=0.8, visible=False)
-        self._cursor_dot, = self.ax.plot([self._prices_array[0]], [0], marker="o", markersize=7, markeredgecolor="white", markeredgewidth=1.5, visible=False, zorder=9)
+        self._cursor_line = self.ax.axvline(
+            self._prices_array[0], color="#a0aec0", linestyle="--", linewidth=1.0, alpha=0.8, visible=False)
+        self._cursor_dot, = self.ax.plot([self._prices_array[0]], [
+                                         0], marker="o", markersize=7, markeredgecolor="white", markeredgewidth=1.5, visible=False, zorder=9)
 
-        self.ax.set_title("Expiration Payoff Curve", color=text_color, fontsize=12, fontweight="bold", pad=10)
-        self.ax.set_xlabel("Underlying Price at Expiration (Rials)", color=text_color, fontsize=10, labelpad=8)
-        self.ax.set_ylabel("Net Profit / Loss (Rials)", color=text_color, fontsize=10, labelpad=8)
+        self.ax.set_title("Expiration Payoff Curve", color=text_color,
+                          fontsize=12, fontweight="bold", pad=10)
+        self.ax.set_xlabel("Underlying Price at Expiration (Rials)",
+                           color=text_color, fontsize=10, labelpad=8)
+        self.ax.set_ylabel("Net Profit / Loss (Rials)",
+                           color=text_color, fontsize=10, labelpad=8)
 
         self.ax.grid(True, linestyle=":", color=grid_color, alpha=0.6)
         self.ax.tick_params(colors=text_color, labelsize=9)
 
-        self.ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f"{x:,.0f}"))
-        self.ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f"{x:,.0f}"))
+        self.ax.xaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda x, p: f"{x:,.0f}"))
+        self.ax.yaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda x, p: f"{x:,.0f}"))
 
         self.ax.set_xlim(min_p, max_p)
 
         for spine in self.ax.spines.values():
             spine.set_color(grid_color)
 
-        self.ax.legend(facecolor=bg_color, edgecolor=grid_color, labelcolor=text_color, loc="best")
-        
+        self.ax.legend(facecolor=bg_color, edgecolor=grid_color,
+                       labelcolor=text_color, loc="best")
+
         self.figure.tight_layout()
         self.canvas.draw()
 
@@ -731,7 +815,7 @@ class PayoffChartDialog(QDialog):
     # =========================================================================
 
     def _on_mouse_move(self, event) -> None:
-        if event.inaxes != self.ax or len(self._prices_array) == 0:
+        if self.ax is None or event.inaxes != self.ax or len(self._prices_array) == 0:
             self._hide_tooltip()
             return
 
@@ -748,7 +832,7 @@ class PayoffChartDialog(QDialog):
         price_span = self._prices_array[-1] - self._prices_array[0]
         spot_threshold = price_span * 0.015
         is_near_spot = False
-        
+
         if self._underlying_price > 0 and abs(x - self._underlying_price) <= spot_threshold:
             # اسنپ روی قیمت دقیق دارایی پایه
             x_target = self._underlying_price
@@ -759,12 +843,14 @@ class PayoffChartDialog(QDialog):
         y = float(np.interp(x_target, self._prices_array, self._payoff_array))
 
         if self._underlying_price > 0:
-            price_change_pct = ((x_target - self._underlying_price) / self._underlying_price) * 100.0
+            price_change_pct = (
+                (x_target - self._underlying_price) / self._underlying_price) * 100.0
         else:
             price_change_pct = 0.0
 
-        pnl_pct = (y / self._capital_base) * 100.0 if self._capital_base > 0 else None
-        
+        pnl_pct = (y / self._capital_base) * \
+            100.0 if self._capital_base > 0 else None
+
         if is_near_spot:
             dot_color = "#f39c12"
             dot_size = 10
@@ -772,53 +858,106 @@ class PayoffChartDialog(QDialog):
             dot_color = "#3fb950" if y >= 0 else "#f85149"
             dot_size = 7
 
-        self._cursor_line.set_xdata([x_target, x_target])
-        self._cursor_dot.set_data([x_target], [y])
-        self._cursor_dot.set_color(dot_color)
-        self._cursor_dot.set_markersize(dot_size)
+        if self._cursor_line:
+            self._cursor_line.set_xdata([x_target, x_target])
+        if self._cursor_dot:
+            self._cursor_dot.set_data([x_target], [y])
+            self._cursor_dot.set_color(dot_color)
+            self._cursor_dot.set_markersize(dot_size)
 
-        self.hud_tooltip.update_data(
-            price=x_target, 
-            price_change_pct=price_change_pct, 
-            pnl=y, 
-            pnl_pct=pnl_pct,
-            is_spot=is_near_spot
-        )
+        if hasattr(self, 'hud_tooltip') and self.hud_tooltip is not None:
+            self.hud_tooltip.update_data(
+                price=x_target,
+                price_change_pct=price_change_pct,
+                pnl=y,
+                pnl_pct=pnl_pct,
+                is_spot=is_near_spot
+            )
 
-        canvas_h = self.canvas.height()
-        canvas_w = self.canvas.width()
-        
-        mouse_x = int(event.x)
-        mouse_y = int(canvas_h - event.y)
+            canvas_h = self.canvas.height()
+            canvas_w = self.canvas.width()
 
-        tt_w = self.hud_tooltip.width()
-        tt_h = self.hud_tooltip.height()
+            mouse_x = int(event.x)
+            mouse_y = int(canvas_h - event.y)
 
-        pos_x = mouse_x + 15
-        if pos_x + tt_w > canvas_w - 15:
-            pos_x = mouse_x - tt_w - 15
+            tt_w = self.hud_tooltip.width()
+            tt_h = self.hud_tooltip.height()
 
-        pos_y = mouse_y - (tt_h // 2)
-        if pos_y < 10:
-            pos_y = 10
-        elif pos_y + tt_h > canvas_h - 10:
-            pos_y = canvas_h - tt_h - 10
+            pos_x = mouse_x + 15
+            if pos_x + tt_w > canvas_w - 15:
+                pos_x = mouse_x - tt_w - 15
 
-        self.hud_tooltip.move(pos_x, pos_y)
-        self.hud_tooltip.show()
+            pos_y = mouse_y - (tt_h // 2)
+            if pos_y < 10:
+                pos_y = 10
+            elif pos_y + tt_h > canvas_h - 10:
+                pos_y = canvas_h - tt_h - 10
 
-        self._cursor_line.set_visible(True)
-        self._cursor_dot.set_visible(True)
-        self.canvas.draw_idle()
+            self.hud_tooltip.move(pos_x, pos_y)
+            self.hud_tooltip.show()
+
+        if self._cursor_line:
+            self._cursor_line.set_visible(True)
+        if self._cursor_dot:
+            self._cursor_dot.set_visible(True)
+        if self.canvas:
+            self.canvas.draw_idle()
 
     def _on_mouse_leave(self, event) -> None:
         self._hide_tooltip()
 
     def _hide_tooltip(self) -> None:
-        if self.hud_tooltip.isVisible():
+        if hasattr(self, 'hud_tooltip') and self.hud_tooltip and self.hud_tooltip.isVisible():
             self.hud_tooltip.hide()
         if self._cursor_line and self._cursor_line.get_visible():
             self._cursor_line.set_visible(False)
         if self._cursor_dot and self._cursor_dot.get_visible():
             self._cursor_dot.set_visible(False)
-        self.canvas.draw_idle()
+        if self.canvas:
+            self.canvas.draw_idle()
+
+    # =========================================================================
+    # مدیریت قطعی آزادسازی منابع جهت رفع نشت رم (Memory Leak Cleanup)
+    # =========================================================================
+
+    def _cleanup_resources(self) -> None:
+        """پاک‌سازی قطعی منابع Matplotlib و ویجت‌ها از RAM"""
+        try:
+            # ۱. پاک‌سازی ویجت HUD
+            if hasattr(self, 'hud_tooltip') and self.hud_tooltip is not None:
+                self.hud_tooltip.close()
+                self.hud_tooltip.deleteLater()
+                self.hud_tooltip = None
+
+            # ۲. بستن و آزاد کردن شکل Matplotlib
+            if self.figure is not None:
+                self.figure.clf()
+                plt.close(self.figure)
+                self.figure = None
+                self.ax = None
+
+            # ۳. آزادسازی Canvas
+            if self.canvas is not None:
+                self.canvas.setParent(None)
+                self.canvas.deleteLater()
+                self.canvas = None
+
+            # ۴. آزادسازی Toolbar
+            if self.toolbar is not None:
+                self.toolbar.setParent(None)
+                self.toolbar.deleteLater()
+                self.toolbar = None
+
+        except Exception as e:
+            logger.error(
+                f"Error while releasing PayoffChartDialog resources: {e}")
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """پوشش بسته شدن دیالوگ از طریق کلیک روی X پنجره"""
+        self._cleanup_resources()
+        super().closeEvent(event)
+
+    def done(self, r: int) -> None:
+        """پوشش کامل تمام روش‌های خروج اعم از accept، reject یا کلید Esc"""
+        self._cleanup_resources()
+        super().done(r)

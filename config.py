@@ -1,9 +1,13 @@
-# config.py
 # -*- coding: utf-8 -*-
 
+import json
+import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import numpy as np
+
+# تنظیم لاگر اختصاصی ماژول کانفیگ
+logger = logging.getLogger("OptionScanner.Config")
 
 # =====================================================
 # مسیرهای اصلی پروژه (Directory Structure)
@@ -15,11 +19,11 @@ CACHE_DIR = DATA_DIR / "cache"
 OUTPUT_DIR = BASE_DIR / "output"
 CHARTS_DIR = OUTPUT_DIR / "charts"
 LOGS_DIR = BASE_DIR / "logs"
-# مسیر پوشه کانفیگ‌ها
 CONFIG_DIR = BASE_DIR / "config"
+USER_SETTINGS_PATH = BASE_DIR / "user_settings.json"
 
 # تضمین ایجاد پوشه‌های حیاتی در بدو اجرای برنامه
-for directory in [DATA_DIR, CACHE_DIR, OUTPUT_DIR, CHARTS_DIR, LOGS_DIR]:
+for directory in [DATA_DIR, CACHE_DIR, OUTPUT_DIR, CHARTS_DIR, LOGS_DIR, CONFIG_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 # =====================================================
@@ -28,18 +32,18 @@ for directory in [DATA_DIR, CACHE_DIR, OUTPUT_DIR, CHARTS_DIR, LOGS_DIR]:
 
 # ===== کارمزد اعمال بر اساس نوع دارایی (طبق تعرفه سمات) =====
 EXERCISE_FEE_RATE: Dict[tuple, float] = {
-    ('tse', 'stock'): 0.0005,       # ۰.۱٪ برای سهام عادی
-    ('ifb', 'stock'): 0.0005,       # ۰.۱٪ برای سهام فرابورس
-    ('tse', 'etf-stock'): 0.0005,  # ۰.۰۵٪ برای ETF سهامی
-    ('ifb', 'etf-stock'): 0.0005,  # ۰.۰۵٪ برای ETF سهامی فرابورس
+    ('tse', 'stock'): 0.0005,        # ۰.۱٪ برای سهام عادی
+    ('ifb', 'stock'): 0.0005,        # ۰.۱٪ برای سهام فرابورس
+    ('tse', 'etf-stock'): 0.0005,   # ۰.۰۵٪ برای ETF سهامی
+    ('ifb', 'etf-stock'): 0.0005,   # ۰.۰۵٪ برای ETF سهامی فرابورس
     ('tse', 'etf-leverage'): 0.0005,  # صندوق های اهرمی
     ('ifb', 'etf-leverage'): 0.0005,
-    ('tse', 'etf-fix'): 0.0005,    # ۰.۰۲٪ برای ETF درآمد ثابت
-    ('ifb', 'etf-fix'): 0.0005,    # ۰.۰۲٪ برای ETF درآمد ثابت فرابورس
-    ('tse', 'etf-gold'): 0.0005,   # ۰.۰۵٪ برای ETF طلا
-    ('ifb', 'etf-gold'): 0.0005,   # ۰.۰۵٪ برای ETF طلا فرابورس
-    ('tse', 'etf-mix'): 0.0005,    # ۰.۰۲٪ برای ETF مختلط
-    ('ifb', 'etf-mix'): 0.0005,    # ۰.۰۲٪ برای ETF مختلط فرابورس
+    ('tse', 'etf-fix'): 0.0005,     # ۰.۰۲٪ برای ETF درآمد ثابت
+    ('ifb', 'etf-fix'): 0.0005,     # ۰.۰۲٪ برای ETF درآمد ثابت فرابورس
+    ('tse', 'etf-gold'): 0.0005,    # ۰.۰۵٪ برای ETF طلا
+    ('ifb', 'etf-gold'): 0.0005,    # ۰.۰۵٪ برای ETF طلا فرابورس
+    ('tse', 'etf-mix'): 0.0005,     # ۰.۰۲٪ برای ETF مختلط
+    ('ifb', 'etf-mix'): 0.0005,     # ۰.۰۲٪ برای ETF مختلط فرابورس
 }
 
 # ===== مالیات واگذاری =====
@@ -52,52 +56,44 @@ EXERCISE_TAX_RATE = 0.005         # ۰.۵٪ مالیات واگذاری سهم (
 
 COMMISSION_DICT = {
     # ===== سهام (Stock) =====
-    # خرید سهام بورس (STOCK, market:1, side:true)
     ('tse', 'stock', True): 0.003712,
-    # فروش سهام بورس (STOCK, market:1, side:false)
     ('tse', 'stock', False): 0.0088,
-    # خرید سهام فرابورس (STOCK, market:2, side:true)
     ('ifb', 'stock', True): 0.003632,
-    # فروش سهام فرابورس (STOCK, market:2, side:false)
     ('ifb', 'stock', False): 0.0088,
 
     # ===== ETF سهام (ETF Stock) =====
-    ('tse', 'etf-stock', True): 0.00232,   # خرید ETF سهام بورس
-    ('tse', 'etf-stock', False): 0.002375,  # فروش ETF سهام بورس
-    ('ifb', 'etf-stock', True): 0.00232,   # خرید ETF سهام فرابورس
-    ('ifb', 'etf-stock', False): 0.002375,  # فروش ETF سهام فرابورس
+    ('tse', 'etf-stock', True): 0.00232,
+    ('tse', 'etf-stock', False): 0.002375,
+    ('ifb', 'etf-stock', True): 0.00232,
+    ('ifb', 'etf-stock', False): 0.002375,
 
     # ===== ETF اهرمی (ETF Leverage) =====
-    # اضافه شده جهت انطباق با نگاشت تفکیک‌شده نمادهای اهرم، توان و موج
     ('tse', 'etf-leverage', True): 0.00232,
     ('tse', 'etf-leverage', False): 0.002375,
     ('ifb', 'etf-leverage', True): 0.00232,
     ('ifb', 'etf-leverage', False): 0.002375,
 
     # ===== ETF طلا / کالا (ETF Gold) =====
-    # بر اساس داده‌های market:3 و kind:OPTION (یا دارایی‌های کالا) در صورت نیاز به توسعه
     ('tse', 'etf-gold', True): 0.0012,
     ('tse', 'etf-gold', False): 0.0012,
 
     # ===== ETF درآمد ثابت (ETF Fix) =====
-    ('tse', 'etf-fix', True): 0.000375,    # خرید ETF درآمد ثابت بورس
-    ('tse', 'etf-fix', False): 0.000375,   # فروش ETF درآمد ثابت بورس
-    ('ifb', 'etf-fix', True): 0.000375,    # خرید ETF درآمد ثابت فرابورس
-    ('ifb', 'etf-fix', False): 0.000375,   # فروش ETF درآمد ثابت فرابورس
+    ('tse', 'etf-fix', True): 0.000375,
+    ('tse', 'etf-fix', False): 0.000375,
+    ('ifb', 'etf-fix', True): 0.000375,
+    ('ifb', 'etf-fix', False): 0.000375,
 
     # ===== ETF مختلط (ETF Mix) =====
-    ('tse', 'etf-mix', True): 0.001215,    # خرید ETF مختلط بورس
-    # اصلاح شده: فروش ETF مختلط بورس (طبق جیسون: 0.001323)
+    ('tse', 'etf-mix', True): 0.001215,
     ('tse', 'etf-mix', False): 0.001323,
-    ('ifb', 'etf-mix', True): 0.001215,    # خرید ETF مختلط فرابورس
-    ('ifb', 'etf-mix', False): 0.001323,   # اصلاح شده: فروش ETF مختلط فرابورس
+    ('ifb', 'etf-mix', True): 0.001215,
+    ('ifb', 'etf-mix', False): 0.001323,
 
     # ===== اختیار معامله (Option) =====
-    ('tse', 'option', True): 0.001,      # خرید اختیار بورس
-    ('tse', 'option', False): 0.001,     # فروش اختیار بورس
-    # اصلاح شده: خرید اختیار فرابورس (طبق جیسون: 0.00102)
+    ('tse', 'option', True): 0.001,
+    ('tse', 'option', False): 0.001,
     ('ifb', 'option', True): 0.001,
-    ('ifb', 'option', False): 0.001,     # فروش اختیار فرابورس
+    ('ifb', 'option', False): 0.001,
 }
 
 # =====================================================
@@ -105,7 +101,6 @@ COMMISSION_DICT = {
 # =====================================================
 
 SYMBOL_INFO = {
-    # ===== سهام بورس (TSE Stock) =====
     'اخابر':    {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
     'تاصیکو':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
     'خبهمن':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
@@ -118,74 +113,62 @@ SYMBOL_INFO = {
     'وبصادر':  {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
     'وبملت':   {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
     'وتجارت':  {'IsETF': False, 'Market': 'tse', 'Kind': 'stock'},
-
-    # ===== سهام فرابورس (IFB Stock) =====
     'فزر':     {'IsETF': False, 'Market': 'ifb', 'Kind': 'stock'},
-
-    # ===== ETF سهام بورس (TSE ETF Stock) =====
-    # صندوق اهرمی بورس
     'اهرم':    {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-leverage'},
-    # صندوق شاخصی هم‌وزن بورس
     'هم تراز': {'IsETF': True, 'Market': 'tse', 'Kind': 'etf-stock'},
-
-    # ===== ETF سهام فرابورس (IFB ETF Stock) =====
-    # صندوق توسعه اطلس فرابورس
     'اطلس':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    # صندوق اهرمی توان فرابورس
     'توان':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-leverage'},
-    # صندوق بخشی فرابورس
     'طعام':    {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-stock'},
-    # صندوق اهرمی موج فرابورس
     'موج':     {'IsETF': True, 'Market': 'ifb', 'Kind': 'etf-leverage'},
 }
 
 # =====================================================
-# تنظیمات بازه قیمتی برای محاسبه P&L
+# تنظیمات پیش‌فرض بازه قیمتی (Fallback Price Range)
 # =====================================================
 
 PRICE_RANGE_CONFIG = {
-    "min_percent": -45,  # حداقل درصد تغییر قیمت
-    "max_percent": 45,  # حداکثر درصد تغییر قیمت
-    "num_points": 21,  # تعداد نقاط (گام‌ها)
-    "step_size": None,  # اگر None باشد، بر اساس num_points محاسبه می‌شود
-    "labels_format": "{:.0f}%",  # فرمت برچسب‌ها
+    "min_percent": -45,
+    "max_percent": 45,
+    "num_points": 21,
+    "step_size": None,
+    "labels_format": "{:.0f}%",
 }
 
 # =====================================================
-# آستانه‌های نقدشوندگی (Liquidity Thresholds)
+# آستانه‌های پیش‌فرض نقدشوندگی (Fallback Values)
 # =====================================================
 
-DaysToMaturity = 1               # حداقل روز تا سررسید
-MIN_VOLUME = 3                   # حداقل حجم معاملات روزانه
-MIN_OPEN_INTEREST = 50           # حداقل موقعیت‌های باز
-MAX_SPREAD_PCT = 0.05            # حداکثر اسپرد قابل قبول (5%)
-LIQUIDITY_SCORE_THRESHOLD = 1.0  # آستانه امتیاز نقدشوندگی
-DEFAULT_DEPTH_THRESHOLD = 30     # آستانه عمق سفارشات
+DaysToMaturity = 1
+MIN_VOLUME = 3
+MIN_OPEN_INTEREST = 50
+MAX_SPREAD_PCT = 0.05
+LIQUIDITY_SCORE_THRESHOLD = 1.0
+DEFAULT_DEPTH_THRESHOLD = 30
 
 # =====================================================
 # نرخ بهره و نوسان‌پذیری (Rates & Volatility)
 # =====================================================
 
-RISK_FREE_RATE = 0.24            # نرخ بدون ریسک سالانه (23%)
-RISK_FREE_RATE_MONTHLY = 0.019   # نرخ بدون ریسک ماهانه (1.9%)
-DEFAULT_VOLATILITY = 0.30        # نوسان‌پذیری پیش‌فرض (30%)
-HISTORICAL_VOLATILITY_WINDOW = 30  # پنجره محاسبه نوسان تاریخی (روز)
+RISK_FREE_RATE = 0.24
+RISK_FREE_RATE_MONTHLY = 0.019
+DEFAULT_VOLATILITY = 0.30
+HISTORICAL_VOLATILITY_WINDOW = 30
 
 # =====================================================
 # تنظیمات کش (Cache Settings)
 # =====================================================
 
-CACHE_TTL_SECONDS = 6           # زمان انقضای کش (ثانیه)
-MAX_CACHE_SIZE = 10000  # حداکثر تعداد آیتم‌های کش
-CACHE_ENABLED = True             # فعال/غیرفعال کردن کش
+CACHE_TTL_SECONDS = 6
+MAX_CACHE_SIZE = 10000
+CACHE_ENABLED = True
 
 # =====================================================
 # تنظیمات عمومی سیستم (General Settings)
 # =====================================================
 
 SYSTEM_CONFIG = {
-    "scan_interval_minutes": 2,  # فاصله زمانی بین هر چرخه (دقیقه)
-    "max_cycles": 1,  # تعداد دفعات اجرا (0 = بی‌نهایت)
+    "scan_interval_minutes": 2,
+    "max_cycles": 1,
     "parallel_enabled": False,
     "max_workers": 3,
     "debug_mode": False,
@@ -196,24 +179,12 @@ SYSTEM_CONFIG = {
 # =====================================================
 
 FEATURE_FLAGS = {
-    # اگر True باشد، وجه تضمین (مارجین) محاسبه و در required_margin ذخیره می‌شود
-    # اگر False باشد، required_margin = 0 خواهد بود
     "calculate_margin": True,
-    # اگر True باشد، کارمزد معاملاتی (کارگزاری + بورس + پایاپای) از سود/زیان کسر می‌شود
-    # اگر False باشد، P&L ناخالص بدون کسر کارمزد گزارش می‌شود
     "apply_commissions": True,
-    # کارمزد اعمال/تسویه فیزیکی در سررسید برای موقعیت‌های ITM خریدار
     "apply_exercise_fee": True,
-    # اگر True باشد، یونانی‌ها (Delta, Gamma, Theta, Vega) محاسبه شده
-    # و در ستون‌های اکسل نمایش داده می‌شوند
     "calculate_greeks": False,
-    # اگر True باشد، Risk Metrics (Sharpe, VaR, ...) محاسبه شود
     "calculate_risk_metrics": True,
-    # نوع تسویه در سررسید: 'CASH' (نقدی) یا 'PHYSICAL' (فیزیکی)
-    # در حالت PHYSICAL ، مالیات واگذاری (۰.۵٪) به صورت خودکار اعمال می‌شود.
-    # در حالت CASH ، مالیات واگذاری به صورت خودکار صفر در نظر گرفته می‌شود.
     "exercise_settlement_type": "PHYSICAL",
-    # فعال‌سازی فالبک به قیمت نظری در صورت عدم وجود معامله در روز (ماده ۲۴)
     "use_theoretical_price_fallback": False,
 }
 
@@ -229,19 +200,7 @@ DOWNLOAD_CONFIG = {
 }
 
 # =====================================================
-# تنظیمات موتور اسکنر (Scanner Settings)
-# =====================================================
-
-SCANNER_CONFIG = {
-    "min_volume": MIN_VOLUME,
-    "min_open_interest": MIN_OPEN_INTEREST,
-    "max_spread_pct": MAX_SPREAD_PCT,
-    "min_liquidity_score": LIQUIDITY_SCORE_THRESHOLD,
-    "ignore_frozen_underlying": True,
-}
-
-# =====================================================
-# استراتژی‌های هدف برای اسکن (Target Strategies)
+# استراتژی‌های پیش‌فرض هدف برای اسکن (Fallback Strategies)
 # =====================================================
 
 ACTIVE_STRATEGIES: List[str] = [
@@ -251,17 +210,13 @@ ACTIVE_STRATEGIES: List[str] = [
     "conversion",
     "covered_call",
     "iron_condor",
-    # "long_box",
     "long_guts",
     "long_straddle",
-    # "long_strangle",
     "married_put",
     "strip",
     "strap",
     "long_call",
-    # "short_call",
     "long_put",
-    # "short_put",
 ]
 
 # =====================================================
@@ -320,7 +275,7 @@ RANKING_CONFIG = {
 }
 
 # =====================================================
-# تنظیمات خروجی Excel (Excel Output Settings)
+# تنظیمات خروجی Excel و Output
 # =====================================================
 
 EXCEL_CONFIG = {
@@ -335,10 +290,6 @@ EXCEL_CONFIG = {
     "integer_format": "#,##0",
 }
 
-# =====================================================
-# تنظیمات خروجی (Output Settings)
-# =====================================================
-
 OUTPUT_CONFIG = {
     "top_n": 250,
     "min_score_threshold": 5.0,
@@ -346,19 +297,11 @@ OUTPUT_CONFIG = {
     "excel_filename": "opportunities",
 }
 
-# =====================================================
-# تنظیمات گزارش و نمودار (Report & Chart Settings)
-# =====================================================
-
 CHART_CONFIG = {
     "dpi": 150,
     "style": "seaborn-v0_8-whitegrid",
     "figsize": (11, 7),
 }
-
-# =====================================================
-# تنظیمات عمومی سیستم (Logging & Environment)
-# =====================================================
 
 LOGGING_CONFIG = {
     "version": 1,
@@ -391,9 +334,97 @@ LOGGING_CONFIG = {
 
 
 # =====================================================
-# توابع کمکی (Helper Functions)
+# توابع خواندن تنظیمات کاربر (User Settings Helpers)
 # =====================================================
 
+def get_active_user_settings() -> dict:
+    """خواندن ایمن تنظیمات پروفایل فعال از user_settings.json"""
+    if not USER_SETTINGS_PATH.exists():
+        return {}
+    try:
+        with open(USER_SETTINGS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if not isinstance(data, dict):
+                return {}
+            active_profile = data.get("active_profile", "default")
+            profiles = data.get("profiles", {})
+            return profiles.get(active_profile, {})
+    except Exception as e:
+        logger.warning(f"Failed to read user_settings.json: {e}")
+        return {}
+
+
+def get_active_strategies() -> List[str]:
+    """دریافت لیست استراتژی‌های فعال با اولویت تنظیمات کاربر"""
+    user_settings = get_active_user_settings()
+    strategies = user_settings.get("active_strategies", ACTIVE_STRATEGIES)
+    return list(strategies).copy()
+
+
+def get_price_steps() -> np.ndarray:
+    """تولید آرایه درصدهای تغییر قیمت بر اساس تنظیمات پویا کاربر"""
+    user_settings = get_active_user_settings()
+    config = user_settings.get("price_range", PRICE_RANGE_CONFIG)
+
+    min_pct = config.get("min_percent", -45)
+    max_pct = config.get("max_percent", 45)
+    num_points = config.get("num_points", 21)
+
+    if num_points <= 1:
+        return np.array([0.0], dtype=np.float64)
+
+    step_size = config.get("step_size")
+    if step_size is not None:
+        steps = np.arange(min_pct, max_pct + step_size, step_size)
+        return np.round(steps, 2)
+
+    steps = np.linspace(min_pct, max_pct, num_points)
+    return np.round(steps, 2)
+
+
+def get_liquidity_config() -> Dict[str, Any]:
+    """
+    دریافت آستانه‌های نقدشوندگی با اولویت تنظیمات کاربر
+    و مقداردهی Fallback از ثابت‌های سیستمی
+    """
+    user_settings = get_active_user_settings()
+
+    min_vol = float(user_settings.get("min_volume", MIN_VOLUME))
+    min_oi = int(user_settings.get("min_open_interest", MIN_OPEN_INTEREST))
+    max_spread = float(user_settings.get("max_spread_pct", MAX_SPREAD_PCT))
+    score_thresh = float(user_settings.get(
+        "liquidity_score_threshold", LIQUIDITY_SCORE_THRESHOLD))
+    depth_thresh = int(user_settings.get(
+        "default_depth_threshold", DEFAULT_DEPTH_THRESHOLD))
+
+    return {
+        "days_to_maturity": int(user_settings.get("min_days_to_maturity", DaysToMaturity)),
+        "max_days_to_maturity": int(user_settings.get("max_days_to_maturity", 365)),
+        "min_volume": min_vol,
+        "min_open_interest": min_oi,
+        "max_spread_pct": max_spread,
+        "liquidity_score_threshold": score_thresh,
+        "threshold": score_thresh,              # پشتیبانی از کدهای قدیمی
+        "default_depth_threshold": depth_thresh,
+        "depth_threshold": depth_thresh,        # پشتیبانی از کدهای قدیمی
+    }
+
+
+def get_scanner_config() -> Dict[str, Any]:
+    """دریافت تنظیمات اسکنر با اولویت تنظیمات کاربر"""
+    liq_cfg = get_liquidity_config()
+    return {
+        "min_volume": liq_cfg["min_volume"],
+        "min_open_interest": liq_cfg["min_open_interest"],
+        "max_spread_pct": liq_cfg["max_spread_pct"],
+        "min_liquidity_score": liq_cfg["threshold"],
+        "ignore_frozen_underlying": True,
+    }
+
+
+# =====================================================
+# توابع کمکی عمومی (General Helper Functions)
+# =====================================================
 
 def get_feature_flags() -> Dict[str, bool]:
     """دریافت تنظیمات ویژگی‌های محاسباتی"""
@@ -403,16 +434,6 @@ def get_feature_flags() -> Dict[str, bool]:
 def get_ranking_weights(profile: str = DEFAULT_PROFILE) -> Dict[str, float]:
     """دریافت وزن‌های رتبه‌بندی برای یک پروفایل خاص"""
     return RANKING_WEIGHTS.get(profile, RANKING_WEIGHTS[DEFAULT_PROFILE])
-
-
-def get_active_strategies() -> List[str]:
-    """دریافت لیست استراتژی‌های فعال"""
-    return ACTIVE_STRATEGIES.copy()
-
-
-def get_scanner_config() -> Dict[str, Any]:
-    """دریافت تنظیمات اسکنر"""
-    return SCANNER_CONFIG.copy()
 
 
 def get_output_config() -> Dict[str, Any]:
@@ -450,17 +471,6 @@ def get_cache_config() -> Dict[str, Any]:
     }
 
 
-def get_liquidity_config() -> Dict[str, Any]:
-    """دریافت تنظیمات نقدشوندگی"""
-    return {
-        "min_volume": MIN_VOLUME,
-        "min_open_interest": MIN_OPEN_INTEREST,
-        "max_spread_pct": MAX_SPREAD_PCT,
-        "threshold": LIQUIDITY_SCORE_THRESHOLD,
-        "depth_threshold": DEFAULT_DEPTH_THRESHOLD,
-    }
-
-
 def get_fee_config() -> Dict[str, Any]:
     """دریافت تنظیمات کارمزدها"""
     return {
@@ -473,19 +483,15 @@ def get_commission_rate(
         market: str,
         asset_type: str,
         is_buy: bool) -> float:
-    """
-    دریافت نرخ کارمزد بر اساس نوع بازار و دارایی
-    """
+    """دریافت نرخ کارمزد بر اساس نوع بازار و دارایی"""
     key = (market, asset_type, is_buy)
-    return COMMISSION_DICT.get(key)  # مقدار پیش‌فرض
+    return COMMISSION_DICT.get(key)
 
 
 def get_exercise_fee_rate(market: str, kind: str) -> float:
-    """
-    دریافت نرخ کارمزد اعمال بر اساس بازار و نوع دارایی
-    """
+    """دریافت نرخ کارمزد اعمال بر اساس بازار و نوع دارایی"""
     key = (market, kind)
-    return EXERCISE_FEE_RATE.get(key)  # ۰.۱٪ پیش‌فرض
+    return EXERCISE_FEE_RATE.get(key)
 
 
 def get_symbol_info(symbol: str) -> Optional[Dict[str, Any]]:
@@ -511,31 +517,14 @@ def get_symbol_kind(symbol: str) -> str:
     return info.get('Kind', 'stock') if info else 'stock'
 
 
-def get_price_steps() -> np.ndarray:
-    """تولید آرایه درصدهای تغییر قیمت بر اساس تنظیمات کاربر"""
-    config = PRICE_RANGE_CONFIG
-    min_pct = config["min_percent"]
-    max_pct = config["max_percent"]
-    num_points = config["num_points"]
-
-    if num_points <= 1:
-        return np.array([0.0], dtype=np.float64)
-
-    step_size = config.get("step_size")
-    if step_size is not None:
-        steps = np.arange(min_pct, max_pct + step_size, step_size)
-        return np.round(steps, 2)
-
-    steps = np.linspace(min_pct, max_pct, num_points)
-    return np.round(steps, 2)
-
-
 def get_price_labels(steps: np.ndarray = None) -> List[str]:
     """تولید برچسب‌های قیمتی برای نمایش در Excel"""
     if steps is None:
         steps = get_price_steps()
 
-    format_str = PRICE_RANGE_CONFIG.get("labels_format", "{:.0f}%")
+    user_settings = get_active_user_settings()
+    config = user_settings.get("price_range", PRICE_RANGE_CONFIG)
+    format_str = config.get("labels_format", "{:.0f}%")
     return [format_str.format(s) for s in steps]
 
 

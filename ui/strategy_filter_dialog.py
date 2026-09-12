@@ -21,10 +21,6 @@ logger = logging.getLogger("OptionScanner.UI.StrategyFilterDialog")
 
 
 class StrategyFilterDialog(QDialog):
-    """
-    دیالوگ جامع تنظیم پارامترهای فیلتر هوشمند و شرایط سودآوری
-    برای تمامی استراتژی‌های موجود در سیستم
-    """
     filters_updated = Signal(dict)
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -34,20 +30,40 @@ class StrategyFilterDialog(QDialog):
         self.resize(880, 720)
         self.setMinimumSize(780, 600)
         self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
+        self._theme_mode = getattr(ui_theme, "current_mode", lambda: "dark")()
         self._controls: Dict[str, Dict[str, Any]] = {}
         self._current_filters = self._load_current_filters()
 
         self._init_ui()
 
     def _load_current_filters(self) -> Dict[str, Any]:
+        """بارگذاری با پشتیبانی همزمان از کلیدهای قدیمی و جدید (Backward Compatibility)"""
         saved = settings_manager.get_active_settings().get("strategy_filters", {})
         defaults = get_default_filter_config()
         merged = {}
-        for k, v in defaults.items():
-            merged[k] = dict(v)
-            if k in saved:
-                merged[k].update(saved[k])
+
+        for k, def_val in defaults.items():
+            merged[k] = dict(def_val)
+            if k in saved and isinstance(saved[k], dict):
+                user_val = dict(saved[k])
+                # نگاشت کلیدهای قدیمی در صورت وجود
+                if "min_cap_return" in user_val and "profit_above_pct" not in user_val:
+                    user_val["profit_above_pct"] = user_val.pop(
+                        "min_cap_return")
+                if "min_target_return" in user_val and "min_profit_pct" not in user_val:
+                    user_val["min_profit_pct"] = user_val.pop(
+                        "min_target_return")
+                if "min_roi" in user_val and "min_profit_pct" not in user_val:
+                    user_val["min_profit_pct"] = user_val.pop("min_roi")
+                if "min_safe_range_pct" in user_val and "profit_range_max" not in user_val:
+                    r = float(user_val.pop("min_safe_range_pct"))
+                    user_val["profit_range_min"] = -abs(r)
+                    user_val["profit_range_max"] = abs(r)
+
+                merged[k].update(user_val)
+
         return merged
 
     def _init_ui(self):
@@ -68,18 +84,18 @@ class StrategyFilterDialog(QDialog):
         h_layout.setContentsMargins(0, 0, 0, 0)
 
         lbl_title = QLabel(
-            "🎛️ غربالگری هوشمند و فیلترهای سودآوری اختصاصی تمام استراتژی‌ها")
+            "🎛️ غربالگری هوشمند و فیلترهای سودآوری اختصاصی استراتژی‌ها")
         lbl_title.setStyleSheet(
             "color: white; font-size: 14px; font-weight: bold;")
         lbl_desc = QLabel(
-            "با فعال‌سازی و تنظیم شروط هر استراتژی، تنها فرصت‌هایی که دارای سود مناسب، نسبت ریسک به ریوارد بالا و حاشیه امنیت مطلوب هستند استخراج می‌گردند.")
+            "تنظیم بازه‌های سودآوری، حد افت مجاز و حداقل درصد بازدهی برای فیلتر دقیق فرصت‌ها.")
         lbl_desc.setStyleSheet("color: #e6edf3; font-size: 11px;")
 
         h_layout.addWidget(lbl_title)
         h_layout.addWidget(lbl_desc)
         layout.addWidget(header_frame)
 
-        # ۲. تب‌های ۵ گانه دسته‌بندی تمام استراتژی‌ها
+        # ۲. تب‌های ۵ گانه دسته‌بندی استراتژی‌ها
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane { border: 1px solid #30363d; background: #161b22; border-radius: 6px; padding: 6px; }
@@ -90,7 +106,7 @@ class StrategyFilterDialog(QDialog):
         self.tab_widget.addTab(self._create_bullish_tab(), "📈 صعودی (Bullish)")
         self.tab_widget.addTab(self._create_bearish_tab(), "📉 نزولی (Bearish)")
         self.tab_widget.addTab(self._create_neutral_tab(),
-                               "⚖️ خنثی و درآمدی (Neutral)")
+                               "⚖️ خنثی و بدون جهت (Neutral)")
         self.tab_widget.addTab(
             self._create_volatility_tab(), "⚡ نوسان‌گیری (Volatility)")
         self.tab_widget.addTab(
@@ -98,70 +114,94 @@ class StrategyFilterDialog(QDialog):
 
         layout.addWidget(self.tab_widget, stretch=1)
 
-        # ۳. نوار دکمه‌های پایین
+        # ۳. نوار دکمه‌های پایین با استایل یکپارچه تم
         btn_bar = QHBoxLayout()
+        mode = self._theme_mode
 
         btn_save = QPushButton("💾 ذخیره و اعمال فیلترها")
-        mode = ui_theme.current_mode() if hasattr(ui_theme, "current_mode") else "dark"
         btn_save.setStyleSheet(ui_theme.get_button_style(mode, role="success"))
         btn_save.clicked.connect(self._save_settings)
         btn_bar.addWidget(btn_save)
 
         btn_defaults = QPushButton("🔄 بازنشانی به پیش‌فرض")
-        btn_defaults.setStyleSheet(ui_theme.get_button_style(mode, role="warning"))
+        btn_defaults.setStyleSheet(
+            ui_theme.get_button_style(mode, role="warning"))
         btn_defaults.clicked.connect(self._reset_to_defaults)
         btn_bar.addWidget(btn_defaults)
 
         btn_cancel = QPushButton("انصراف")
-        btn_cancel.setStyleSheet(ui_theme.get_button_style(mode, role="secondary"))
+        btn_cancel.setStyleSheet(
+            ui_theme.get_button_style(mode, role="secondary"))
         btn_cancel.clicked.connect(self.reject)
         btn_bar.addWidget(btn_cancel)
 
         btn_bar.addStretch()
         layout.addLayout(btn_bar)
 
-    # ==================== تب‌های دسته‌بندی ====================
+    # ==================== سازنده‌های تب‌ها ====================
 
     def _create_bullish_tab(self) -> QWidget:
         return self._wrap_scroll([
-            self._create_covered_call_box(),
-            self._create_long_call_box(),
-            self._create_short_put_box(),
-            self._create_bull_call_spread_box(),
-            self._create_bull_put_spread_box(),
-            self._create_collar_box(),
-            self._create_married_put_box(),
+            self._create_above_level_box(
+                "covered_call", "🎯 کاورکال (Covered Call)", -4.5, 2.5),
+            self._create_above_level_box(
+                "long_call", "📈 خرید اختیار خرید (Long Call)", 4.0, 15.0),
+            self._create_above_level_box(
+                "short_put", "📈 فروش اختیار فروش (Short Put)", -5.0, 2.5),
+            self._create_above_level_box(
+                "bull_call_spread", "📈 اسپرد صعودی خرید (Bull Call Spread)", 3.0, 5.0),
+            self._create_above_level_box(
+                "bull_put_spread", "📈 اسپرد صعودی فروش (Bull Put Spread)", -4.0, 3.0),
+            self._create_above_level_box(
+                "collar", "🛡️ کالار (Collar)", -5.0, 2.0),
+            self._create_above_level_box(
+                "married_put", "🛡️ مرید پوت (Married Put)", 2.0, 4.0),
         ])
 
     def _create_bearish_tab(self) -> QWidget:
         return self._wrap_scroll([
-            self._create_long_put_box(),
-            self._create_short_call_box(),
-            self._create_bear_put_spread_box(),
-            self._create_bear_call_spread_box(),
+            self._create_below_level_box(
+                "bear_put_spread", "📉 اسپرد نزولی خرید (Bear Put Spread)", -3.0, 5.0),
+            self._create_below_level_box(
+                "bear_call_spread", "📉 اسپرد نزولی فروش (Bear Call Spread)", 4.0, 3.0),
+            self._create_below_level_box(
+                "long_put", "📉 خرید اختیار فروش (Long Put)", -4.0, 15.0),
+            self._create_below_level_box(
+                "short_call", "📉 فروش اختیار خرید (Short Call)", 5.0, 2.5),
         ])
 
     def _create_neutral_tab(self) -> QWidget:
         return self._wrap_scroll([
-            self._create_iron_condor_box(),
-            self._create_iron_butterfly_box(),
-            self._create_short_straddle_box(),
-            self._create_short_strangle_box(),
+            self._create_inside_range_box(
+                "iron_condor", "⚖️ کندور آهنی (Iron Condor)", -8.0, 8.0, 3.0),
+            self._create_inside_range_box(
+                "iron_butterfly", "⚖️ پروانه آهنی (Iron Butterfly)", -6.0, 6.0, 4.0),
+            self._create_inside_range_box(
+                "short_straddle", "⚖️ فروش استرادل (Short Straddle)", -6.0, 6.0, 4.0),
+            self._create_inside_range_box(
+                "short_strangle", "⚖️ فروش استرانگل (Short Strangle)", -8.0, 8.0, 3.5),
         ])
 
     def _create_volatility_tab(self) -> QWidget:
         return self._wrap_scroll([
-            self._create_long_straddle_box(),
-            self._create_long_strangle_box(),
-            self._create_long_guts_box(),
-            self._create_strap_box(),
-            self._create_strip_box(),
+            self._create_outside_range_box(
+                "long_straddle", "⚡ خرید استرادل (Long Straddle)", -7.0, 7.0, 2.0),
+            self._create_outside_range_box(
+                "long_strangle", "⚡ خرید استرانگل (Long Strangle)", -9.0, 9.0, 2.0),
+            self._create_outside_range_box(
+                "long_guts", "⚡ لانگ گاتس (Long Guts)", -8.0, 8.0, 2.0),
+            self._create_outside_range_box(
+                "strap", "⚡ استرپ (Strap)", -5.0, 5.0, 2.0),
+            self._create_outside_range_box(
+                "strip", "⚡ استریپ (Strip)", -5.0, 5.0, 2.0),
         ])
 
     def _create_arbitrage_tab(self) -> QWidget:
         return self._wrap_scroll([
-            self._create_conversion_box(),
-            self._create_long_box_box(),
+            self._create_inside_range_box(
+                "conversion", "🔒 کانورژن آربیتراژ (Conversion)", -45.0, 45.0, 0.0, use_dte=False),
+            self._create_inside_range_box(
+                "long_box", "🔒 آربیتراژ باکس (Long Box)", -45.0, 45.0, 0.0, use_dte=False),
         ])
 
     def _wrap_scroll(self, widgets: list) -> QWidget:
@@ -178,516 +218,138 @@ class StrategyFilterDialog(QDialog):
         scroll.setWidget(container)
         return scroll
 
-    # ==================== ۱. استراتژی‌های صعودی ====================
+    # ==================== تولیدکنندگان ویجت ====================
 
-    def _create_covered_call_box(self) -> QGroupBox:
-        grp = QGroupBox("🎯 کاورکال (Covered Call)")
+    def _create_above_level_box(self, key: str, title: str, def_above: float, def_profit: float) -> QGroupBox:
+        grp = QGroupBox(title)
         layout = QGridLayout(grp)
-        cfg = self._current_filters.get("covered_call", {})
+        cfg = self._current_filters.get(key, {})
 
-        chk = QCheckBox("فعال‌سازی فیلتر هوشمند کاورکال")
+        chk = QCheckBox(f"فعال‌سازی فیلتر {title}")
         chk.setChecked(cfg.get("enabled", True))
         layout.addWidget(chk, 0, 0, 1, 2)
 
-        spin_cap = self._create_double_spin(
-            0.0, 50.0, cfg.get("min_cap_return", 3.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده در سقف (ثبات یا رشد سهم):"), 1, 0)
-        layout.addWidget(spin_cap, 1, 1)
+        spin_above = self._create_double_spin(-30.0, 50.0,
+                                              cfg.get("profit_above_pct", def_above), " ٪")
+        layout.addWidget(QLabel("سوددهی در تغییرات قیمت بالاتر از:"), 1, 0)
+        layout.addWidget(spin_above, 1, 1)
 
-        spin_buffer = self._create_double_spin(
-            -30.0, 0.0, cfg.get("min_downside_buffer", -4.5), " ٪")
+        spin_profit = self._create_double_spin(
+            0.0, 100.0, cfg.get("min_profit_pct", def_profit), " ٪")
+        layout.addWidget(QLabel("حداقل درصد بازدهی در محدوده مجاز:"), 2, 0)
+        layout.addWidget(spin_profit, 2, 1)
+
+        self._controls[key] = {
+            "chk": chk,
+            "rule_type": "above_level",
+            "profit_above_pct": spin_above,
+            "min_profit_pct": spin_profit,
+            "use_dte_factor": cfg.get("use_dte_factor", True)
+        }
+        return grp
+
+    def _create_below_level_box(self, key: str, title: str, def_below: float, def_profit: float) -> QGroupBox:
+        grp = QGroupBox(title)
+        layout = QGridLayout(grp)
+        cfg = self._current_filters.get(key, {})
+
+        chk = QCheckBox(f"فعال‌سازی فیلتر {title}")
+        chk.setChecked(cfg.get("enabled", True))
+        layout.addWidget(chk, 0, 0, 1, 2)
+
+        spin_below = self._create_double_spin(-50.0, 30.0,
+                                              cfg.get("profit_below_pct", def_below), " ٪")
+        layout.addWidget(QLabel("سوددهی در تغییرات قیمت پایین‌تر از:"), 1, 0)
+        layout.addWidget(spin_below, 1, 1)
+
+        spin_profit = self._create_double_spin(
+            0.0, 100.0, cfg.get("min_profit_pct", def_profit), " ٪")
+        layout.addWidget(QLabel("حداقل درصد بازدهی در محدوده مجاز:"), 2, 0)
+        layout.addWidget(spin_profit, 2, 1)
+
+        self._controls[key] = {
+            "chk": chk,
+            "rule_type": "below_level",
+            "profit_below_pct": spin_below,
+            "min_profit_pct": spin_profit,
+            "use_dte_factor": cfg.get("use_dte_factor", True)
+        }
+        return grp
+
+    def _create_inside_range_box(self, key: str, title: str, def_min: float, def_max: float, def_profit: float, use_dte: bool = True) -> QGroupBox:
+        grp = QGroupBox(title)
+        layout = QGridLayout(grp)
+        cfg = self._current_filters.get(key, {})
+
+        chk = QCheckBox(f"فعال‌سازی فیلتر {title}")
+        chk.setChecked(cfg.get("enabled", True))
+        layout.addWidget(chk, 0, 0, 1, 2)
+
+        spin_min = self._create_double_spin(-50.0, 0.0,
+                                            cfg.get("profit_range_min", def_min), " ٪")
+        layout.addWidget(QLabel("کف بازه امن سوددهی (حداکثر افت):"), 1, 0)
+        layout.addWidget(spin_min, 1, 1)
+
+        spin_max = self._create_double_spin(
+            0.0, 50.0, cfg.get("profit_range_max", def_max), " ٪")
+        layout.addWidget(QLabel("سقف بازه امن سوددهی (حداکثر رشد):"), 2, 0)
+        layout.addWidget(spin_max, 2, 1)
+
+        spin_profit = self._create_double_spin(
+            0.0, 100.0, cfg.get("min_profit_pct", def_profit), " ٪")
+        layout.addWidget(QLabel("حداقل درصد بازدهی در این بازه:"), 3, 0)
+        layout.addWidget(spin_profit, 3, 1)
+
+        self._controls[key] = {
+            "chk": chk,
+            "rule_type": "inside_range",
+            "profit_range_min": spin_min,
+            "profit_range_max": spin_max,
+            "min_profit_pct": spin_profit,
+            "use_dte_factor": use_dte
+        }
+        return grp
+
+    def _create_outside_range_box(self, key: str, title: str, def_min: float, def_max: float, def_profit: float) -> QGroupBox:
+        grp = QGroupBox(title)
+        layout = QGridLayout(grp)
+        cfg = self._current_filters.get(key, {})
+
+        chk = QCheckBox(f"فعال‌سازی فیلتر {title}")
+        chk.setChecked(cfg.get("enabled", True))
+        layout.addWidget(chk, 0, 0, 1, 2)
+
+        spin_min = self._create_double_spin(-50.0, 0.0,
+                                            cfg.get("loss_range_min", def_min), " ٪")
         layout.addWidget(
-            QLabel("حداقل حاشیه امنیت افت سهم تا نقطه سربه‌سر:"), 2, 0)
-        layout.addWidget(spin_buffer, 2, 1)
+            QLabel("کف محدوده زیان (شروع سود در افت بیشتر از):"), 1, 0)
+        layout.addWidget(spin_min, 1, 1)
 
-        self._controls["covered_call"] = {
-            "chk": chk, "min_cap_return": spin_cap, "min_downside_buffer": spin_buffer, "use_dte_factor": True
+        spin_max = self._create_double_spin(
+            0.0, 50.0, cfg.get("loss_range_max", def_max), " ٪")
+        layout.addWidget(
+            QLabel("سقف محدوده زیان (شروع سود در رشد بیشتر از):"), 2, 0)
+        layout.addWidget(spin_max, 2, 1)
+
+        spin_profit = self._create_double_spin(
+            0.0, 100.0, cfg.get("min_profit_pct", def_profit), " ٪")
+        layout.addWidget(QLabel("حداقل بازده مورد انتظار در نوسان:"), 3, 0)
+        layout.addWidget(spin_profit, 3, 1)
+
+        self._controls[key] = {
+            "chk": chk,
+            "rule_type": "outside_range",
+            "loss_range_min": spin_min,
+            "loss_range_max": spin_max,
+            "min_profit_pct": spin_profit,
+            "use_dte_factor": cfg.get("use_dte_factor", True)
         }
         return grp
-
-    def _create_long_call_box(self) -> QGroupBox:
-        grp = QGroupBox("📈 خرید اختیار خرید (Long Call)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("long_call", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر لانگ کال")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_rr = self._create_double_spin(
-            0.5, 10.0, cfg.get("min_rr_ratio", 2.0), " برابر")
-        layout.addWidget(QLabel("حداقل نسبت سود به ریسک (R/R):"), 1, 0)
-        layout.addWidget(spin_rr, 1, 1)
-
-        spin_target = self._create_double_spin(
-            5.0, 200.0, cfg.get("min_target_return", 25.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده در صورت رشد سهم:"), 2, 0)
-        layout.addWidget(spin_target, 2, 1)
-
-        self._controls["long_call"] = {
-            "chk": chk, "min_rr_ratio": spin_rr, "min_target_return": spin_target, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_short_put_box(self) -> QGroupBox:
-        grp = QGroupBox("📈 فروش اختیار فروش (Short Put)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("short_put", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر شورت پوت")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_cap = self._create_double_spin(
-            1.0, 40.0, cfg.get("min_cap_return", 3.5), " ٪")
-        layout.addWidget(QLabel("حداقل پریمیوم دریافتی نسبت به مارجین:"), 1, 0)
-        layout.addWidget(spin_cap, 1, 1)
-
-        spin_buffer = self._create_double_spin(
-            -30.0, 0.0, cfg.get("min_downside_buffer", -5.0), " ٪")
-        layout.addWidget(QLabel("حداقل حاشیه امنیت افت سهم:"), 2, 0)
-        layout.addWidget(spin_buffer, 2, 1)
-
-        self._controls["short_put"] = {
-            "chk": chk, "min_cap_return": spin_cap, "min_downside_buffer": spin_buffer, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_bull_call_spread_box(self) -> QGroupBox:
-        grp = QGroupBox("📈 اسپرد صعودی خرید (Bull Call Spread)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("bull_call_spread", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر بول کال اسپرد")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_rr = self._create_double_spin(
-            0.5, 10.0, cfg.get("min_rr_ratio", 1.2), " برابر")
-        layout.addWidget(QLabel("حداقل نسبت سود به ریسک (R/R):"), 1, 0)
-        layout.addWidget(spin_rr, 1, 1)
-
-        spin_target = self._create_double_spin(
-            2.0, 100.0, cfg.get("min_target_return", 10.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده در هدف صعودی:"), 2, 0)
-        layout.addWidget(spin_target, 2, 1)
-
-        self._controls["bull_call_spread"] = {
-            "chk": chk, "min_rr_ratio": spin_rr, "min_target_return": spin_target, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_bull_put_spread_box(self) -> QGroupBox:
-        grp = QGroupBox("📈 اسپرد صعودی فروش (Bull Put Spread / Credit)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("bull_put_spread", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر بول پوت اسپرد")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_cap = self._create_double_spin(
-            1.0, 40.0, cfg.get("min_cap_return", 4.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده روی مارجین:"), 1, 0)
-        layout.addWidget(spin_cap, 1, 1)
-
-        spin_buffer = self._create_double_spin(
-            -30.0, 0.0, cfg.get("min_downside_buffer", -5.0), " ٪")
-        layout.addWidget(QLabel("حداقل حاشیه امنیت افت سهم:"), 2, 0)
-        layout.addWidget(spin_buffer, 2, 1)
-
-        self._controls["bull_put_spread"] = {
-            "chk": chk, "min_cap_return": spin_cap, "min_downside_buffer": spin_buffer, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_collar_box(self) -> QGroupBox:
-        grp = QGroupBox("🛡️ کالار (Collar)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("collar", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر کالار")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_cap = self._create_double_spin(
-            0.0, 30.0, cfg.get("min_cap_return", 2.5), " ٪")
-        layout.addWidget(QLabel("حداقل سود در سقف:"), 1, 0)
-        layout.addWidget(spin_cap, 1, 1)
-
-        spin_loss = self._create_double_spin(-30.0,
-                                             0.0, cfg.get("max_allowed_loss", -5.0), " ٪")
-        layout.addWidget(QLabel("حداکثر زیان مجاز تحت ریزش شدید:"), 2, 0)
-        layout.addWidget(spin_loss, 2, 1)
-
-        self._controls["collar"] = {
-            "chk": chk, "min_cap_return": spin_cap, "max_allowed_loss": spin_loss, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_married_put_box(self) -> QGroupBox:
-        grp = QGroupBox("🛡️ مرید پوت و بیمه سهم (Married Put)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("married_put", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر مرید پوت")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_loss = self._create_double_spin(-30.0,
-                                             0.0, cfg.get("max_allowed_loss", -6.0), " ٪")
-        layout.addWidget(QLabel("حداکثر زیان در بدترین سناریو:"), 1, 0)
-        layout.addWidget(spin_loss, 1, 1)
-
-        spin_target = self._create_double_spin(
-            2.0, 100.0, cfg.get("min_target_return", 8.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده در صورت رشد ۵٪ سهم:"), 2, 0)
-        layout.addWidget(spin_target, 2, 1)
-
-        self._controls["married_put"] = {
-            "chk": chk, "max_allowed_loss": spin_loss, "min_target_return": spin_target, "use_dte_factor": True
-        }
-        return grp
-
-    # ==================== ۲. استراتژی‌های نزولی ====================
-
-    def _create_long_put_box(self) -> QGroupBox:
-        grp = QGroupBox("📉 خرید اختیار فروش (Long Put)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("long_put", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر لانگ پوت")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_rr = self._create_double_spin(
-            0.5, 10.0, cfg.get("min_rr_ratio", 2.0), " برابر")
-        layout.addWidget(QLabel("حداقل نسبت سود به ریسک (R/R):"), 1, 0)
-        layout.addWidget(spin_rr, 1, 1)
-
-        spin_target = self._create_double_spin(
-            5.0, 200.0, cfg.get("min_target_return", 25.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده در افت قیمت:"), 2, 0)
-        layout.addWidget(spin_target, 2, 1)
-
-        self._controls["long_put"] = {
-            "chk": chk, "min_rr_ratio": spin_rr, "min_target_return": spin_target, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_short_call_box(self) -> QGroupBox:
-        grp = QGroupBox("📉 فروش اختیار خرید (Short Call)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("short_call", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر شورت کال")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_cap = self._create_double_spin(
-            1.0, 30.0, cfg.get("min_cap_return", 3.5), " ٪")
-        layout.addWidget(QLabel("حداقل بازده روی مارجین:"), 1, 0)
-        layout.addWidget(spin_cap, 1, 1)
-
-        spin_buffer = self._create_double_spin(
-            0.0, 30.0, cfg.get("min_upside_buffer", 6.0), " ٪")
-        layout.addWidget(QLabel("حداقل حاشیه امنیت رشد سهم تا سربه‌سر:"), 2, 0)
-        layout.addWidget(spin_buffer, 2, 1)
-
-        self._controls["short_call"] = {
-            "chk": chk, "min_cap_return": spin_cap, "min_upside_buffer": spin_buffer, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_bear_put_spread_box(self) -> QGroupBox:
-        grp = QGroupBox("📉 اسپرد نزولی خرید (Bear Put Spread)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("bear_put_spread", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر بیر پوت اسپرد")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_rr = self._create_double_spin(
-            0.5, 10.0, cfg.get("min_rr_ratio", 1.2), " برابر")
-        layout.addWidget(QLabel("حداقل نسبت سود به ریسک:"), 1, 0)
-        layout.addWidget(spin_rr, 1, 1)
-
-        spin_target = self._create_double_spin(
-            2.0, 100.0, cfg.get("min_target_return", 10.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده در هدف نزولی:"), 2, 0)
-        layout.addWidget(spin_target, 2, 1)
-
-        self._controls["bear_put_spread"] = {
-            "chk": chk, "min_rr_ratio": spin_rr, "min_target_return": spin_target, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_bear_call_spread_box(self) -> QGroupBox:
-        grp = QGroupBox("📉 اسپرد نزولی فروش (Bear Call Spread / Credit)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("bear_call_spread", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر بیر کال اسپرد")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_cap = self._create_double_spin(
-            1.0, 40.0, cfg.get("min_cap_return", 4.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده روی مارجین:"), 1, 0)
-        layout.addWidget(spin_cap, 1, 1)
-
-        spin_buffer = self._create_double_spin(
-            0.0, 30.0, cfg.get("min_upside_buffer", 5.0), " ٪")
-        layout.addWidget(QLabel("حداقل حاشیه امنیت رشد سهم:"), 2, 0)
-        layout.addWidget(spin_buffer, 2, 1)
-
-        self._controls["bear_call_spread"] = {
-            "chk": chk, "min_cap_return": spin_cap, "min_upside_buffer": spin_buffer, "use_dte_factor": True
-        }
-        return grp
-
-    # ==================== ۳. استراتژی‌های خنثی ====================
-
-    def _create_iron_condor_box(self) -> QGroupBox:
-        grp = QGroupBox("⚖️ کندور آهنی (Iron Condor)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("iron_condor", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر کندور آهنی")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_roi = self._create_double_spin(
-            1.0, 50.0, cfg.get("min_roi", 6.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده روی مارجین (ROI):"), 1, 0)
-        layout.addWidget(spin_roi, 1, 1)
-
-        spin_range = self._create_double_spin(
-            3.0, 30.0, cfg.get("min_safe_range_pct", 8.0), " ±٪")
-        layout.addWidget(QLabel("حداقل دامنه امن نوسان سهم:"), 2, 0)
-        layout.addWidget(spin_range, 2, 1)
-
-        self._controls["iron_condor"] = {
-            "chk": chk, "min_roi": spin_roi, "min_safe_range_pct": spin_range, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_iron_butterfly_box(self) -> QGroupBox:
-        grp = QGroupBox("⚖️ پروانه آهنی (Iron Butterfly)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("iron_butterfly", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر پروانه آهنی")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_roi = self._create_double_spin(
-            1.0, 60.0, cfg.get("min_roi", 8.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده روی مارجین:"), 1, 0)
-        layout.addWidget(spin_roi, 1, 1)
-
-        spin_range = self._create_double_spin(
-            2.0, 25.0, cfg.get("min_safe_range_pct", 6.0), " ±٪")
-        layout.addWidget(QLabel("حداقل پهنای بازه سربه‌سر:"), 2, 0)
-        layout.addWidget(spin_range, 2, 1)
-
-        self._controls["iron_butterfly"] = {
-            "chk": chk, "min_roi": spin_roi, "min_safe_range_pct": spin_range, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_short_straddle_box(self) -> QGroupBox:
-        grp = QGroupBox("⚖️ فروش استرادل (Short Straddle)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("short_straddle", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر شورت استرادل")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_roi = self._create_double_spin(
-            1.0, 50.0, cfg.get("min_roi", 8.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده روی مارجین:"), 1, 0)
-        layout.addWidget(spin_roi, 1, 1)
-
-        spin_range = self._create_double_spin(
-            2.0, 25.0, cfg.get("min_safe_range_pct", 6.0), " ±٪")
-        layout.addWidget(QLabel("حداقل بازه امن سربه‌سر:"), 2, 0)
-        layout.addWidget(spin_range, 2, 1)
-
-        self._controls["short_straddle"] = {
-            "chk": chk, "min_roi": spin_roi, "min_safe_range_pct": spin_range, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_short_strangle_box(self) -> QGroupBox:
-        grp = QGroupBox("⚖️ فروش استرانگل (Short Strangle)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("short_strangle", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر شورت استرانگل")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_roi = self._create_double_spin(
-            1.0, 50.0, cfg.get("min_roi", 7.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده روی مارجین:"), 1, 0)
-        layout.addWidget(spin_roi, 1, 1)
-
-        spin_range = self._create_double_spin(
-            3.0, 30.0, cfg.get("min_safe_range_pct", 8.0), " ±٪")
-        layout.addWidget(QLabel("حداقل فاصله دو نقطه سربه‌سر:"), 2, 0)
-        layout.addWidget(spin_range, 2, 1)
-
-        self._controls["short_strangle"] = {
-            "chk": chk, "min_roi": spin_roi, "min_safe_range_pct": spin_range, "use_dte_factor": True
-        }
-        return grp
-
-    # ==================== ۴. استراتژی‌های نوسان‌گیری ====================
-
-    def _create_long_straddle_box(self) -> QGroupBox:
-        grp = QGroupBox("⚡ خرید استرادل (Long Straddle)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("long_straddle", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر لانگ استرادل")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_move = self._create_double_spin(
-            2.0, 30.0, cfg.get("max_breakeven_move_pct", 9.0), " ٪")
-        layout.addWidget(QLabel("حداکثر حرکت لازم سهم تا ورود به سود:"), 1, 0)
-        layout.addWidget(spin_move, 1, 1)
-
-        self._controls["long_straddle"] = {
-            "chk": chk, "max_breakeven_move_pct": spin_move, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_long_strangle_box(self) -> QGroupBox:
-        grp = QGroupBox("⚡ خرید استرانگل (Long Strangle)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("long_strangle", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر لانگ استرانگل")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_move = self._create_double_spin(
-            3.0, 35.0, cfg.get("max_breakeven_move_pct", 12.0), " ٪")
-        layout.addWidget(QLabel("حداکثر حرکت لازم سهم تا ورود به سود:"), 1, 0)
-        layout.addWidget(spin_move, 1, 1)
-
-        self._controls["long_strangle"] = {
-            "chk": chk, "max_breakeven_move_pct": spin_move, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_long_guts_box(self) -> QGroupBox:
-        grp = QGroupBox("⚡ استراتژی لانگ گاتس (Long Guts)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("long_guts", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر لانگ گاتس")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_move = self._create_double_spin(
-            2.0, 30.0, cfg.get("max_breakeven_move_pct", 10.0), " ٪")
-        layout.addWidget(QLabel("حداکثر فاصله سربه‌سر تا قیمت روز:"), 1, 0)
-        layout.addWidget(spin_move, 1, 1)
-
-        self._controls["long_guts"] = {
-            "chk": chk, "max_breakeven_move_pct": spin_move, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_strap_box(self) -> QGroupBox:
-        grp = QGroupBox("⚡ استراتژی استرپ (Strap - تعصب صعودی)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("strap", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر استرپ")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_target = self._create_double_spin(
-            5.0, 100.0, cfg.get("min_target_return", 15.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده در نوسان صعودی:"), 1, 0)
-        layout.addWidget(spin_target, 1, 1)
-
-        self._controls["strap"] = {
-            "chk": chk, "min_target_return": spin_target, "use_dte_factor": True
-        }
-        return grp
-
-    def _create_strip_box(self) -> QGroupBox:
-        grp = QGroupBox("⚡ استراتژی استریپ (Strip - تعصب نزولی)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("strip", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر استریپ")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_target = self._create_double_spin(
-            5.0, 100.0, cfg.get("min_target_return", 15.0), " ٪")
-        layout.addWidget(QLabel("حداقل بازده در نوسان نزولی:"), 1, 0)
-        layout.addWidget(spin_target, 1, 1)
-
-        self._controls["strip"] = {
-            "chk": chk, "min_target_return": spin_target, "use_dte_factor": True
-        }
-        return grp
-
-    # ==================== ۵. استراتژی‌های آربیتراژ ====================
-
-    def _create_conversion_box(self) -> QGroupBox:
-        grp = QGroupBox("🔒 کانورژن آربیتراژ (Conversion)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("conversion", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر کانورژن")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_annual = self._create_double_spin(
-            10.0, 100.0, cfg.get("min_annualized_roi", 25.0), " ٪ سالانه")
-        layout.addWidget(QLabel("حداقل سود خالص سالانه تضمینی:"), 1, 0)
-        layout.addWidget(spin_annual, 1, 1)
-
-        self._controls["conversion"] = {
-            "chk": chk, "min_annualized_roi": spin_annual, "require_zero_loss": True
-        }
-        return grp
-
-    def _create_long_box_box(self) -> QGroupBox:
-        grp = QGroupBox("🔒 آربیتراژ باکس (Long Box Spread)")
-        layout = QGridLayout(grp)
-        cfg = self._current_filters.get("long_box", {})
-
-        chk = QCheckBox("فعال‌سازی فیلتر لانگ باکس")
-        chk.setChecked(cfg.get("enabled", True))
-        layout.addWidget(chk, 0, 0, 1, 2)
-
-        spin_annual = self._create_double_spin(
-            10.0, 100.0, cfg.get("min_annualized_roi", 25.0), " ٪ سالانه")
-        layout.addWidget(QLabel("حداقل سود خالص سالانه تضمینی:"), 1, 0)
-        layout.addWidget(spin_annual, 1, 1)
-
-        self._controls["long_box"] = {
-            "chk": chk, "min_annualized_roi": spin_annual, "require_zero_loss": True
-        }
-        return grp
-
-    # ==================== ابزارهای کمکی ====================
 
     def _create_double_spin(self, min_v: float, max_v: float, val: float, suffix: str) -> QDoubleSpinBox:
         spin = QDoubleSpinBox()
         spin.setRange(min_v, max_v)
-        spin.setValue(val)
+        spin.setValue(float(val))
         spin.setSingleStep(0.5)
         spin.setDecimals(1)
         spin.setSuffix(suffix)
@@ -695,10 +357,18 @@ class StrategyFilterDialog(QDialog):
 
     def _save_settings(self):
         new_filters = {}
+        active_strategies = []
+
         for key, ctrl in self._controls.items():
             entry = {}
+            is_enabled = False
             if "chk" in ctrl:
-                entry["enabled"] = ctrl["chk"].isChecked()
+                is_enabled = ctrl["chk"].isChecked()
+                entry["enabled"] = is_enabled
+
+            if is_enabled:
+                active_strategies.append(key)
+
             for field, widget in ctrl.items():
                 if field == "chk":
                     continue
@@ -710,6 +380,7 @@ class StrategyFilterDialog(QDialog):
 
         current_cfg = settings_manager.get_active_settings()
         current_cfg["strategy_filters"] = new_filters
+        current_cfg["active_strategies"] = active_strategies
         settings_manager.save_settings(current_cfg)
 
         self.filters_updated.emit(new_filters)
