@@ -180,6 +180,7 @@ class ExcelExporter:
                 cell.alignment = self.header_alignment
 
             numeric_cols = [
+                "Rank", "DTE",
                 "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
                 "Expected Value", "Area Ratio", "Delta", "Gamma", "Theta", "Vega",
                 "Sharpe", "VaR 95%", "Gross Max Profit", "Gross Max Loss",
@@ -201,12 +202,14 @@ class ExcelExporter:
                         continue
 
                     if col_name in numeric_cols:
+                        cell.value = float(val)
                         cell.alignment = self.body_alignment_right
                     elif col_name in pct_cols:
-                        cell.number_format = '0.00"%"'
+                        cell.value = float(val)
+                        cell.number_format = '#,##0.00'
                         cell.alignment = self.body_alignment_right
                     else:
-                        cell.alignment = self.body_alignment_center
+                        cell.value = str(val)
 
                     cell.font = self.body_font
 

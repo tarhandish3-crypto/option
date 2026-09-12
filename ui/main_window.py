@@ -47,13 +47,15 @@ def _build_strategy_key(strategy: Any) -> tuple:
     برای تطبیق «همان استراتژی» بین دو اسکن متوالی و تشخیص تغییر مقدار سود/زیان
     (جهت انیمیشن فلش) استفاده می‌شود؛ چون در هر اسکن، جدول کاملاً از نو ساخته
     می‌شود و آبجکت‌های Opportunity قبلی از بین می‌روند.
+
+    نکته: days_to_maturity از کلید خارج شده است چون با گذشت زمان تغییر می‌کند
+    و باعث می‌شود کلیدهای یکسان در اسکن‌های متفاوت با هم تطبیق نشوند.
     """
-    legs = getattr(strategy, 'legs', None) or []
+    legs = getattr(strategy, 'legs')
     leg_signature = tuple(
         (
             getattr(leg.contract, 'ticker', ''),
             getattr(leg.contract, 'strike_price', 0),
-            getattr(leg.contract, 'days_to_maturity', 0),
             getattr(getattr(leg, 'side', None), 'value',
                     str(getattr(leg, 'side', ''))),
             getattr(leg, 'ratio', 1),
@@ -646,14 +648,11 @@ class MainWindow(QMainWindow):
         if self.worker is not None and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(2000)
+            self.worker.disconnect()
+            self.worker.deleteLater()
             self.worker = None
 
         self._flash_manager.clear()
-        self.table.setSortingEnabled(False)
-        self.table.setRowCount(0)
-        self.current_results = []
-        self.inspector.clear_inspector()
-        self._show_empty_state()
 
         self._set_controls_enabled(False)
         self.progress_bar.setVisible(True)
@@ -710,6 +709,9 @@ class MainWindow(QMainWindow):
             self.inspector.load_strategy(self.current_results[0])
 
         self._send_bale_alert(self.current_results)
+
+        import gc
+        gc.collect()
 
     def on_scan_failed(self, error_msg):
         self.status_update_signal.emit(f"❌ خطا در اسکن: {error_msg}")
@@ -835,7 +837,7 @@ class MainWindow(QMainWindow):
         ticker = str(getattr(strategy, 'underlying_ticker', 'N/A'))
         self._set_item(row, 5, ticker, bold=True)
 
-        be_list = getattr(strategy, 'break_even_points', [])
+        be_list = getattr(strategy, 'break_even_points')
         metadata = getattr(strategy, 'metadata', {})
         if not be_list and isinstance(metadata, dict):
             be_list = metadata.get('break_even_points', [])
@@ -1011,9 +1013,22 @@ class MainWindow(QMainWindow):
             bot_token=new_settings.get("bale_bot_token", ""),
             chat_id=new_settings.get("bale_chat_id", ""),
         )
+
+        # همگام‌سازی بازه قیمت با ماژول config برای محاسبه پردازشی پس‌زمینه
+        new_price_range = new_settings.get("price_range")
+        if new_price_range:
+            config.PRICE_RANGE_CONFIG.update(new_price_range)
+
         self._apply_theme(new_settings.get("theme", ui_theme.THEME_LIGHT))
         self._apply_layout_direction(new_settings.get(
             "layout_direction", "راست‌چین (RTL)"))
+
+        # جداسازی دوباره تنظیمات بازه قیمت برای ساختار UI
+        self.price_range_config = self.config.get(
+            'price_range',
+            config.PRICE_RANGE_CONFIG
+        )
+        self._rebuild_price_columns()
 
     def _apply_theme(self, theme_setting: str) -> None:
         self._theme_mode = ui_theme.resolve_theme(theme_setting)
@@ -1026,6 +1041,67 @@ class MainWindow(QMainWindow):
         if self.current_results:
             self.populate_table(self.current_results)
         elif self.table.rowCount() == 1:
+            self._show_empty_state()
+
+    def _rebuild_price_columns(self):
+        """بازسازی ستون‌های قیمت پس از تغییر تنظیمات بازه قیمت در تنظیمات"""
+        self.table.setSortingEnabled(False)
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
+
+        fixed_headers = ["✓", "Rank", "Strategy", "Positions",
+                         "DTE / سررسید", "Ticker", "Breakeven"]
+        dynamic_headers = self._generate_price_step_columns()
+        all_headers = fixed_headers + dynamic_headers
+
+        header = self.table.horizontalHeader()
+        current_col_count = self.table.columnCount()
+        new_col_count = len(all_headers)
+
+        if new_col_count != current_col_count:
+            self.table.setColumnCount(new_col_count)
+            if new_col_count > current_col_count:
+                for col_idx in range(current_col_count, new_col_count):
+                    header.setSectionResizeMode(
+                        col_idx, QHeaderView.ResizeMode.ResizeToContents)
+                    self.table.setColumnWidth(col_idx, 85)
+            else:
+                for col_idx in range(current_col_count - 1, new_col_count - 1, -1):
+                    header.setSectionResizeMode(
+                        col_idx, QHeaderView.ResizeMode.Interactive)
+
+        self.table.setHorizontalHeaderLabels(all_headers)
+
+        for col_idx in range(len(fixed_headers), new_col_count):
+            header.setSectionResizeMode(
+                col_idx, QHeaderView.ResizeMode.ResizeToContents)
+            self.table.setColumnWidth(col_idx, 85)
+
+        self._fixed_column_count = len(fixed_headers)
+
+        # تنظیم مجدد عرض ستون‌های ثابت
+        self.table.setColumnWidth(0, 35)
+        self.table.setColumnWidth(1, 50)
+        self.table.setColumnWidth(2, 130)
+        self.table.setColumnWidth(3, 220)
+        self.table.setColumnWidth(4, 110)
+        self.table.setColumnWidth(5, 85)
+        self.table.setColumnWidth(6, 110)
+
+        self.table.setSortingEnabled(True)
+        self.table.blockSignals(False)
+
+        # اگر تعداد ستون‌ها تغییر کرده، نتایج قبلی منقضی شده‌اند؛
+        # پس نیازی به نگهداری آنها نیست و باید جدول و مقادیر قبلی پاک شوند
+        if new_col_count != current_col_count:
+            self.current_results = []
+            self._prev_cell_values = {}
+            self.inspector.clear_inspector()
+            self._show_empty_state()
+            self._update_stats()
+        elif self.current_results:
+            self.populate_table(self.current_results)
+        elif self.table.rowCount() < 1:
             self._show_empty_state()
 
     def _refresh_widget_styles(self) -> None:

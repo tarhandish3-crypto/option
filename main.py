@@ -134,8 +134,6 @@ class OptionScanner:
         if self._is_initialized:
             return
 
-        logger.info("⚙️ در حال بارگذاری اولیه ماژول‌ها و ابزارها...")
-
         if self._db_enabled:
             self._init_database()
 
@@ -149,16 +147,15 @@ class OptionScanner:
         self.data_manager = DataManager(
             cache_dir=str(config.CACHE_DIR),
             use_cache=True,
-            ttl_seconds=config.CACHE_TTL_SECONDS
-        )
+            ttl_seconds=config.CACHE_TTL_SECONDS)
 
         profile_map = {
             "conservative": RankingProfile.CONSERVATIVE,
             "balanced": RankingProfile.BALANCED,
             "aggressive": RankingProfile.AGGRESSIVE,
             "income": RankingProfile.INCOME,
-            "volatility": RankingProfile.VOLATILITY,
-        }
+            "volatility": RankingProfile.VOLATILITY,}
+        
         profile_name = config.RANKING_CONFIG.get("default_profile", "balanced")
         profile = profile_map.get(profile_name, RankingProfile.BALANCED)
 
@@ -167,7 +164,6 @@ class OptionScanner:
         self.chart_plotter = ChartPlotter(output_dir=str(config.CHARTS_DIR))
 
         self._is_initialized = True
-        logger.info("✅ Engine fully initialized in background thread")
 
     # =====================================================
     # مدیریت دیتابیس و فیلترها
@@ -189,7 +185,7 @@ class OptionScanner:
                         )
                     """)
                     conn.commit()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"Database init failed: {e}")
             self._db_enabled = False
 
@@ -197,7 +193,7 @@ class OptionScanner:
         if not self._db_enabled:
             return
         try:
-            with self._db_lock:  # noqa: SIM117
+            with self._db_lock:
                 with sqlite3.connect(str(self._db_path), timeout=10.0) as conn:
                     cursor = conn.cursor()
                     filters_json = json.dumps(
@@ -208,7 +204,7 @@ class OptionScanner:
                         VALUES (?, ?, ?, ?)
                     """, (datetime.now().isoformat(), len(results), duration, filters_json))  # noqa: DTZ005
                     conn.commit()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning(f"⚠️ Failed to save to database: {e}")
 
     def _load_user_filters(self) -> None:
@@ -217,7 +213,7 @@ class OptionScanner:
             try:
                 with open(filters_path, 'r', encoding='utf-8') as f:
                     self._user_filters = json.load(f)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 logger.warning(f"⚠️ Failed to load user filters: {e}")
 
     def update_user_filters(self, new_filters: dict[str, Any]) -> None:
@@ -336,8 +332,7 @@ class OptionScanner:
         self,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         stop_check_callback: Optional[Callable[[], bool]] = None,
-        force_refresh: bool = True
-    ) -> List[Any]:
+        force_refresh: bool = True) -> List[Any]:
 
         self._cancel_event.clear()
 
@@ -389,8 +384,7 @@ class OptionScanner:
             update_progress(0, " اسکن متوقف شد")
             return []
 
-        result = scan_output["results"] if scan_output["results"] is not None else [
-        ]
+        result = scan_output["results"] if scan_output["results"] is not None else []
         duration = scan_output["duration"]
 
         original_count = len(result)
@@ -411,8 +405,7 @@ class OptionScanner:
             results=result,
             scan_duration=duration,
             total_opportunities=len(result),
-            filters_used=self._user_filters.copy()
-        )
+            filters_used=self._user_filters.copy())
 
         update_progress(100, f" اسکن کامل شد - {len(result)} فرصت یافت شد")
         gc.collect()
@@ -422,8 +415,7 @@ class OptionScanner:
         self,
         update_progress: Callable[[int, str], None],
         is_stopped: Callable[[], bool],
-        force_refresh: bool
-    ) -> Tuple[List[Any], float]:
+        force_refresh: bool) -> Tuple[List[Any], float]:
 
         from ui.settings_manager import settings_manager
 
@@ -436,8 +428,7 @@ class OptionScanner:
         calc_advanced = config.FEATURE_FLAGS.get("calculate_greeks", True)
         snapshot = self.data_manager.get_market_snapshot(
             force_refresh=force_refresh,
-            calc_advanced=calc_advanced
-        )
+            calc_advanced=calc_advanced)
 
         if is_stopped() or not snapshot or not getattr(snapshot, 'option_contracts', None):
             return [], 0.0
@@ -451,19 +442,13 @@ class OptionScanner:
             # حذف از قراردادهای اختیار
             snapshot.option_contracts = [
                 c for c in snapshot.option_contracts
-                if getattr(c, 'underlying_ticker', '') not in excluded
-            ]
+                if getattr(c, 'underlying_ticker', '') not in excluded]
             # حذف از دارایی‌های پایه — این کلید است که scanner loop نزند
             for sym in excluded:
                 snapshot.underlying_assets.pop(sym, None)
 
             snapshot.build_indices()
 
-            logger.info(
-                f" نمادهای بلاک‌شده: {excluded} — "
-                f"قراردادها: {before_contracts}→{len(snapshot.option_contracts)} | "
-                f"نمادهای پایه: {before_underlyings}→{len(snapshot.underlying_assets)}"
-            )
         # ─────────────────────────────────────────────────────────────
 
         update_progress(
@@ -477,8 +462,7 @@ class OptionScanner:
         update_progress(60, "🔧 اعمال فیلترها و محاسبه ریسک...")
         filtered_opportunities = [
             opp for opp in scan_result.opportunities
-            if opp is not None and apply_strategy_filter(opp)
-        ]
+            if opp is not None and apply_strategy_filter(opp)]
 
         if is_stopped() or not filtered_opportunities:
             return [], 0.0

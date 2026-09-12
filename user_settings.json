@@ -13,13 +13,19 @@
             "broker_username": "",
             "broker_password": "",
             "excluded_symbols": [
+                "اخابر",
                 "اهرم",
                 "توان",
+                "خبهمن",
+                "خودرو",
                 "ذوب",
                 "شستا",
+                "شپنا",
+                "طعام",
                 "فزر",
                 "فملي",
-                "موج"
+                "موج",
+                "وبصادر"
             ],
             "custom_prices": {},
             "custom_prices_enabled": true,
@@ -51,7 +57,7 @@
             "price_range": {
                 "min_percent": -45.0,
                 "max_percent": 45.0,
-                "num_points": 26,
+                "num_points": 21,
                 "step_size": null,
                 "labels_format": "{:.1f}%"
             },
@@ -278,12 +284,18 @@
         "long_box"
     ],
     "excluded_symbols": [
+        "اخابر",
         "اهرم",
         "توان",
+        "خبهمن",
+        "خودرو",
         "ذوب",
         "شستا",
+        "شپنا",
+        "طعام",
         "فزر",
         "فملي",
-        "موج"
+        "موج",
+        "وبصادر"
     ]
 }
