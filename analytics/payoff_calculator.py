@@ -70,7 +70,7 @@ def calculate_initial_cash_flow_and_capital(
         option_types: np.ndarray,
         sides: np.ndarray,
         contract_sizes: np.ndarray,
-        has_contract: np.ndarray,) -> Tuple[float, float, float]:
+        has_contract: np.ndarray,) -> Tuple[float, float]:
     """
     محاسبه جریان نقدی اولیه و سرمایه درگیر واقعی استراتژی در زمان ورود (t₀)
     """

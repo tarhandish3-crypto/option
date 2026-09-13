@@ -217,6 +217,7 @@ ACTIVE_STRATEGIES: List[str] = [
     "strap",
     "long_call",
     "long_put",
+    "long_calendar_call",
 ]
 
 # =====================================================

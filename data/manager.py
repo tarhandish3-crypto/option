@@ -22,6 +22,7 @@ from data.cleaner import DataCleaner
 from analytics.graaks_calculator import calculate_greeks_vectorized, get_risk_free_rate
 from core.models import MarketSnapshot
 from config import CACHE_DIR, CACHE_TTL_SECONDS, get_feature_flags
+from ui.settings_manager import settings_manager
 
 logger = logging.getLogger("OptionScanner.Data.Manager")
 
@@ -144,7 +145,7 @@ class DataManager:
 
         # ۳. ساخت شیء هوشمند MarketSnapshot و ایندکس‌گذاری ساختار یافته درخت نمادها
         snapshot = MarketSnapshot.from_dataframe(df)
-        snapshot.build_indices()
+        # snapshot.build_indices()
         return snapshot
 
     # =====================================================
@@ -159,7 +160,6 @@ class DataManager:
         به جای قیمت‌های بازار اعمال می‌کند.
         """
         try:
-            from ui.settings_manager import settings_manager
             
             # بررسی فعال بودن قیمت‌های دستی
             if not settings_manager.get_custom_prices_enabled():

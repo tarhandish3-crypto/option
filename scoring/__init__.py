@@ -33,7 +33,6 @@ __all__ = [
     
     # Ranker
     "OpportunityRanker",
-    "RankedOpportunity",
     "RankingProfile",
     "PROFILES",
     
