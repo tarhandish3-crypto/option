@@ -91,7 +91,8 @@ class PatternMatcher:
                 strike_price=underlying_price,
                 contract_size=1,
                 last_price=underlying_price,
-                close_price=getattr(underlying, "close_price", underlying_price),
+                close_price=getattr(
+                    underlying, "close_price", underlying_price),
                 underlying_price=underlying_price,
             )
 
@@ -376,7 +377,8 @@ class PatternMatcher:
                 elif pattern.option_type == OptionType.PUT:
                     valid = [c for c in bucket.puts if _is_liquid(c)]
                 else:
-                    valid = [c for c in chain(bucket.calls, bucket.puts) if _is_liquid(c)]
+                    valid = [c for c in chain(
+                        bucket.calls, bucket.puts) if _is_liquid(c)]
 
                 if not valid:
                     return
@@ -600,13 +602,13 @@ class PatternMatcher:
 
     @staticmethod
     def _match_diagonal_cross_strike(
-        first_bucket: Any,
-        second_bucket: Any,
-        option_patterns: List[StrategyLegPattern],
-        rules: Dict[str, Any],
-        min_liquidity_score: float,
-        scores: Dict[str, float],
-        underlying_price: Optional[float] = None,) -> Iterator[List[OptionContract]]:
+            first_bucket: Any,
+            second_bucket: Any,
+            option_patterns: List[StrategyLegPattern],
+            rules: Dict[str, Any],
+            min_liquidity_score: float,
+            scores: Dict[str, float],
+            underlying_price: Optional[float] = None,) -> Iterator[List[OptionContract]]:
         """
         تطبیق Diagonal Spread با strike متفاوت.
         """
@@ -645,8 +647,8 @@ class PatternMatcher:
 
     @staticmethod
     def extract_batch_vectors(
-        valid_matches: Iterable[List[LegDefinition]],
-        max_legs: int = 4,) -> Dict[str, np.ndarray]:
+            valid_matches: Iterable[List[LegDefinition]],
+            max_legs: int = 4,) -> Dict[str, np.ndarray]:
         """
         تبدیل جریان LegDefinition‌ها به ماتریس‌های NumPy برای Numba.
 
