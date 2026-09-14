@@ -15,7 +15,7 @@ from analytics.cost_calculator import IranMarketCostCalculator
 # بخش ۱: محاسبه سود/زیان ناخالص (Numba)
 # ============================================================
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True)
 def calc_pure_gross_payoff_numba(
         price_levels: np.ndarray,
         weights: np.ndarray,
@@ -46,9 +46,11 @@ def calc_pure_gross_payoff_numba(
             if opt_type == 0:    # OptionType.STOCK
                 val_at_expiry = S
             elif opt_type == 1:  # OptionType.CALL
-                val_at_expiry = max(S - strikes[j], 0.0)
+                # val_at_expiry = max(S - strikes[j], 0.0)
+                val_at_expiry = S - strikes[j] if S > strikes[j] else 0.0 # در نابدا این پرسرعتر اجرا می د
             else:                # OptionType.PUT
-                val_at_expiry = max(strikes[j] - S, 0.0)
+                # val_at_expiry = max(strikes[j] - S, 0.0)
+                val_at_expiry = strikes[j] - S if strikes[j] > S else 0.0
 
             # سود/زیان این لگ
             pnl = sides[j] * (val_at_expiry - entry_prices[j])

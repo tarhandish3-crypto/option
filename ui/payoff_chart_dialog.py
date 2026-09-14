@@ -638,8 +638,7 @@ class PayoffChartDialog(QDialog):
                         legs=legs,
                         price_levels=self._prices_array,
                         include_exercise_fee=True,
-                        settlement_type="PHYSICAL" if is_physical else "CASH"
-                    )
+                        settlement_type="PHYSICAL" if is_physical else "CASH")
                 except TypeError:
                     # fallback در صورت عدم پشتیبانی نسخه قدیم از این پارامتر
                     prev_settlement = FEATURE_FLAGS.get(

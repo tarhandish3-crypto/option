@@ -118,7 +118,7 @@ class OpportunityBuilder:
             max_loss = payoff.max_loss if payoff.max_loss is not None else 0.0
             break_even = payoff.break_even_points
             total_premium = payoff.net_premium
-            metadata['price_levels'] = price_levels
+            # metadata['price_levels'] = price_levels
 
         except Exception as e:
             logger.error(
@@ -126,7 +126,7 @@ class OpportunityBuilder:
             returns_pct = np.array([], dtype=float)
             max_profit, max_loss, total_premium = 0.0, 0.0, 0.0
             break_even = []
-            metadata['price_levels'] = []
+            # metadata['price_levels'] = []
 
         # ── ۵. ساخت خروجی نهایی ───────────────────────────────────────────────────
         return Opportunity(
@@ -147,7 +147,7 @@ class OpportunityBuilder:
             timestamp=datetime.now(), )
 
     # ──────────────────────────────────────────────────────────────────────
-    # متد اصلاح‌شده سازگاری با FourLegGenerator (بدون توابع کمکی منسوخ شده)
+    # متد اصلاح‌شده سازگاری با FourLegGenerator
     # ──────────────────────────────────────────────────────────────────────
 
     @staticmethod

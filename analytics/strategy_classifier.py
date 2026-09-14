@@ -55,8 +55,7 @@ class StrategyClassifier:
             market_type=market_type.value,          # ذخیره مقدار استرینگ بومی انوم برای گزارش‌گیری
             investor_profile=investor_profile.value,
             risk_level=risk_level.value,
-            description=description
-        )
+            description=description)
         
         opportunity.classification = classification
         return classification
