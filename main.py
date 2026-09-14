@@ -417,8 +417,6 @@ class OptionScanner:
         is_stopped: Callable[[], bool],
         force_refresh: bool) -> Tuple[List[Any], float]:
 
-        from ui.settings_manager import settings_manager
-
         start_time = time.time()
 
         update_progress(10, "🔍 دریافت اطلاعات بازار...")
