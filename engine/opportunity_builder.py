@@ -68,9 +68,6 @@ class OpportunityBuilder:
             if contract.option_type != OptionType.STOCK:
                 days_to_maturity = contract.days_to_maturity
 
-        metadata = OpportunityBuilder._build_leg_metadata(
-            legs, contract_scores)
-
         # پیدا کردن اندازه قرارداد معتبر آپشن‌های موجود در استراتژی جهت نرمال‌سازی سهم پایه
         base_option_size = 1000
         for leg in legs:
@@ -118,7 +115,6 @@ class OpportunityBuilder:
             max_loss = payoff.max_loss if payoff.max_loss is not None else 0.0
             break_even = payoff.break_even_points
             total_premium = payoff.net_premium
-            # metadata['price_levels'] = price_levels
 
         except Exception as e:
             logger.error(
@@ -126,9 +122,9 @@ class OpportunityBuilder:
             returns_pct = np.array([], dtype=float)
             max_profit, max_loss, total_premium = 0.0, 0.0, 0.0
             break_even = []
-            # metadata['price_levels'] = []
 
         # ── ۵. ساخت خروجی نهایی ───────────────────────────────────────────────────
+        metadata: Dict[str, Any] = {}
         return Opportunity(
             strategy_name=strategy_def.name,
             underlying_ticker=underlying.ticker,
@@ -206,9 +202,7 @@ class OpportunityBuilder:
         # امتیازدهی نقدشوندگی استاندارد بدون متدهای لوکال منسوخ‌شده
         liquidity_score = LiquidityScorer.score_strategy(legs, {})
 
-        if break_even_points is None:
-            break_even_points = derived_break_even if derived_break_even else metadata.get(
-                "break_even_points", [])
+        final_be = break_even_points if break_even_points is not None else derived_break_even
 
         return Opportunity(
             strategy_name=strategy_name,
@@ -227,19 +221,6 @@ class OpportunityBuilder:
             liquidity_score=liquidity_score,
             metadata=metadata,
             returns_monthly_pct=returns_pct,
-            break_even_points=break_even_points,
+            break_even_points=final_be,
             final_score=0.0,
             rank=0, )
-
-    @staticmethod
-    def _build_leg_metadata(legs: List[LegDefinition], contract_scores: Dict[str, float]) -> Dict[str, Any]:
-        metadata = {}
-        for idx, leg in enumerate(legs, start=1):
-            if not leg.contract:
-                continue
-            c = leg.contract
-            metadata[f"l{idx}_ticker"] = c.ticker
-            metadata[f"l{idx}_strike"] = c.strike_price
-            metadata[f"l{idx}_option_type"] = c.option_type.value
-            metadata[f"l{idx}_score"] = contract_scores.get(c.ticker, 0.0)
-        return metadata

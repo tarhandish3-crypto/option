@@ -29,7 +29,6 @@ def long_call_with_fees(premium_call, stock_price, strike_price, contract_size,
     """
     محاسبه بازده استراتژی Long Call با احتساب کارمزدها
     """
-
     # ========== 1. محاسبه هزینه‌های ورود ==========
     premium_total = -round(premium_call * contract_size, 0)
     entry_fee = round(premium_total * opt_buy_commission, 0)
@@ -124,7 +123,7 @@ def load_and_filter_data():
 
     # فیلتر کردن گزینه‌های اختیار خرید
     filter_option = df_final[
-        (df_final['DaysToMaturity'] > 2.0) &
+        (df_final['DaysToMaturity'] > 1.0) &
         (df_final['Type'].apply(lambda x: x.name == 'CALL'))].copy()
 
     # حذف موارد نامطلوب

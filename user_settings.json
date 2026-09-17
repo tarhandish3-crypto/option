@@ -6,12 +6,23 @@
             "layout_direction": "چپ‌چین (LTR)",
             "auto_scan_enabled": false,
             "auto_scan_interval": 120,
-            "bale_enabled": false,
-            "bale_bot_token": "",
-            "bale_chat_id": "",
-            "bale_top_n": 2,
-            "broker_username": "",
-            "broker_password": "",
+            "min_volume": 3,
+            "min_open_interest": 50,
+            "min_days_to_maturity": 2,
+            "max_days_to_maturity": 365,
+            "max_spread_pct": 0.05,
+            "liquidity_score_threshold": 1.0,
+            "default_depth_threshold": 30,
+            "risk_free_rate": 0.24,
+            "price_range": {
+                "min_percent": -45.0,
+                "max_percent": 45.0,
+                "num_points": 21,
+                "step_size": null,
+                "labels_format": "{:.1f}%"
+            },
+            "custom_prices": {},
+            "custom_prices_enabled": true,
             "excluded_symbols": [
                 "اخابر",
                 "اهرم",
@@ -27,8 +38,6 @@
                 "موج",
                 "وبصادر"
             ],
-            "custom_prices": {},
-            "custom_prices_enabled": true,
             "active_strategies": [
                 "covered_call",
                 "bull_call_spread",
@@ -53,41 +62,6 @@
                 "conversion",
                 "long_box"
             ],
-            "column_visibility": {},
-            "price_range": {
-                "min_percent": -45.0,
-                "max_percent": 45.0,
-                "num_points": 21,
-                "step_size": null,
-                "labels_format": "{:.1f}%"
-            },
-            "api_timeout": 30,
-            "api_max_retries": 3,
-            "request_delay_ms": 5000,
-            "risk_free_rate": 0.24,
-            "min_open_interest": 50,
-            "min_days_to_maturity": 2,
-            "max_days_to_maturity": 365,
-            "volatility_range_min": -45.0,
-            "volatility_range_max": 45.0,
-            "log_level": "INFO",
-            "export_dir": "F:\\python_project\\boors\\Ekhtiyar\\generate_strategyV4\\output",
-            "enable_parallel_processing": true,
-            "max_parallel_workers": 3,
-            "cache_enabled": false,
-            "cache_ttl_seconds": 6,
-            "bale": {
-                "enabled": true,
-                "bot_token": "2144104837:M-1qbeWfXUTducuJS0aV4zu70P8xTr8Jzjk",
-                "chat_id": "@Option_Mehdi",
-                "top_n": 1
-            },
-            "broker": {
-                "broker_name": "خوارزمی / خبرگان",
-                "username": "",
-                "password": "",
-                "headless": false
-            },
             "strategy_filters": {
                 "covered_call": {
                     "enabled": true,
@@ -254,48 +228,37 @@
                     "min_profit_pct": 0.0,
                     "use_dte_factor": true
                 }
-            }
+            },
+            "bale": {
+                "enabled": true,
+                "bot_token": "2144104837:M-1qbeWfXUTducuJS0aV4zu70P8xTr8Jzjk",
+                "chat_id": "@Option_Mehdi",
+                "top_n": 1
+            },
+            "broker": {
+                "username": "",
+                "password": "",
+                "headless": false,
+                "broker_name": "خوارزمی / خبرگان"
+            },
+            "bale_enabled": false,
+            "bale_bot_token": "",
+            "bale_chat_id": "",
+            "bale_top_n": 2,
+            "broker_username": "",
+            "broker_password": "",
+            "column_visibility": {},
+            "api_timeout": 30,
+            "api_max_retries": 3,
+            "request_delay_ms": 5000,
+            "volatility_range_min": -45.0,
+            "volatility_range_max": 45.0,
+            "log_level": "INFO",
+            "export_dir": "F:\\python_project\\boors\\Ekhtiyar\\generate_strategyV4\\output",
+            "enable_parallel_processing": true,
+            "max_parallel_workers": 3,
+            "cache_enabled": false,
+            "cache_ttl_seconds": 6
         }
-    },
-    "custom_prices": {},
-    "custom_prices_enabled": true,
-    "active_strategies": [
-        "covered_call",
-        "bull_call_spread",
-        "bull_put_spread",
-        "long_call",
-        "short_put",
-        "collar",
-        "married_put",
-        "bear_put_spread",
-        "bear_call_spread",
-        "long_put",
-        "short_call",
-        "iron_condor",
-        "iron_butterfly",
-        "short_straddle",
-        "short_strangle",
-        "strap",
-        "strip",
-        "long_straddle",
-        "long_strangle",
-        "long_guts",
-        "conversion",
-        "long_box"
-    ],
-    "excluded_symbols": [
-        "اخابر",
-        "اهرم",
-        "توان",
-        "خبهمن",
-        "خودرو",
-        "ذوب",
-        "شستا",
-        "شپنا",
-        "طعام",
-        "فزر",
-        "فملي",
-        "موج",
-        "وبصادر"
-    ]
+    }
 }

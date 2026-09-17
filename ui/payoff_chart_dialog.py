@@ -529,12 +529,17 @@ class PayoffChartDialog(QDialog):
             return
 
         # ۱. استخراج نماد و قیمت دارایی پایه
+
         self._underlying_price = _safe_to_float(
             getattr(self.strategy, 'underlying_price', 0.0))
-        metadata = getattr(self.strategy, 'metadata', {})
-        if self._underlying_price <= 0 and isinstance(metadata, dict):
+        # metadata = getattr(self.strategy, 'metadata', {})
+        # if self._underlying_price <= 0 and isinstance(metadata, dict):
+        #     self._underlying_price = _safe_to_float(
+        #         metadata.get('underlying_price', 0.0))
+        
+        if self._underlying_price <= 0:
             self._underlying_price = _safe_to_float(
-                metadata.get('underlying_price', 0.0))
+                getattr(self.strategy, 'S0_stock', 0.0))
 
         first_opt = next(
             (l for l in legs if l.contract and l.contract.option_type != OptionType.STOCK), None)
@@ -610,8 +615,7 @@ class PayoffChartDialog(QDialog):
         # ۴. محاسبه سود ناخالص از طریق تابع Numba
         gross_profits = calc_pure_gross_payoff_numba(
             self._prices_array, weights, strikes, entry_prices,
-            option_types, sides, contract_sizes
-        )
+            option_types, sides, contract_sizes)
 
         net_profits = gross_profits.copy()
         apply_fees = self.chk_apply_fees.isChecked()
@@ -625,8 +629,7 @@ class PayoffChartDialog(QDialog):
                     underlying_symbol=underlying_ticker,
                     legs=legs,
                     spot_price=self._underlying_price,
-                    contract_sizes=contract_sizes
-                )
+                    contract_sizes=contract_sizes)
                 net_profits -= costs.total_entry_cost
                 option_entry_fees = costs.total_entry_cost
 
@@ -649,8 +652,7 @@ class PayoffChartDialog(QDialog):
                             underlying_symbol=underlying_ticker,
                             legs=legs,
                             price_levels=self._prices_array,
-                            include_exercise_fee=True
-                        )
+                            include_exercise_fee=True)
                     finally:
                         FEATURE_FLAGS["exercise_settlement_type"] = prev_settlement
 
@@ -668,13 +670,18 @@ class PayoffChartDialog(QDialog):
             option_types=option_types,
             sides=sides,
             contract_sizes=contract_sizes,
-            has_contract=has_contract
-        )
+            has_contract=has_contract)
 
         req_margin = _safe_to_float(
             getattr(self.strategy, 'required_margin', 0.0))
-        if req_margin <= 0 and isinstance(metadata, dict):
-            req_margin = _safe_to_float(metadata.get('required_margin', 0.0))
+        if req_margin <= 0:
+            total_margin = 0.0
+            for leg in _safe_to_list(getattr(self.strategy, 'legs', [])):
+                contract = getattr(leg, 'contract', None)
+                margin = _safe_to_float(getattr(contract, 'initial_margin', 0.0))
+                ratio = _safe_to_float(getattr(leg, 'ratio', 1))
+                total_margin += margin * ratio
+            req_margin = total_margin
 
         self._capital_base = req_margin + net_opt_prem + stock_inv + option_entry_fees
         if self._capital_base <= 0:

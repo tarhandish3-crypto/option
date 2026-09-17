@@ -839,17 +839,20 @@ class MainWindow(QMainWindow):
 
         be_list = getattr(strategy, 'break_even_points')
         metadata = getattr(strategy, 'metadata', {})
-        if not be_list and isinstance(metadata, dict):
-            be_list = metadata.get('break_even_points', [])
+        if not be_list:
+            be_list = strategy.break_even_points
         if be_list:
             be_str = ", ".join(ui_theme.format_rial(p) for p in be_list)
         else:
-            be_str = '-'
+            be_str = '0.0'
+        
         self._set_item(row, 6, be_str)
 
-        pnl_data = metadata.get('returns_monthly_pct', [])
-        if not pnl_data:
-            pnl_data = metadata.get('net_returns_closed', [])
+        pnl_data = strategy.returns_monthly_pct
+        if hasattr(pnl_data, 'tolist'):
+            pnl_data = pnl_data.tolist()
+        else:
+            pnl_data = list(pnl_data)
 
         fixed_col_offset = 7
         pos_color, neg_color = ui_theme.get_pnl_colors(self._theme_mode)

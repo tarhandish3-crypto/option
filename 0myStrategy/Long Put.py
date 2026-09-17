@@ -19,13 +19,13 @@ from data.cleaner import DataCleaner
 from config import (
     get_commission_rate,
     get_exercise_fee_rate,
+    EXERCISE_TAX_RATE,
     get_symbol_kind,
-    get_symbol_market,
-)
+    get_symbol_market,)
 
 
 def long_put_with_fees(premium_put, stock_price, strike_price, contract_size,
-                       opt_buy_commission, exercise_fee_rate, days):
+                       opt_buy_commission, exercise_fee_rate, days, transfer_tax_rate):
     """
     محاسبه بازده استراتژی Long Put با احتساب کارمزدها
 
@@ -48,26 +48,34 @@ def long_put_with_fees(premium_put, stock_price, strike_price, contract_size,
 
     # ========== 4. کارمزد اعمال (فقط اگر ITM باشیم و اعمال کنیم) ==========
     exercise_fee = 0
+    transfer_tax = 0
     if stock_price < strike_price:
         # در اعمال Put، دارایی به قیمت strike فروخته می‌شود
         settlement_amount = strike_price * contract_size
         exercise_fee = -round(settlement_amount * exercise_fee_rate, 0)
+        transfer_tax = -round(settlement_amount * transfer_tax_rate, 0)
 
     # ========== 5. سود خالص نهایی ==========
-    net_profit = intrinsic_value + initial_investment + exercise_fee
+    net_profit = intrinsic_value + initial_investment + exercise_fee + transfer_tax
 
     # ========== 6. بازده درصدی ==========
     profit_percent = round(
-        (net_profit / abs(initial_investment)) * 100, 2
-    ) if initial_investment != 0 else 0
-    monthly_return = round(profit_percent * (30 / days), 2)
+        (net_profit / abs(initial_investment)) * 100, 2) if initial_investment != 0 else 0
+    if days < 1.0:
+        days = 1.0
+    # اگر تمام سرمایه از دست رفته باشد، بازده ماهانه همان -100 درصد است
+    if profit_percent <= -100.0:
+        monthly_return = -100.0
+    else:
+        monthly_return = round(profit_percent * (30 / days), 2)
 
     # ========== 7. نقطه سربه‌سر ==========
     # در Put: break_even = strike - (premium + کارمزد هر سهم)
     # کارمزد ورود همیشه لحاظ می‌شود؛ کارمزد اعمال فقط اگر ITM باشیم
     total_cost_per_share = premium_put + (abs(entry_fee) / contract_size)
     if stock_price < strike_price:
-        total_cost_per_share += abs(exercise_fee) / contract_size
+        total_cost_per_share += (abs(exercise_fee) +
+                                 abs(transfer_tax)) / contract_size
     break_even_price = round(strike_price - total_cost_per_share, 0)
 
     # ========== 8. درصد فاصله قیمت پایه تا نقطه سربه‌سر ==========
@@ -99,8 +107,7 @@ def long_put_with_fees(premium_put, stock_price, strike_price, contract_size,
         if price_difference > 0:
             total_premium_cost = premium_put * contract_size + abs(entry_fee)
             risk_percent = round(
-                (total_premium_cost / (price_difference * contract_size)) * 100, 2
-            )
+                (total_premium_cost / (price_difference * contract_size)) * 100, 2)
         else:
             risk_percent = 100.0
     else:
@@ -113,7 +120,7 @@ def long_put_with_fees(premium_put, stock_price, strike_price, contract_size,
         'break_even_price': break_even_price,
         'break_even_percent': break_even_percent,
         'intrinsic_value': intrinsic_value,
-        'fees_total': entry_fee + exercise_fee,
+        'fees_total': entry_fee + exercise_fee + transfer_tax,
         'max_loss_price_percent': max_loss_price_percent,
         'risk_percent': risk_percent,
     }
@@ -139,7 +146,7 @@ def load_and_filter_data():
 
     # فیلتر گزینه‌های اختیار فروش (PUT)
     filter_option = df_final[
-        (df_final['DaysToMaturity'] > 2.0) &
+        (df_final['DaysToMaturity'] > 0.0) &
         (df_final['Type'].apply(lambda x: x.name == 'PUT'))
     ].copy()
 
@@ -149,8 +156,7 @@ def load_and_filter_data():
     exclude_mask = (
         (filter_option['UnderlyingTicker'].isin(EXCLUDED_UNDERLYING)) &
         (filter_option['Name'].str.contains(
-            '|'.join(EXCLUDED_NAME_PATTERN), na=False))
-    )
+            '|'.join(EXCLUDED_NAME_PATTERN), na=False)))
     filter_option = filter_option[~exclude_mask].copy()
     # filter_option = filter_option[filter_option['UnderlyingTicker'].isin(EXCLUDED_UNDERLYING)]
 
@@ -161,6 +167,8 @@ def run_long_put_strategy(df_options, max_break_even_percent=12):
     """
     اجرای استراتژی Long Put روی داده‌های فیلتر شده
     """
+    transfer_tax_rate = EXERCISE_TAX_RATE
+
     results_fee = []
 
     for underlying_symbol, group in df_options.groupby('UnderlyingTicker'):
@@ -182,10 +190,17 @@ def run_long_put_strategy(df_options, max_break_even_percent=12):
             # محاسبات با کارمزد
             results = long_put_with_fees(
                 premium_put, stock_price, strike_price, contract_size,
-                opt_buy_commission, exercise_fee_rate, days)
+                opt_buy_commission, exercise_fee_rate, days, transfer_tax_rate)
 
-            max_loss_price_percent_scale = results['max_loss_price_percent'] * ((30 / days) ** 0.5)
-            break_even_percent_scale = results['break_even_percent'] * ((30 / days) ** 0.5)
+            if stock_price >= strike_price:
+                break_even_percent_scale = results['break_even_percent']
+                max_loss_price_percent_scale = results['max_loss_price_percent']
+            else:
+                time_scale_factor = (30 / days) ** 0.5
+                break_even_percent_scale = round(
+                    results['break_even_percent'] * time_scale_factor, 2)
+                max_loss_price_percent_scale = round(
+                    results['max_loss_price_percent'] * time_scale_factor, 2)
 
             # ذخیره نتایج
             results_fee.append({
@@ -214,66 +229,68 @@ def run_long_put_strategy(df_options, max_break_even_percent=12):
     # (یعنی قیمت پایه فعلی بالاتر از سربه‌سر است => فاصله امن بیشتر)
     # پس مقادیر منفی بزرگ (یعنی همین حالا ضرر) را حذف می‌کنیم
     result_df_filtered = result_df[
-        result_df['break_even_percent'] >= -max_break_even_percent
-    ].copy()
+        result_df['break_even_percent'] <= max_break_even_percent].copy()
 
     # مرتب‌سازی نزولی (بیشترین فاصله امن = بهترین Put)
     result_df_filtered = result_df_filtered.sort_values(
         ['break_even_percent', 'monthly_return_%'],
-        ascending=[False, False]
-    ).reset_index(drop=True)
+        ascending=[True, True]).reset_index(drop=True)
 
     return result_df_filtered
 
 
 def save_results_to_excel(result_df, filename="result_long_put.xlsx"):
-    """
-    ذخیره نتایج در فایل اکسل با استایل‌بندی حرفه‌ای
-    """
-    # تنظیمات استایل
+    """ذخیره نتایج در فایل اکسل با استایل‌بندی حرفه‌ای."""
     header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
-    header_fill = PatternFill(start_color='1F4E78',
-                              end_color='1F4E78', fill_type='solid')
-    alignment = Alignment(horizontal='center',
-                          vertical='center', wrap_text=True)
+    header_fill = PatternFill(
+        start_color='1F4E78', end_color='1F4E78', fill_type='solid')
+    alignment = Alignment(
+        horizontal='center', vertical='center', wrap_text=True)
     body_font = Font(name='Segoe UI', size=10)
     gray_font = Font(color='808080', italic=True, name='Segoe UI', size=10)
 
-    result_df = result_df.rename(columns={
+    # نام ستون‌ها بر اساس نام جدید اکسل تعریف می‌شوند
+    rename_dict = {
         'stock_price': 'قیمت نماد پایه',
         'strike': 'قیمت اعمال',
         'premium': 'پریمیوم (قیمت خرید)',
         'monthly_return_%': 'درصد سود ماهانه',
         'break_even_price': 'قیمت سربه‌سر',
-        'break_even_percent': 'درصد فاصله تا نقطه سربه‌سر\n(هرچه بیشتر = بهتر)',
-        'break_even_percent_scale': 'مقیاس درصد فاصله تا نقطه سربه‌سر\n(هرچه بیشتر = بهتر)(به نسبت 30 روز)',
-        'max_loss_price_percent': 'درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)',
-        'max_loss_price_percent_scale': 'مقیاس درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)(به نسبت 30 روز)',
+        'break_even_percent': (
+            'درصد فاصله تا نقطه سربه‌سر\n(هرچه بیشتر = بهتر)'
+        ),
+        'break_even_percent_scale': (
+            'مقیاس درصد فاصله تا نقطه سربه‌سر\n(هرچه بیشتر = بهتر)(به نسبت 30'
+            ' روز)'
+        ),
+        'max_loss_price_percent': (
+            'درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)'
+        ),
+        'max_loss_price_percent_scale': (
+            'مقیاس درصد فاصله تا زیان حداکثری\n(هرچه بیشتر = امن‌تر)(به نسبت 30'
+            ' روز)'
+        ),
         'volume': 'حجم معاملات روز جاری',
         'risk_percent': 'درصد ریسک نسبت به حاشیه امنیت\n(هرچه کمتر = بهتر)',
-    })
+    }
 
-    # اضافه کردن timestamp به نام فایل
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename_with_time = f"result_long_put_{timestamp}.xlsx"
-    # برای هم‌خوانی با کد اصلی، نام ثابت را نگه می‌داریم (اختیاری)
-    filename_with_time = 'result_long_put.xlsx'
-    filepath = Path(__file__).parent / filename_with_time
+    result_df_renamed = result_df.rename(columns=rename_dict)
+
+    filepath = Path(__file__).parent / filename
 
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-        result_df.to_excel(writer, sheet_name='long_put', index=False)
+        result_df_renamed.to_excel(writer, sheet_name='long_put', index=False)
         worksheet = writer.sheets['long_put']
 
-        # اعمال استایل به هدر
-        for col_idx in range(1, len(result_df.columns) + 1):
+        for col_idx in range(1, len(result_df_renamed.columns) + 1):
             cell = worksheet.cell(row=1, column=col_idx)
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = alignment
 
-        # اعمال استایل به بدنه
-        columns_list = result_df.columns.tolist()
-        for row_idx, row in enumerate(result_df.itertuples(index=False), start=2):
+        columns_list = result_df_renamed.columns.tolist()
+        for row_idx, row in enumerate(
+            result_df_renamed.itertuples(index=False), start=2):
             for col_idx, col_name in enumerate(columns_list, start=1):
                 cell = worksheet.cell(row=row_idx, column=col_idx)
                 val = row[col_idx - 1]
@@ -285,27 +302,27 @@ def save_results_to_excel(result_df, filename="result_long_put.xlsx"):
                     cell.font = body_font
                 cell.alignment = alignment
 
-        # ========== هایلایت کردن ماکزیمم و مینیمم ستون‌های خاص ==========
+        # اصلاح نام ستون‌ها در بخش هایلایت بر اساس نام‌های جدید اکسل
         highlight_columns = [
             'profit_percent',
-            'break_even_percent',
-            'monthly_return_%',
-        ]
+            rename_dict['break_even_percent'],
+            rename_dict['monthly_return_%'],]
 
-        # رنگ‌ها
-        max_fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')  # سبز
-        min_fill = PatternFill(start_color='FF9999', end_color='FF9999', fill_type='solid')  # قرمز
+        max_fill = PatternFill(
+            start_color='92D050', end_color='92D050', fill_type='solid'
+        )  # سبز
+        min_fill = PatternFill(
+            start_color='FF9999', end_color='FF9999', fill_type='solid'
+        )  # قرمز
 
-        # پیدا کردن اندیس ستون‌ها
         col_indices = {}
         for col_idx, col_name in enumerate(columns_list, start=1):
             if col_name in highlight_columns:
                 col_indices[col_name] = col_idx
 
-        # برای هر ستون، ماکزیمم و مینیمم را پیدا کن
         for col_name, col_idx in col_indices.items():
             values = []
-            for row_idx in range(2, len(result_df) + 2):
+            for row_idx in range(2, len(result_df_renamed) + 2):
                 cell = worksheet.cell(row=row_idx, column=col_idx)
                 if cell.value is not None and cell.value != "-":
                     try:
@@ -317,7 +334,7 @@ def save_results_to_excel(result_df, filename="result_long_put.xlsx"):
                 max_val = max(values)
                 min_val = min(values)
 
-                for row_idx in range(2, len(result_df) + 2):
+                for row_idx in range(2, len(result_df_renamed) + 2):
                     cell = worksheet.cell(row=row_idx, column=col_idx)
                     if cell.value is not None and cell.value != "-":
                         try:
@@ -329,11 +346,10 @@ def save_results_to_excel(result_df, filename="result_long_put.xlsx"):
                         except Exception:
                             pass
 
-        # اعمال فیلتر و Freeze Panes
-        worksheet.auto_filter.ref = f"A1:{get_column_letter(len(result_df.columns))}{len(result_df) + 1}"
+        worksheet.auto_filter.ref = (
+            f"A1:{get_column_letter(len(result_df_renamed.columns))}{len(result_df_renamed) + 1}")
         worksheet.freeze_panes = 'A2'
 
-        # ========== تنظیم خودکار عرض ستون‌ها ==========
         for col in worksheet.columns:
             max_length = 0
             column = col[0].column_letter
@@ -353,8 +369,8 @@ def save_results_to_excel(result_df, filename="result_long_put.xlsx"):
             adjusted_width = min(max_length + 5, 50)
             worksheet.column_dimensions[column].width = adjusted_width
 
-    print(f"result {filename_with_time}  save")
-    return filename_with_time
+    print(f"result {filename}  save")
+    return filename
 
 
 def main():

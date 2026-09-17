@@ -140,8 +140,7 @@ class PatternMatcher:
                 strategy_rules=strategy_rules,
                 min_liquidity_score=min_liquidity_score,
                 contract_scores=contract_scores,
-                underlying_price=underlying_price,
-            )
+                underlying_price=underlying_price,)
 
     # =========================================================================
     # SAME-MATURITY BRANCH

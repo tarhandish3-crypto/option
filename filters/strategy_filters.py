@@ -303,8 +303,7 @@ def _match_strategy_key(name: str) -> Optional[str]:
 
 
 def apply_strategy_filter(
-    opp: Opportunity, user_conditions: Optional[Dict[str, Any]] = None
-) -> bool:
+    opp: Opportunity, user_conditions: Optional[Dict[str, Any]] = None) -> bool:
     """
     اعمال دقیق فیلتر بر اساس بازه و شروط تعریف‌شده توسط کاربر
     با بالانس پویای بازه‌ها بر اساس DTE
@@ -313,15 +312,17 @@ def apply_strategy_filter(
         user_conditions = {}
 
     name = str(getattr(opp, "strategy_name", "")).lower().strip()
-    metadata = getattr(opp, "metadata", {}) or {}
 
     # اولویت با بازدهی تا سررسید و سپس بازدهی ماهانه‌شده
-    raw_returns = metadata.get("net_returns_closed")
+    raw_returns = getattr(opp, "net_returns_closed", None)
     if raw_returns is None or len(raw_returns) == 0:
-        raw_returns = metadata.get("returns_monthly_pct")
-
-    if raw_returns is None or len(raw_returns) == 0:
+        raw_returns = getattr(opp, "returns_monthly_pct", None)
+    if raw_returns is None:
         return False
+
+    # تبدیل امن numpy → list (سازگار با Excel/JSON)
+    if hasattr(raw_returns, "tolist"):
+        raw_returns = raw_returns.tolist()
 
     returns = np.asarray(raw_returns, dtype=np.float32)
 
@@ -336,12 +337,11 @@ def apply_strategy_filter(
     if not cfg.get("enabled", True):
         return True
 
-    price_levels = metadata.get("price_levels")
+    price_levels = getattr(opp, "price_levels", None)
     spot_price = float(
         getattr(opp, "underlying_price", 0.0)
         or getattr(opp, "S0_stock", 0.0)
-        or 0.0
-    )
+        or 0.0)
 
     if spot_price > 0 and price_levels is not None and len(price_levels) == len(returns):
         pct_changes = ((np.asarray(price_levels, dtype=np.float32) - spot_price) / spot_price) * 100.0
