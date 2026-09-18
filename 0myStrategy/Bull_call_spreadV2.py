@@ -13,6 +13,7 @@ sys.path.append(str(root_dir))
 import math
 from datetime import datetime
 from config import (
+    EXERCISE_TAX_RATE,
     get_commission_rate,
     get_exercise_fee_rate,
     get_symbol_kind,
@@ -23,25 +24,25 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 import pandas as pd
 
-# مقادیر سنتینل برای حالت آربیتراژ (ریسک‌فری). این مقادیر عددی باقی می‌مانند
-# تا محاسبات (نرمال‌سازی، مرتب‌سازی) روی آن‌ها بدون خطا انجام شود و فقط در
-# آخرین مرحله، درست پیش از خروجی گرفتن، به برچسب متنی قابل‌نمایش تبدیل می‌شوند.
+
 RISK_FREE_BREAK_EVEN_SENTINEL = -999.0
 RISK_FREE_RETURN_SENTINEL = 999999.0
 
 
 def bull_call_spread_analysis(
-        stock_price,
-        long_strike,
-        long_ask_premium,
-        short_strike,
-        short_bid_premium,
-        contract_size,
-        opt_buy_commission,
-        opt_sell_commission,
-        exercise_fee_rate,
-        days,):
-    """محاسبه پارامترهای استراتژی با اعمال جریمه منطقه زیان و تعدیل زمان سررسید."""
+    stock_price,
+    long_strike,
+    long_ask_premium,
+    short_strike,
+    short_bid_premium,
+    contract_size,
+    opt_buy_commission,
+    opt_sell_commission,
+    exercise_fee_rate,
+    exercise_tax_rate,
+    days,):
+    """محاسبه پارامترهای استراتژی با اعمال جریمه منطقه زیان و تعدیل زمان سررسید.
+    """
 
     # ۱. پریمیوم و کارمزد ورود
     long_premium_total = round(long_ask_premium * contract_size, 0)
@@ -50,20 +51,22 @@ def bull_call_spread_analysis(
     short_premium_total = round(short_bid_premium * contract_size, 0)
     short_entry_fee = -round(short_premium_total * opt_sell_commission, 0)
 
-    net_debit = (long_premium_total + long_entry_fee) - (
-        short_premium_total + short_entry_fee)
+    net_debit = (long_premium_total + long_entry_fee) - (short_premium_total + short_entry_fee)
 
-    # ۲. کارمزدهای اعمال
+    # ۲. کارمزدهای اعمال + مالیات نقل و انتقال سهم (فقط برای لگ فروش)
     long_exercise_fee = round(
         (long_strike * contract_size) * exercise_fee_rate, 0)
     short_exercise_fee = round(
         (short_strike * contract_size) * exercise_fee_rate, 0)
-    total_exercise_fees = long_exercise_fee + short_exercise_fee
+
+    short_transfer_tax = round((short_strike * contract_size) * exercise_tax_rate, 0)
+    short_total_exercise_cost = short_exercise_fee + short_transfer_tax
+    total_exercise_costs = long_exercise_fee + short_total_exercise_cost
 
     # ۳. تحلیل سقف و کف سود و زیان
     min_profit_or_loss = -net_debit
     max_payoff = (short_strike - long_strike) * contract_size
-    max_net_profit = max_payoff - net_debit - total_exercise_fees
+    max_net_profit = max_payoff - net_debit - total_exercise_costs
 
     if max_net_profit <= 0:
         return {'status': 'DISCARD'}
@@ -147,12 +150,6 @@ def calculate_composite_score(df):
 
     # استخراج کمترین حجم معاملات بین دو ساقه
     df['min_volume'] = df[['long_volume', 'short_volume']].min(axis=1)
-
-    # ردیف‌های آربیتراژ (ریسک‌فری) مقدار سنتینل دارند و نباید در محدوده
-    # نرمال‌سازی Min-Max سایر ردیف‌ها دخالت کنند؛ در غیر این صورت، همان یک
-    # مقدار سنتینل عملاً کل بازه نرمال‌سازی را می‌بلعد و امتیاز بقیه ردیف‌ها
-    # را بی‌معنی می‌کند. چون یک موقعیت ریسک‌فری ذاتاً از هر موقعیت دیگری
-    # امن‌تر و پرسودتر است، مستقیماً بالاترین امتیاز (۱.۰) را می‌گیرد.
     risk_free_mask = df['break_even_percent_scale'] == RISK_FREE_BREAK_EVEN_SENTINEL
     df_normal = df[~risk_free_mask].copy()
     df_risk_free = df[risk_free_mask].copy()
@@ -169,8 +166,7 @@ def calculate_composite_score(df):
     if not df_normal.empty:
         # نرمال‌سازی سه بعد
         # ۱. حاشیه امنیت (هر چه منفی‌تر باشد بهتر است -> invert=True)
-        norm_safety = normalize(
-            df_normal['break_even_percent_scale'], invert=True)
+        norm_safety = normalize(df_normal['break_even_percent_scale'], invert=True)
 
         # ۲. بازدهی ماهانه
         norm_return = normalize(df_normal['monthly_return_%'], invert=False)
@@ -190,8 +186,7 @@ def calculate_composite_score(df):
     return pd.concat([df_normal, df_risk_free]).sort_index()
 
 
-def run_bull_call_spread_strategy(
-        df_options, max_break_even_percent=15, min_rr_ratio=0.03):
+def run_bull_call_spread_strategy(df_options, max_break_even_percent, min_monthly_return, min_rr_ratio):
     """اجرای استراتژی و رتبه‌بندی نهایی بر اساس امتیاز کامپوزیت."""
     results_fee = []
 
@@ -219,6 +214,12 @@ def run_bull_call_spread_strategy(
                     long_ask = long_leg.get('AskPrice', 0)
                     short_bid = short_leg.get('BidPrice', 0)
 
+                    if (pd.isna(long_ask)
+                        or long_ask <= 0
+                        or pd.isna(short_bid)
+                        or short_bid <= 0):
+                        continue
+
                     res = bull_call_spread_analysis(
                         stock_price=stock_price,
                         long_strike=long_leg['StrikePrice'],
@@ -229,14 +230,14 @@ def run_bull_call_spread_strategy(
                         opt_buy_commission=opt_buy_commission,
                         opt_sell_commission=opt_sell_commission,
                         exercise_fee_rate=exercise_fee_rate,
+                        exercise_tax_rate=EXERCISE_TAX_RATE,
                         days=days,)
 
                     if res['status'] == 'DISCARD':
                         continue
 
-                    if (
-                            res['status'] != 'RISK_FREE'
-                            and res['risk_reward_ratio'] < min_rr_ratio):
+                    if (res['status'] != 'RISK_FREE'
+                        and res['risk_reward_ratio'] < min_rr_ratio):
                         continue
 
                     results_fee.append({
@@ -268,7 +269,10 @@ def run_bull_call_spread_strategy(
 
     # فیلتر سقف درصد رشد تا سربه‌سر
     result_df_filtered = result_df[
-        result_df['break_even_percent'] <= max_break_even_percent].copy()
+        result_df['break_even_percent_scale'] <= max_break_even_percent].copy()
+    result_df_filtered = result_df_filtered[
+        result_df_filtered['monthly_return_%'] >= min_monthly_return].copy()
+
 
     if result_df_filtered.empty:
         return result_df_filtered
@@ -278,7 +282,7 @@ def run_bull_call_spread_strategy(
 
     # مرتب‌سازی نزولی بر اساس Composite Score
     result_df_filtered = result_df_filtered.sort_values(
-        by=['composite_score', 'monthly_return_%'], ascending=[False, False]).reset_index(drop=True)
+        by=['break_even_percent_scale', 'monthly_return_%'], ascending=[True, False]).reset_index(drop=True)
 
     # چیدمان مرتب ستون‌ها
     column_order = [
@@ -416,7 +420,7 @@ def main():
             return
 
         results = run_bull_call_spread_strategy(
-            filtered_data, max_break_even_percent=15, min_rr_ratio=0.03)
+            filtered_data, max_break_even_percent=-10, min_monthly_return=5, min_rr_ratio=0.03)
 
         if results.empty:
             print("No valid strategy setups found after filtering.")

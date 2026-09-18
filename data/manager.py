@@ -145,7 +145,6 @@ class DataManager:
 
         # ۳. ساخت شیء هوشمند MarketSnapshot و ایندکس‌گذاری ساختار یافته درخت نمادها
         snapshot = MarketSnapshot.from_dataframe(df)
-        # snapshot.build_indices()
         return snapshot
 
     # =====================================================

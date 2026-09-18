@@ -215,6 +215,10 @@ class ProfileScores:
     def to_dict(self) -> Dict[str, float]:
         return {'conservative': self.conservative, 'balanced': self.balanced, 'aggressive': self.aggressive, 'income': self.income, 'volatility': self.volatility}
 
+    def get_active_score(self, profile: str = 'balanced') -> float:
+        """دریافت امتیاز پروفایل فعال (پیش‌فرض: balanced)"""
+        return getattr(self, profile, 0.0)
+
 
 # =====================================================
 # کاندیدای سبک استراتژی (Opportunity Candidate)
