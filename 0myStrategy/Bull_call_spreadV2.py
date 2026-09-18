@@ -16,27 +16,31 @@ from config import (
     get_commission_rate,
     get_exercise_fee_rate,
     get_symbol_kind,
-    get_symbol_market,
-)
+    get_symbol_market,)
 from data.cleaner import DataCleaner
 from data.downloader import MarketDownloader
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 import pandas as pd
 
+# مقادیر سنتینل برای حالت آربیتراژ (ریسک‌فری). این مقادیر عددی باقی می‌مانند
+# تا محاسبات (نرمال‌سازی، مرتب‌سازی) روی آن‌ها بدون خطا انجام شود و فقط در
+# آخرین مرحله، درست پیش از خروجی گرفتن، به برچسب متنی قابل‌نمایش تبدیل می‌شوند.
+RISK_FREE_BREAK_EVEN_SENTINEL = -999.0
+RISK_FREE_RETURN_SENTINEL = 999999.0
+
 
 def bull_call_spread_analysis(
-    stock_price,
-    long_strike,
-    long_ask_premium,
-    short_strike,
-    short_bid_premium,
-    contract_size,
-    opt_buy_commission,
-    opt_sell_commission,
-    exercise_fee_rate,
-    days,
-):
+        stock_price,
+        long_strike,
+        long_ask_premium,
+        short_strike,
+        short_bid_premium,
+        contract_size,
+        opt_buy_commission,
+        opt_sell_commission,
+        exercise_fee_rate,
+        days,):
     """محاسبه پارامترهای استراتژی با اعمال جریمه منطقه زیان و تعدیل زمان سررسید."""
 
     # ۱. پریمیوم و کارمزد ورود
@@ -47,16 +51,13 @@ def bull_call_spread_analysis(
     short_entry_fee = -round(short_premium_total * opt_sell_commission, 0)
 
     net_debit = (long_premium_total + long_entry_fee) - (
-        short_premium_total + short_entry_fee
-    )
+        short_premium_total + short_entry_fee)
 
     # ۲. کارمزدهای اعمال
     long_exercise_fee = round(
-        (long_strike * contract_size) * exercise_fee_rate, 0
-    )
+        (long_strike * contract_size) * exercise_fee_rate, 0)
     short_exercise_fee = round(
-        (short_strike * contract_size) * exercise_fee_rate, 0
-    )
+        (short_strike * contract_size) * exercise_fee_rate, 0)
     total_exercise_fees = long_exercise_fee + short_exercise_fee
 
     # ۳. تحلیل سقف و کف سود و زیان
@@ -77,64 +78,27 @@ def bull_call_spread_analysis(
             'capital_at_risk': 0,
             'max_net_profit': max_net_profit,
             'max_profit_percent': 'Arbitrage',
-            'monthly_return': 'Infinite',
+            'monthly_return': RISK_FREE_RETURN_SENTINEL,
             'break_even_price': 'Risk Free',
-            'break_even_percent': -999.0,
-            'break_even_percent_scale': -999.0,
-            'spread_area_score': 999999.0,
+            'break_even_percent': RISK_FREE_BREAK_EVEN_SENTINEL,
+            'break_even_percent_scale': RISK_FREE_BREAK_EVEN_SENTINEL,
             'risk_reward_ratio': 'Infinite',
         }
 
     # ۴. محاسبه قیمت و درصد سربه‌سر
     break_even_price = long_strike + (
-        (net_debit + long_exercise_fee) / contract_size
-    )
+        (net_debit + long_exercise_fee) / contract_size)
 
     if stock_price > 0:
         break_even_percent = round(
-            ((break_even_price - stock_price) / stock_price) * 100, 2
-        )
+            ((break_even_price - stock_price) / stock_price) * 100, 2)
     else:
         break_even_percent = 0.0
 
-    # ۵. تابع محاسبه بازدهی اسکیل‌شده ماهانه در قیمت S
-    def get_monthly_return_at_price(S):
-        if S <= long_strike:
-            payoff = 0.0
-        elif S >= short_strike:
-            payoff = max_payoff
-        else:
-            payoff = (S - long_strike) * contract_size
-
-        net_prof = payoff - net_debit - total_exercise_fees
-        ret_pct = (net_prof / capital_at_risk) * 100.0
-        return ret_pct * (30.0 / days_safe)
-
-    # ۶. محاسبه هندسی مساحت با کسر جریمه احتمال زیان و تعدیل زمان
+    # ۵. ضریب تعدیل زمانی برای مقیاس کردن درصد رشد تا سربه‌سر بر حسب زمان
     time_factor = math.sqrt(days_safe / 30.0)
 
-    if stock_price > break_even_price:
-        r_stock = get_monthly_return_at_price(stock_price)
-
-        # مساحت سود
-        if stock_price > short_strike:
-            r_k2 = get_monthly_return_at_price(short_strike)
-            pos_area = (0.5 * (short_strike - break_even_price) * r_k2) + (
-                (stock_price - short_strike) * r_stock
-            )
-        else:
-            pos_area = 0.5 * (stock_price - break_even_price) * r_stock
-
-        # مساحت زیان (جریمه)
-        max_loss_monthly_ret = (-net_debit / capital_at_risk) * 100.0 * (30.0 / days_safe)
-        neg_area = 0.5 * (break_even_price - long_strike) * abs(max_loss_monthly_ret)
-
-        net_area = pos_area - (0.5 * neg_area)
-        spread_area_score = round((net_area / stock_price) / time_factor, 2)
-    else:
-        spread_area_score = 0.0
-
-    # ۷. سایر شاخص‌ها
+    # ۶. سایر شاخص‌ها
     break_even_percent_scale = round(break_even_percent / time_factor, 2)
     max_profit_percent = round((max_net_profit / capital_at_risk) * 100, 2)
     monthly_return = round(max_profit_percent * (30 / days_safe), 2)
@@ -149,7 +113,6 @@ def bull_call_spread_analysis(
         'break_even_price': round(break_even_price, 0),
         'break_even_percent': break_even_percent,
         'break_even_percent_scale': break_even_percent_scale,
-        'spread_area_score': max(0.0, spread_area_score),
         'risk_reward_ratio': risk_reward_ratio,
     }
 
@@ -161,19 +124,15 @@ def load_and_filter_data():
     df_final = DataCleaner.add_derived_columns(df_cleaned)
 
     filter_option = df_final[
-        (df_final['DaysToMaturity'] > 2.0)
-        & (df_final['Type'].apply(lambda x: x.name == 'CALL'))
-    ].copy()
+        (df_final['DaysToMaturity'] > 0.0)
+        & (df_final['Type'].apply(lambda x: x.name == 'CALL'))].copy()
 
     EXCLUDED_UNDERLYING = ['اهرم']
     EXCLUDED_NAME_PATTERN = ['1405/04', '1405-04']
     exclude_mask = (
-        filter_option['UnderlyingTicker'].isin(EXCLUDED_UNDERLYING)
-    ) & (
+        filter_option['UnderlyingTicker'].isin(EXCLUDED_UNDERLYING)) & (
         filter_option['Name'].str.contains(
-            '|'.join(EXCLUDED_NAME_PATTERN), na=False
-        )
-    )
+            '|'.join(EXCLUDED_NAME_PATTERN), na=False))
     filter_option = filter_option[~exclude_mask].copy()
 
     return filter_option
@@ -189,6 +148,15 @@ def calculate_composite_score(df):
     # استخراج کمترین حجم معاملات بین دو ساقه
     df['min_volume'] = df[['long_volume', 'short_volume']].min(axis=1)
 
+    # ردیف‌های آربیتراژ (ریسک‌فری) مقدار سنتینل دارند و نباید در محدوده
+    # نرمال‌سازی Min-Max سایر ردیف‌ها دخالت کنند؛ در غیر این صورت، همان یک
+    # مقدار سنتینل عملاً کل بازه نرمال‌سازی را می‌بلعد و امتیاز بقیه ردیف‌ها
+    # را بی‌معنی می‌کند. چون یک موقعیت ریسک‌فری ذاتاً از هر موقعیت دیگری
+    # امن‌تر و پرسودتر است، مستقیماً بالاترین امتیاز (۱.۰) را می‌گیرد.
+    risk_free_mask = df['break_even_percent_scale'] == RISK_FREE_BREAK_EVEN_SENTINEL
+    df_normal = df[~risk_free_mask].copy()
+    df_risk_free = df[risk_free_mask].copy()
+
     # تابع کمک‌کننده نرمال‌سازی Min-Max بین 0 تا 1
     def normalize(series, invert=False):
         min_val = series.min()
@@ -198,34 +166,32 @@ def calculate_composite_score(df):
         norm = (series - min_val) / (max_val - min_val)
         return 1.0 - norm if invert else norm
 
-    # نرمال‌سازی چهار بعد
-    # ۱. حاشیه امنیت (هر چه منفی‌تر باشد بهتر است -> invert=True)
-    norm_safety = normalize(df['break_even_percent_scale'], invert=True)
+    if not df_normal.empty:
+        # نرمال‌سازی سه بعد
+        # ۱. حاشیه امنیت (هر چه منفی‌تر باشد بهتر است -> invert=True)
+        norm_safety = normalize(
+            df_normal['break_even_percent_scale'], invert=True)
 
-    # ۲. امتیاز مساحت خالص
-    norm_area = normalize(df['spread_area_score'], invert=False)
+        # ۲. بازدهی ماهانه
+        norm_return = normalize(df_normal['monthly_return_%'], invert=False)
 
-    # ۳. بازدهی ماهانه
-    norm_return = normalize(df['monthly_return_%'], invert=False)
+        # ۳. نقدشوندگی (حداقل حجم)
+        norm_volume = normalize(df_normal['min_volume'], invert=False)
 
-    # ۴. نقدشوندگی (حداقل حجم)
-    norm_volume = normalize(df['min_volume'], invert=False)
+        # محاسبه امتیاز نهایی کامپوزیت با وزن‌های تعدیل‌شده
+        df_normal['composite_score'] = round(
+            (0.3 * norm_safety)
+            + (0.6 * norm_return)
+            + (0.1 * norm_volume), 4,)
 
-    # محاسبه امتیاز نهایی کامپوزیت با وزن‌های تعدیل‌شده
-    df['composite_score'] = round(
-        (0.45 * norm_safety)
-        + (0.10 * norm_area)
-        + (0.35 * norm_return)
-        + (0.10 * norm_volume),
-        4,
-    )
+    if not df_risk_free.empty:
+        df_risk_free['composite_score'] = 1.0
 
-    return df
+    return pd.concat([df_normal, df_risk_free]).sort_index()
 
 
 def run_bull_call_spread_strategy(
-    df_options, max_break_even_percent=15, min_rr_ratio=0.03
-):
+        df_options, max_break_even_percent=15, min_rr_ratio=0.03):
     """اجرای استراتژی و رتبه‌بندی نهایی بر اساس امتیاز کامپوزیت."""
     results_fee = []
 
@@ -253,14 +219,6 @@ def run_bull_call_spread_strategy(
                     long_ask = long_leg.get('AskPrice', 0)
                     short_bid = short_leg.get('BidPrice', 0)
 
-                    if (
-                        pd.isna(long_ask)
-                        or long_ask <= 0
-                        or pd.isna(short_bid)
-                        or short_bid <= 0
-                    ):
-                        continue
-
                     res = bull_call_spread_analysis(
                         stock_price=stock_price,
                         long_strike=long_leg['StrikePrice'],
@@ -271,16 +229,14 @@ def run_bull_call_spread_strategy(
                         opt_buy_commission=opt_buy_commission,
                         opt_sell_commission=opt_sell_commission,
                         exercise_fee_rate=exercise_fee_rate,
-                        days=days,
-                    )
+                        days=days,)
 
                     if res['status'] == 'DISCARD':
                         continue
 
                     if (
-                        res['status'] != 'RISK_FREE'
-                        and res['risk_reward_ratio'] < min_rr_ratio
-                    ):
+                            res['status'] != 'RISK_FREE'
+                            and res['risk_reward_ratio'] < min_rr_ratio):
                         continue
 
                     results_fee.append({
@@ -298,10 +254,7 @@ def run_bull_call_spread_strategy(
                         'monthly_return_%': res['monthly_return'],
                         'break_even_price': res['break_even_price'],
                         'break_even_percent': res['break_even_percent'],
-                        'break_even_percent_scale': res[
-                            'break_even_percent_scale'
-                        ],
-                        'spread_area_score': res['spread_area_score'],
+                        'break_even_percent_scale': res['break_even_percent_scale'],
                         'risk_reward_ratio': res['risk_reward_ratio'],
                         'days_to_maturity': days,
                         'long_volume': int(long_leg.get('Volume', 0)),
@@ -315,8 +268,7 @@ def run_bull_call_spread_strategy(
 
     # فیلتر سقف درصد رشد تا سربه‌سر
     result_df_filtered = result_df[
-        result_df['break_even_percent'] <= max_break_even_percent
-    ].copy()
+        result_df['break_even_percent'] <= max_break_even_percent].copy()
 
     if result_df_filtered.empty:
         return result_df_filtered
@@ -326,8 +278,7 @@ def run_bull_call_spread_strategy(
 
     # مرتب‌سازی نزولی بر اساس Composite Score
     result_df_filtered = result_df_filtered.sort_values(
-        by=['composite_score', 'monthly_return_%'], ascending=[False, False]
-    ).reset_index(drop=True)
+        by=['composite_score', 'monthly_return_%'], ascending=[False, False]).reset_index(drop=True)
 
     # چیدمان مرتب ستون‌ها
     column_order = [
@@ -347,7 +298,6 @@ def run_bull_call_spread_strategy(
         'break_even_price',
         'break_even_percent',
         'break_even_percent_scale',
-        'spread_area_score',
         'risk_reward_ratio',
         'days_to_maturity',
         'long_volume',
@@ -358,25 +308,24 @@ def run_bull_call_spread_strategy(
 
     result_df_filtered['break_even_percent'] = result_df_filtered[
         'break_even_percent'
-    ].replace(-999.0, 'Risk Free')
+    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
     result_df_filtered['break_even_percent_scale'] = result_df_filtered[
         'break_even_percent_scale'
-    ].replace(-999.0, 'Risk Free')
+    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+    result_df_filtered['monthly_return_%'] = result_df_filtered[
+        'monthly_return_%'
+    ].replace(RISK_FREE_RETURN_SENTINEL, 'Infinite')
 
     return result_df_filtered
 
 
-def save_results_to_excel(
-    result_df, filename="result_bull_call_spread.xlsx"
-):
+def save_results_to_excel(result_df, filename="result_bull_call_spread.xlsx"):
     """ذخیره نتایج خروجی در فایل اکسل با فرمت‌بندی استاندارد."""
     header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
     header_fill = PatternFill(
-        start_color='203764', end_color='203764', fill_type='solid'
-    )
+        start_color='203764', end_color='203764', fill_type='solid')
     alignment = Alignment(
-        horizontal='center', vertical='center', wrap_text=True
-    )
+        horizontal='center', vertical='center', wrap_text=True)
     body_font = Font(name='Segoe UI', size=10)
     gray_font = Font(color='808080', italic=True, name='Segoe UI', size=10)
 
@@ -409,8 +358,7 @@ def save_results_to_excel(
 
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
         result_df_renamed.to_excel(
-            writer, sheet_name='bull_call_spread', index=False
-        )
+            writer, sheet_name='bull_call_spread', index=False)
         worksheet = writer.sheets['bull_call_spread']
 
         for col_idx in range(1, len(result_df_renamed.columns) + 1):
@@ -432,8 +380,7 @@ def save_results_to_excel(
                 cell.alignment = alignment
 
         worksheet.auto_filter.ref = (
-            f"A1:{get_column_letter(len(result_df_renamed.columns))}{len(result_df_renamed) + 1}"
-        )
+            f"A1:{get_column_letter(len(result_df_renamed.columns))}{len(result_df_renamed) + 1}")
         worksheet.freeze_panes = 'A2'
 
         for col in worksheet.columns:
@@ -469,8 +416,7 @@ def main():
             return
 
         results = run_bull_call_spread_strategy(
-            filtered_data, max_break_even_percent=15, min_rr_ratio=0.03
-        )
+            filtered_data, max_break_even_percent=15, min_rr_ratio=0.03)
 
         if results.empty:
             print("No valid strategy setups found after filtering.")

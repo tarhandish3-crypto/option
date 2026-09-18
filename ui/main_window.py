@@ -133,6 +133,11 @@ class MainWindow(QMainWindow):
             bot_token=bale_cfg.get("bot_token", ""),
             chat_id=bale_cfg.get("chat_id", ""),
         )
+        # تنظیم callback‌ها برای نمایش پیام به کاربر پس از ارسال
+        self._bale_notifier.set_callbacks(
+            on_success=self._on_bale_send_success,
+            on_error=self._on_bale_send_error
+        )
         self._bale_enabled = bale_cfg.get("enabled", False)
         self._bale_top_n = bale_cfg.get("top_n", 2)
 
@@ -726,6 +731,11 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFormat(f"{percent}% - {status}")
 
     def populate_table(self, results: List):
+        # ۱. پاک‌سازی فلش‌های در حال اجرا قبل از بازسازی جدول
+        #    (جلوگیری از RuntimeError به دلیل ارجاع به QTableWidgetItemهای حذف‌شده)
+        flash_mgr = get_flash_manager()
+        flash_mgr.clear()
+
         self.table.setSortingEnabled(False)
         self.table.blockSignals(True)
         self.table.setRowCount(0)
@@ -1325,6 +1335,20 @@ class MainWindow(QMainWindow):
             selected_opps, top_n=len(selected_opps))
         self.status_update_signal.emit(
             f"📱 ارسال {len(selected_opps)} استراتژی به بله انجام شد")
+
+    def _on_bale_send_success(self, opportunities, top_n):
+        """Callback موفقیت‌آمیز ارسال به بله"""
+        strat_names = ", ".join(
+            getattr(o, 'strategy_name', 'استراتژی') for o in opportunities[:3]
+        )
+        if len(opportunities) > 3:
+            strat_names += f" و {len(opportunities) - 3} مورد دیگر"
+        self.status_update_signal.emit(
+            f"✅ {len(opportunities)} استراتژی با موفقیت به بله ارسال شد: {strat_names}")
+
+    def _on_bale_send_error(self, error_message):
+        """Callback خطا در ارسال به بله"""
+        self.status_update_signal.emit(f"❌ خطا در ارسال به بله: {error_message}")
 
     def _send_bale_alert(self, opportunities: List) -> None:
         if not self._bale_enabled or not self._bale_notifier.is_configured:

@@ -231,20 +231,19 @@ class IranMarketPayoffCalculator:
         capital_base = required_margin + net_option_premium + stock_investment + option_fees
 
         # جلوگیری از تقسیم بر صفر
-        if capital_base <= 0:
+        if capital_base <= 0.0:
             capital_base = 1.0
 
         # ── ۷. محاسبه درصد بازدهی و سود ماهانه ───────────────────────────────
-        returns_pct_period = round(
-            (net_profits_expiry / capital_base) * 100, 2) if capital_base != 0 else 0
+        returns_pct_period = np.round(
+            (net_profits_expiry / capital_base) * 100, 2) if capital_base != 0.0 else np.zeros_like(net_profits_expiry)
 
         if days_to_maturity < 1.0:
             days_to_maturity = 1.0
-        if returns_pct_period <= -100.0:
-            monthly_return = -100.0
-        else:
-            dte_factor = 30.0 / days_to_maturity
-            monthly_returns = np.round(returns_pct_period * dte_factor, 1)
+        
+        dte_factor = 30.0 / days_to_maturity
+        monthly_returns = np.round(returns_pct_period * dte_factor, 1)
+        monthly_returns = np.maximum(monthly_returns, -100.0)
 
         # ── ۸. استخراج شاخص‌های نهایی ─────────────────────────────────────────
         max_profit_total = float(np.max(net_profits_expiry))

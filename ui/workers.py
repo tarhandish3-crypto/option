@@ -46,6 +46,7 @@ class BatchUpdateManager(QObject):
     برای جلوگیری از افت فریم رابط کاربری هنگام پردازش حجم بالای اطلاعات.
 
     الگو: صف thread-safe + تایمر Qt برای تخلیه دوره‌ای.
+    هم‌زمانی push (از ترد کارگر) و _flush (از ترد UI) با QMutex محافظت شده.
     """
 
     batch_ready = Signal(list)  # ارسال بسته‌ای از آیتم‌ها برای رندر در جدول
@@ -59,6 +60,7 @@ class BatchUpdateManager(QObject):
         super().__init__(parent)
         self._queue: "queue.Queue[Any]" = queue.Queue()
         self._max_batch_size = max(1, int(max_batch_size))
+        self._mutex = QMutex()
 
         self._timer = QTimer(self)
         self._timer.setInterval(max(10, int(interval_ms)))
@@ -66,21 +68,24 @@ class BatchUpdateManager(QObject):
         self._timer.start()
 
     def push(self, item: Any) -> None:
-        """افزودن یک آیتم به صف پردازش دسته‌ای"""
-        self._queue.put(item)
+        """افزودن یک آیتم به صف پردازش دسته‌ای (thread-safe)"""
+        with QMutexLocker(self._mutex):
+            self._queue.put(item)
 
     def push_many(self, items: list) -> None:
-        """افزودن گروهی از آیتم‌ها به صف"""
-        for it in items:
-            self._queue.put(it)
+        """افزودن گروهی از آیتم‌ها به صف (thread-safe)"""
+        with QMutexLocker(self._mutex):
+            for it in items:
+                self._queue.put(it)
 
     def clear(self) -> None:
-        """پاک‌سازی صف جاری بدون دستکاری mutex خصوصی پایتون"""
-        try:
-            while True:
-                self._queue.get_nowait()
-        except queue.Empty:
-            pass
+        """پاک‌سازی صف جاری (thread-safe)"""
+        with QMutexLocker(self._mutex):
+            try:
+                while True:
+                    self._queue.get_nowait()
+            except queue.Empty:
+                pass
 
     def stop(self) -> None:
         """توقف تایمر و پاک‌سازی صف (برای فراخوانی هنگام بستن برنامه)"""
@@ -88,16 +93,16 @@ class BatchUpdateManager(QObject):
         self.clear()
 
     def _flush(self) -> None:
-        """تخلیه صف و ارسال داده‌ها به صورت پکیج به UI"""
-        if self._queue.empty():
-            return
-
+        """تخلیه صف و ارسال داده‌ها به صورت پکیج به UI (thread-safe)"""
         batch: list[Any] = []
-        while not self._queue.empty() and len(batch) < self._max_batch_size:
-            try:
-                batch.append(self._queue.get_nowait())
-            except queue.Empty:
-                break
+        with QMutexLocker(self._mutex):
+            if self._queue.empty():
+                return
+            while not self._queue.empty() and len(batch) < self._max_batch_size:
+                try:
+                    batch.append(self._queue.get_nowait())
+                except queue.Empty:
+                    break
 
         if batch:
             self.batch_ready.emit(batch)
@@ -283,7 +288,11 @@ class ScannerWorker(QThread):
         self._is_running = False
         self._should_stop = False
         self._mutex = QMutex()
-        self._auto_stop_event = threading.Event()
+
+        # تایمر توقف خودکار در همان ترد QThread (بدون threading.Thread)
+        self._auto_stop_timer = QTimer(self)
+        self._auto_stop_timer.setSingleShot(True)
+        self._auto_stop_timer.timeout.connect(self._on_auto_stop_timeout)
 
         self.start_time: Optional[datetime] = None
         self.end_time: Optional[datetime] = None
@@ -320,7 +329,8 @@ class ScannerWorker(QThread):
         with QMutexLocker(self._mutex):
             self._should_stop = True
 
-        self._auto_stop_event.set()  # آزادسازی thread timeout در صورت انتظار
+        # لغو تایمر توقف خودکار
+        self._auto_stop_timer.stop()
 
         try:
             self.status_changed.emit("⏹️ توقف درخواست شد...")
@@ -349,16 +359,9 @@ class ScannerWorker(QThread):
             self._is_running = True
             self._should_stop = False
 
-        # تایمر توقف خودکار (در ترد جداگانه)
-        auto_stop_thread: Optional[threading.Thread] = None
+        # تایمر توقف خودکار در همان ترد QThread
         if self.auto_stop_timeout > 0:
-            self._auto_stop_event.clear()
-            auto_stop_thread = threading.Thread(
-                target=self._auto_stop_loop,
-                daemon=True,
-                name="ScannerAutoStopTimer",
-            )
-            auto_stop_thread.start()
+            self._auto_stop_timer.start(self.auto_stop_timeout * 1000)
 
         try:
             logger.info("Background scan process started")
@@ -394,10 +397,8 @@ class ScannerWorker(QThread):
         except Exception as e:
             self._handle_error(e)
         finally:
-            # آزادسازی تایمر توقف خودکار
-            self._auto_stop_event.set()
-            if auto_stop_thread is not None and auto_stop_thread.is_alive():
-                auto_stop_thread.join(timeout=1.0)
+            # توقف تایمر در صورت اتمام طبیعی
+            self._auto_stop_timer.stop()
 
             with QMutexLocker(self._mutex):
                 self._is_running = False
@@ -407,16 +408,11 @@ class ScannerWorker(QThread):
     # Internal Helpers
     # ──────────────────────────────────────────────────────────────
 
-    def _auto_stop_loop(self) -> None:
+    def _on_auto_stop_timeout(self) -> None:
         """
-        ترد جانبی برای توقف خودکار اسکن پس از auto_stop_timeout.
-        با threading.Event قابل لغو است.
+        اسلوت تایمر توقف خودکار - اجرا می‌شود در ترد QThread.
+        جایگزین _auto_stop_loop که در threading.Thread اجرا می‌شد.
         """
-        if self._auto_stop_event.wait(timeout=self.auto_stop_timeout):
-            # رویداد توسط finally یا stop() تنظیم شده؛ یعنی توقف عادی
-            return
-
-        # اگر به اینجا برسیم یعنی timeout شده
         with QMutexLocker(self._mutex):
             if not self._is_running or self._should_stop:
                 return

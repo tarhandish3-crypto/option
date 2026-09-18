@@ -59,8 +59,14 @@ class CellFlashManager(QObject):
         if item is None:
             return
 
+        key = id(item)
+        # اگر فلش قبلی برای همین آیتم وجود دارد، آن را پاک کن تا
+        # تایمر قبلی در _on_tick به درستی حذف شود (جلوگیری از memory leak)
+        if key in self._active:
+            self._active.pop(key, None)
+
         base_color = ui_theme.get_flash_qcolor(direction)
-        self._active[id(item)] = {
+        self._active[key] = {
             "item": item,
             "start": time.monotonic(),
             "duration": max(duration_sec, _FLASH_TICK_MS / 1000.0),

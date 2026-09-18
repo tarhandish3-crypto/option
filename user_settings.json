@@ -24,19 +24,7 @@
             "custom_prices": {},
             "custom_prices_enabled": true,
             "excluded_symbols": [
-                "اخابر",
-                "اهرم",
-                "توان",
-                "خبهمن",
-                "خودرو",
-                "ذوب",
-                "شستا",
-                "شپنا",
-                "طعام",
-                "فزر",
-                "فملي",
-                "موج",
-                "وبصادر"
+                "شستا"
             ],
             "active_strategies": [
                 "covered_call",

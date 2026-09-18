@@ -79,6 +79,19 @@ class BaleNotifier:
         self.bot_token = bot_token.strip()
         self.chat_id = chat_id.strip()
         self._lock = threading.Lock()
+        self._on_success_callback = None
+        self._on_error_callback = None
+
+    def set_callbacks(self, on_success=None, on_error=None):
+        """
+        تنظیم توابع callback برای اطلاع‌رسانی نتیجه ارسال.
+
+        Args:
+            on_success: تابعی که با نام پارامترهای ارسال‌شده فراخوانی می‌شود
+            on_error: تابعی که با پیام خطا فراخوانی می‌شود
+        """
+        self._on_success_callback = on_success
+        self._on_error_callback = on_error
 
     @property
     def is_configured(self) -> bool:
@@ -104,6 +117,8 @@ class BaleNotifier:
         if not self.is_configured:
             logger.debug(
                 "BaleNotifier: Bot token or chat_id is missing. Skipping execution.")
+            if self._on_error_callback:
+                self._on_error_callback("توکن ربات یا شناسه کانال تنظیم نشده است")
             return
 
         if not opportunities:
@@ -118,10 +133,23 @@ class BaleNotifier:
 
         message = self._build_message(opportunities[:top_n])
 
+        # نگهداری reference به callbacks برای استفاده در thread
+        on_success = self._on_success_callback
+        on_error = self._on_error_callback
+
+        def send_with_callback():
+            """ارسال پیام و فراخوانی callback‌ها"""
+            result = send_message_to_bale(token, c_id, message, "Markdown")
+            if result is not None:
+                if on_success:
+                    on_success(opportunities, top_n)
+            else:
+                if on_error:
+                    on_error("ارسال پیام به بله با خطا مواجه شد")
+
         # ارسال در Thread پس‌زمینه
         t = threading.Thread(
-            target=send_message_to_bale,
-            args=(token, c_id, message, "Markdown"),
+            target=send_with_callback,
             daemon=True,
             name="BaleNotifierThread"
         )

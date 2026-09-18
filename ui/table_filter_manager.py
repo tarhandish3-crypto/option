@@ -157,9 +157,15 @@ class TableFilterManager:
 
     def preserve_filters(self) -> None:
         """ذخیره فیلترهای فعلی برای بازیابی پس از رفرش جدول"""
-        self._saved_filters = {
-            k: copy.copy(v) for k, v in self.filters.items()
-        }
+        self._saved_filters = {}
+        for k, v in self.filters.items():
+            # deepcopy برای metadata تا تغییرات بعدی روی اصلی تأثیری نداشته باشد
+            self._saved_filters[k] = ColumnFilter(
+                v.column_index,
+                v.column_name,
+                v.filter_func,
+                copy.deepcopy(v.metadata)
+            )
         logger.debug(f"Filters preserved: {len(self._saved_filters)}")
 
     def restore_filters(self) -> None:
@@ -172,10 +178,15 @@ class TableFilterManager:
             self._update_header_appearance(col_idx, has_filter=False)
         self.filters.clear()
 
-        # بازگردانی فیلترهای ذخیره‌شده
-        self.filters = {
-            k: copy.copy(v) for k, v in self._saved_filters.items()
-        }
+        # بازگردانی فیلترهای ذخیره‌شده با کپی عمیق metadata
+        self.filters = {}
+        for k, v in self._saved_filters.items():
+            self.filters[k] = ColumnFilter(
+                v.column_index,
+                v.column_name,
+                v.filter_func,
+                copy.deepcopy(v.metadata)
+            )
 
         # بروزرسانی ظاهر هدرها
         for col_idx in self.filters.keys():
