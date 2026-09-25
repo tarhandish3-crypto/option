@@ -1,0 +1,22 @@
+{
+  "bull_call_spread|فزر|ضفزر714|ضفزر719|23": {
+    "sent_at": "2026-09-25T22:35:24.996861",
+    "strategy": "bull_call_spread",
+    "underlying": "فزر",
+    "long_option_symbol": "ضفزر714",
+    "short_option_symbol": "ضفزر719",
+    "days_to_maturity": 23,
+    "maturity_date": "1405-07-26",
+    "composite_score": 22.9308
+  },
+  "covered_call|خساپا|STOCK|ضسپا8084|54": {
+    "sent_at": "2026-09-25T22:35:57.471159",
+    "strategy": "covered_call",
+    "underlying": "خساپا",
+    "long_option_symbol": "STOCK",
+    "short_option_symbol": "ضسپا8084",
+    "days_to_maturity": 54,
+    "maturity_date": "1405-08-27",
+    "composite_score": 13.8874
+  }
+}

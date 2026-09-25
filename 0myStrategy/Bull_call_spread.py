@@ -1,32 +1,5 @@
 # bull_call_spread_strategy.py
 # -*- coding: utf-8 -*-
-"""
-استراتژی Bull Call Spread با چارچوب تصمیم‌گیری چندلایه.
-
-معماری این ماژول:
-
-    1) بارگذاری داده بازار (Download + Clean + Derive)
-    2) بارگذاری پروفایل نوسان از Historical_Volatility.xlsx
-    3) Merge بر اساس UnderlyingTicker
-    4) سه رژیم موازی (RISK_FREE / NEAR_EXPIRY / NORMAL)
-    5) فیلتر سخت (سود، حاشیه، M_risk واقعی)
-    6) امتیازدهی ترکیبی:
-           Score = R^w_R × M^w_M × Φ(M_risk)
-                 × VolQualityFactor
-                 × ImbalanceFactor
-    7) رتبه‌بندی و تصمیم
-    8) ذخیره در اکسل
-
-نکات کلیدی:
-    - M_risk با استفاده از HV_60 واقعی هر نماد محاسبه می‌شود.
-    - Z-Score = M_30 / (HV_60 × sqrt(T/365)).
-    - ضریب عدم‌تعادل: ImbalanceFactor = min(1, (M/R)^0.5)
-      که موقعیت‌های نامتعادل (M << R) را جریمه می‌کند.
-    - ضریب کیفیت نوسان: (VolQuality/10)^0.3
-    - RSI به‌عنوان ضریب امتیازدهی حذف شده است چون در بازار ایران
-      قابل اعتماد نیست. اگر نیاز به فیلتر RSI دارید، در ماژول
-      volatility_calculate.py اعمال کنید.
-"""
 
 import sys
 from pathlib import Path
@@ -36,10 +9,14 @@ current_dir = current_file_path.parent
 root_dir = current_dir.parent
 sys.path.append(str(root_dir))
 
+import json
 import math
+import warnings
+import logging
 
 import numpy as np
 import pandas as pd
+import requests
 from scipy.stats import norm
 
 from config import (
@@ -53,6 +30,26 @@ from data.cleaner import DataCleaner
 from data.downloader import MarketDownloader
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+
+
+warnings.filterwarnings('ignore')
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 🎯 پیکربندی Bale (کاربر باید وارد کند)
+# ============================================================
+
+BALE_ENABLED = True
+BALE_BOT_TOKEN = "2144104837:M-1qbeWfXUTducuJS0aV4zu70P8xTr8Jzjk"
+BALE_CHAT_ID = "@Option_Mehdi"
+BALE_TOP_N = 1
+BALE_PARSE_MODE = "Markdown"
+BALE_TIMEOUT = 10
+
+# --- جلوگیری از ارسال تکراری ---
+BALE_DEDUP_ENABLED = True
+BALE_SENT_HISTORY_FILE = current_dir / "sent_positions.json"
 
 
 # ============================================================
@@ -69,9 +66,8 @@ NEAR_EXPIRY_PROB_SURVIVAL = 0.95
 # پارامترهای پیش‌فرض
 # ============================================================
 
-# --- رژیم عادی (NORMAL) ---
-DEFAULT_MIN_MONTHLY_RETURN = 6.0
-DEFAULT_MIN_MARGIN_FLOOR = 15.0
+DEFAULT_MIN_MONTHLY_RETURN = 7.0
+DEFAULT_MIN_MARGIN_FLOOR = 20.0
 DEFAULT_MARGIN_PERCENTILE = 60
 DEFAULT_MIN_RR_RATIO = 0.1
 DEFAULT_W_R = 0.4
@@ -80,13 +76,9 @@ DEFAULT_SIGMA_FALLBACK = 0.30
 DEFAULT_MIN_M_RISK = 2.0
 DEFAULT_DECISION_THRESHOLD = 3.0
 
-# --- ضریب کیفیت نوسان ---
 DEFAULT_VOL_QUALITY_POWER = 0.3
-
-# --- ضریب عدم‌تعادل (Anti-Imbalance) ---
 DEFAULT_IMBALANCE_POWER = 0.5
 
-# --- رژیم نزدیک سررسید ---
 NEAR_EXPIRY_THRESHOLD_DAYS = 1.0
 NEAR_EXPIRY_MIN_RETURN = 1.5
 NEAR_EXPIRY_MIN_MARGIN = 2.0
@@ -94,8 +86,250 @@ NEAR_EXPIRY_W_R = 0.6
 NEAR_EXPIRY_W_M = 0.4
 T_DISPLAY_EPSILON = 0.02
 
-# --- مسیر فایل نوسان ---
 VOLATILITY_FILE_NAME = "Historical_Volatility.xlsx"
+
+
+# ==========================================================================================
+# بخش ۰: Bale Notifier (داخلی)
+# ==========================================================================================
+
+def send_message_to_bale(message_text, bot_token=None, chat_id=None,
+                          parse_mode=None, timeout=None):
+    """ارسال پیام متنی به پیام‌رسان بله."""
+    if not BALE_ENABLED:
+        return None
+
+    token = bot_token or BALE_BOT_TOKEN
+    c_id = chat_id or BALE_CHAT_ID
+    mode = parse_mode if parse_mode is not None else BALE_PARSE_MODE
+    t_out = timeout or BALE_TIMEOUT
+
+    if not token or token == "YOUR_BOT_TOKEN":
+        print("[BALE] Bot token is not configured.")
+        return None
+
+    if not c_id or c_id == "YOUR_CHAT_ID":
+        print("[BALE] Chat ID is not configured.")
+        return None
+
+    url = f'https://tapi.bale.ai/bot{token}/sendMessage'
+    payload = {"chat_id": c_id, "text": message_text}
+    if mode:
+        payload["parse_mode"] = mode
+
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        response = requests.post(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+            headers=headers,
+            timeout=t_out
+        )
+        if response.status_code == 200:
+            print(f"[BALE] Message sent successfully.")
+            return response.json()
+        else:
+            print(f"[BALE] Failed: HTTP {response.status_code} - {response.text[:200]}")
+            return None
+    except requests.exceptions.Timeout:
+        print("[BALE] Timeout occurred.")
+        return None
+    except Exception as e:
+        print(f"[BALE] Error: {e}")
+        return None
+
+
+def _format_number(value, decimals=0):
+    """فرمت عدد با کاما."""
+    if value is None or pd.isna(value):
+        return "N/A"
+    try:
+        if decimals > 0:
+            return f"{float(value):,.{decimals}f}"
+        return f"{int(round(float(value))):,}"
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def build_bull_call_spread_message(row):
+    """ساخت پیام Bull Call Spread برای ارسال به بله."""
+    underlying = row.get('underlying', 'N/A')
+    long_sym = row.get('long_option_symbol', 'N/A')
+    long_strike = row.get('long_strike', 0)
+    long_premium = row.get('long_ask_premium', 0)
+    short_sym = row.get('short_option_symbol', 'N/A')
+    short_strike = row.get('short_strike', 0)
+    short_premium = row.get('short_bid_premium', 0)
+    stock_price = row.get('stock_price', 0)
+    break_even = row.get('break_even_price', 0)
+    capital = row.get('capital_at_risk', 0)
+    monthly_return = row.get('monthly_return_%', 0)
+    score = row.get('composite_score', 0)
+    days = row.get('days_to_maturity', 0)
+    margin30 = row.get('margin30', 0)
+    raw_margin = row.get('raw_margin_percent', 0)
+    maturity_date = row.get('maturity_date', 'N/A')
+
+    message = (
+        "🤖 *فرصت جدید استراتژی Bull Call Spread*" + "\n"
+        + "------------------------------------" + "\n"
+        + f"📌 *نماد پایه:* `{underlying}`" + "\n"
+        + f"🟢 *ساق خرید:* `{long_sym}` (اعمال: {_format_number(long_strike)} | پریمیوم: {_format_number(long_premium)})" + "\n"
+        + f"🔴 *ساق فروش:* `{short_sym}` (اعمال: {_format_number(short_strike)} | پریمیوم: {_format_number(short_premium)})" + "\n"
+        + "------------------------------------" + "\n"
+        + f"📊 *قیمت سهم پایه:* `{_format_number(stock_price)}` ریال" + "\n"
+        + f"🎯 *قیمت سربه‌سر:* `{_format_number(break_even)}` ریال" + "\n"
+        + f"🛡 *حاشیه امنیت واقعی:* `%{_format_number(raw_margin, 2)}`" + "\n"
+        + f"📐 *حاشیه امنیت ماهانه:* `%{_format_number(margin30, 2)}`" + "\n"
+        + f"💰 *سرمایه درگیر:* `{_format_number(capital)}` ریال" + "\n"
+        + f"📈 *سود ماهانه:* `%{_format_number(monthly_return, 1)}`" + "\n"
+        + f"🏆 *امتیازبندی:* `{_format_number(score, 1)}`" + "\n"
+        + f"⏱ *روز تا سررسید:* `{days}` روز" + "\n"
+        + f"📅 *تاریخ اعمال:* `{maturity_date}`"
+    )
+
+    return message
+
+
+# ==========================================================================================
+# بخش ۰.۵: مدیریت تاریخچه ارسال به بله (جلوگیری از تکرار)
+# ==========================================================================================
+
+def _load_sent_history():
+    """بارگذاری تاریخچه ارسال‌شده از فایل JSON."""
+    if not BALE_DEDUP_ENABLED:
+        return {}
+
+    if not BALE_SENT_HISTORY_FILE.exists():
+        return {}
+
+    try:
+        with open(BALE_SENT_HISTORY_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except Exception as e:
+        print(f"[BALE-DEDUP] Error loading history: {e}")
+        return {}
+
+
+def _save_sent_history(history):
+    """ذخیره تاریخچه در فایل JSON."""
+    if not BALE_DEDUP_ENABLED:
+        return
+
+    try:
+        with open(BALE_SENT_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[BALE-DEDUP] Error saving history: {e}")
+
+
+def _build_fingerprint(underlying, long_sym, short_sym, days, strategy):
+    """
+    ساخت اثر انگشت یکتا برای یک موقعیت.
+
+    موقعیت جدید = تغییر در حداقل یکی از این ۵ عنصر:
+        - استراتژی
+        - نماد پایه
+        - ساق خرید (Long)
+        - ساق فروش (Short)
+        - روز تا سررسید
+    """
+    s = str(strategy).strip()
+    u = str(underlying).strip()
+    l = str(long_sym).strip()
+    sh = str(short_sym).strip()
+    d = str(int(days))
+    return f"{s}|{u}|{l}|{sh}|{d}"
+
+
+def _is_already_sent(fingerprint, history):
+    """آیا این موقعیت قبلاً ارسال شده است؟"""
+    return fingerprint in history
+
+
+def _mark_as_sent(fingerprint, history, row, strategy_type="bull_call_spread"):
+    """ثبت موقعیت به‌عنوان ارسال‌شده."""
+    history[fingerprint] = {
+        'sent_at': pd.Timestamp.now().isoformat(),
+        'strategy': strategy_type,
+        'underlying': str(row.get('underlying', '')),
+        'long_option_symbol': str(row.get('long_option_symbol', '')),
+        'short_option_symbol': str(row.get('short_option_symbol', '')),
+        'days_to_maturity': int(row.get('days_to_maturity', 0)),
+        'maturity_date': str(row.get('maturity_date', '')),
+        'composite_score': float(row.get('composite_score', 0))
+            if pd.notna(row.get('composite_score', 0)) else 0.0,
+    }
+
+
+def send_best_position_to_bale(result_df):
+    """
+    ارسال بهترین موقعیت Bull Call Spread به بله.
+
+    منطق جلوگیری از تکرار:
+        - اثر انگشت = strategy | underlying | long_sym | short_sym | days
+        - اگر موقعیت قبلاً ارسال شده باشد، دوباره ارسال نمی‌شود.
+        - اگر حتی یکی از این ۵ عنصر تغییر کند، موقعیت جدید است و ارسال می‌شود.
+    """
+    if not BALE_ENABLED:
+        print("\n[SKIP] Bale notification is disabled.")
+        return
+
+    if BALE_BOT_TOKEN == "YOUR_BOT_TOKEN" or BALE_CHAT_ID == "YOUR_CHAT_ID":
+        print("\n[SKIP] Bale bot_token or chat_id is not configured.")
+        return
+
+    if result_df is None or result_df.empty:
+        print("\n[BALE] No results to send.")
+        return
+
+    enter_df = result_df[result_df['decision'] == 'ENTER']
+    if enter_df.empty:
+        print("\n[BALE] No ENTER positions.")
+        return
+
+    # ===== بارگذاری تاریخچه =====
+    history = _load_sent_history()
+    print(f"\n[BALE-DEDUP] History: {len(history)} records.")
+
+    top_n = enter_df.head(BALE_TOP_N)
+    sent_count = 0
+    skipped_count = 0
+
+    for _, row in top_n.iterrows():
+        # ساخت اثر انگشت (شامل strategy)
+        fingerprint = _build_fingerprint(
+            underlying=row.get('underlying', ''),
+            long_sym=row.get('long_option_symbol', ''),
+            short_sym=row.get('short_option_symbol', ''),
+            days=row.get('days_to_maturity', 0),
+            strategy="bull_call_spread",
+        )
+
+        if _is_already_sent(fingerprint, history):
+            print(f"[BALE-DEDUP] SKIP duplicate: {fingerprint}")
+            skipped_count += 1
+            continue
+
+        # ===== ارسال =====
+        msg = build_bull_call_spread_message(row)
+        result = send_message_to_bale(msg)
+
+        if result is not None:
+            _mark_as_sent(
+                fingerprint, history, row,
+                strategy_type="bull_call_spread"
+            )
+            sent_count += 1
+            print(f"[BALE-DEDUP] SENT new: {fingerprint}")
+
+    # ===== ذخیره تاریخچه =====
+    _save_sent_history(history)
+    print(f"[BALE-DEDUP] Sent: {sent_count}, Skipped: {skipped_count}")
 
 
 # ============================================================
@@ -114,17 +348,7 @@ def bull_call_spread_analysis(
     exercise_tax_rate,
     days,
 ):
-    """
-    محاسبه پارامترهای استراتژی Bull Call Spread با کارمزد و مالیات.
-
-    خروجی شامل:
-        - capital_at_risk, max_net_profit, max_profit_percent
-        - monthly_return (R_30 خطی)
-        - break_even_price, break_even_percent, break_even_percent_scale
-        - risk_reward_ratio
-        - is_near_expiry, raw_return_percent, raw_margin_percent
-    """
-    # ۱. پریمیوم و کارمزد ورود
+    """محاسبه پارامترهای استراتژی Bull Call Spread با کارمزد و مالیات."""
     long_premium_total = round(long_ask_premium * contract_size, 0)
     long_entry_fee = round(long_premium_total * opt_buy_commission, 0)
 
@@ -132,12 +356,8 @@ def bull_call_spread_analysis(
     short_entry_fee = -round(short_premium_total * opt_sell_commission, 0)
 
     net_debit = (long_premium_total + long_entry_fee) - (
-        short_premium_total + short_entry_fee
-    )
+        short_premium_total + short_entry_fee)
 
-    # ۲. کارمزدهای اعمال + مالیات انتقال
-    # توجه: کارمزد اعمال در هر دو سمت پرداخت می‌شود، اما مالیات انتقال
-    # فقط در سمتی که سهم تحویل داده می‌شود (اینجا: Short).
     long_exercise_fee = round((long_strike * contract_size) * exercise_fee_rate, 0)
     short_exercise_fee = round((short_strike * contract_size) * exercise_fee_rate, 0)
     short_transfer_tax = round((short_strike * contract_size) * exercise_tax_rate, 0)
@@ -145,7 +365,6 @@ def bull_call_spread_analysis(
     short_total_exercise_cost = short_exercise_fee + short_transfer_tax
     total_exercise_costs = long_exercise_fee + short_total_exercise_cost
 
-    # ۳. تحلیل سود و زیان
     min_profit_or_loss = -net_debit
     max_payoff = (short_strike - long_strike) * contract_size
     max_net_profit = max_payoff - net_debit - total_exercise_costs
@@ -157,7 +376,6 @@ def bull_call_spread_analysis(
     days_raw = float(days)
     is_near_expiry = days_raw <= NEAR_EXPIRY_THRESHOLD_DAYS
 
-    # حالت آربیتراژ (بدون ریسک)
     if min_profit_or_loss >= 0:
         return {
             'status': 'RISK_FREE',
@@ -174,23 +392,19 @@ def bull_call_spread_analysis(
             'raw_margin_percent': None,
         }
 
-    # ۴. سربه‌سر
     break_even_price = long_strike + ((net_debit + long_exercise_fee) / contract_size)
 
     if stock_price > 0:
         break_even_percent = round(
-            ((break_even_price - stock_price) / stock_price) * 100, 2
-        )
+            ((break_even_price - stock_price) / stock_price) * 100, 2)
     else:
         break_even_percent = 0.0
 
-    # مقادیر خام (بدون ماهانه‌سازی)
     max_profit_percent = round((max_net_profit / capital_at_risk) * 100, 2)
     raw_return_percent = max_profit_percent
     raw_margin_percent = -break_even_percent
     risk_reward_ratio = round(max_net_profit / capital_at_risk, 2)
 
-    # ۵. مقیاس‌بندی زمانی
     days_safe_for_display = max(T_DISPLAY_EPSILON, days_raw)
     time_factor = math.sqrt(days_safe_for_display / 30.0)
 
@@ -214,44 +428,10 @@ def bull_call_spread_analysis(
 
 
 # ============================================================
-# لایه ۰: بارگذاری داده بازار
-# ============================================================
-def load_and_filter_data():
-    """بارگذاری داده‌های بازار و فیلتر اولیه اختیارهای خرید (CALL)."""
-    df_raw = MarketDownloader.from_tsetmc_direct()
-    df_cleaned = DataCleaner.clean(df_raw)
-    df_final = DataCleaner.add_derived_columns(df_cleaned)
-
-    filter_option = df_final[
-        (df_final['DaysToMaturity'] >= 0.0)
-        & (df_final['Type'].apply(lambda x: x.name == 'CALL'))
-    ].copy()
-
-    EXCLUDED_UNDERLYING = ['اهرم']
-    EXCLUDED_NAME_PATTERN = ['1405/04', '1405-04']
-    exclude_mask = (
-        filter_option['UnderlyingTicker'].isin(EXCLUDED_UNDERLYING)
-    ) & (
-        filter_option['Name'].str.contains(
-            '|'.join(EXCLUDED_NAME_PATTERN), na=False
-        )
-    )
-    filter_option = filter_option[~exclude_mask].copy()
-
-    return filter_option
-
-
-# ============================================================
 # لایه ۰.۵: بارگذاری پروفایل نوسان
 # ============================================================
 def load_volatility_profile():
-    """
-    بارگذاری پروفایل نوسان از Historical_Volatility.xlsx.
-
-    فقط ستون‌های موردنیاز برای امتیازدهی بارگذاری می‌شوند:
-        - HV_60 (برای محاسبه Z-Score)
-        - VolatilityQualityScore (برای ضریب کیفیت)
-    """
+    """بارگذاری پروفایل نوسان از Historical_Volatility.xlsx."""
     filepath = current_dir / VOLATILITY_FILE_NAME
 
     if not filepath.exists():
@@ -293,13 +473,7 @@ def add_margin30_column(df):
 
 
 def add_margin_risk_column(df):
-    """
-    محاسبه M_risk و Z_score با استفاده از HV_60 واقعی.
-
-    فرمول:
-        M_risk = (M_raw / 100) / (HV_60 × sqrt(T/365))
-        Z_score = M_risk
-    """
+    """محاسبه M_risk و Z_score با استفاده از HV_60 واقعی."""
     df = df.copy()
     if 'margin30' not in df.columns:
         df = add_margin30_column(df)
@@ -309,8 +483,7 @@ def add_margin_risk_column(df):
 
     if 'HV_60' in df.columns:
         sigma = df['HV_60'].fillna(DEFAULT_SIGMA_FALLBACK).clip(
-            lower=0.05, upper=2.0
-        )
+            lower=0.05, upper=2.0)
     else:
         sigma = pd.Series(DEFAULT_SIGMA_FALLBACK, index=df.index)
 
@@ -334,19 +507,7 @@ def apply_hard_constraints(
     near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
     near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,
 ):
-    """
-    فیلتر سخت‌گیرانه:
-
-        RISK_FREE    -> بدون فیلتر
-        NEAR_EXPIRY  -> فیلتر ساده روی مقادیر خام
-        NORMAL       -> سه شرط:
-                            1) R_30 >= min_monthly_return
-                            2) M_30 >= max(min_margin_floor, Percentile)
-                            3) M_risk >= min_m_risk (Z-Score)
-
-    نکته: فیلترهای نوسان (HV, RSI, Trend) در ماژول
-    volatility_calculate.py اعمال می‌شوند.
-    """
+    """فیلتر سخت‌گیرانه."""
     if df.empty:
         return df
 
@@ -360,32 +521,23 @@ def apply_hard_constraints(
     df_near = df[near_expiry_mask].copy()
     df_normal = df[normal_mask].copy()
 
-    # --- NEAR_EXPIRY ---
     if not df_near.empty:
         df_near = df_near[
             (df_near['raw_return_percent'] >= near_expiry_min_return)
-            & (df_near['raw_margin_percent'] >= near_expiry_min_margin)
-        ].copy()
+            & (df_near['raw_margin_percent'] >= near_expiry_min_margin)].copy()
 
-    # --- NORMAL ---
     if not df_normal.empty:
-        # شرط ۱: حداقل بازده
         df_normal = df_normal[
-            df_normal['monthly_return_%'] >= min_monthly_return
-        ].copy()
+            df_normal['monthly_return_%'] >= min_monthly_return].copy()
 
         if not df_normal.empty:
-            # شرط ۲: حداقل حاشیه (آستانه پویا)
             dynamic_threshold = np.percentile(
-                df_normal['margin30'], margin_percentile
-            )
+                df_normal['margin30'], margin_percentile)
             effective_margin_min = max(min_margin_floor, dynamic_threshold)
 
             df_normal = df_normal[
-                df_normal['margin30'] >= effective_margin_min
-            ].copy()
+                df_normal['margin30'] >= effective_margin_min].copy()
 
-        # شرط ۳: M_risk (Z-Score)
         if not df_normal.empty:
             df_normal = add_margin_risk_column(df_normal)
             df_normal = df_normal[df_normal['M_risk'] >= min_m_risk].copy()
@@ -403,21 +555,7 @@ def calculate_composite_score(
     vol_quality_power=DEFAULT_VOL_QUALITY_POWER,
     imbalance_power=DEFAULT_IMBALANCE_POWER,
 ):
-    """
-    امتیازدهی نهایی با ضرایب ترکیبی:
-
-        Score = R^w_R × M^w_M × Φ(M_risk)
-              × VolQualityFactor
-              × ImbalanceFactor
-
-    که:
-        ImbalanceFactor = min(1, (M/R)^imbalance_power)
-        VolFactor       = (VolQuality/10)^vol_quality_power
-
-    نکته: ضریب RSI حذف شده است چون در بازار ایران قابل اعتماد نیست.
-    اگر می‌خواهید RSI را فیلتر کنید، در ماژول volatility_calculate.py
-    این کار را انجام دهید.
-    """
+    """امتیازدهی نهایی با ضرایب ترکیبی."""
     if df.empty:
         return df
 
@@ -433,7 +571,6 @@ def calculate_composite_score(
     df_near = df[near_expiry_mask].copy()
     df_normal = df[normal_mask].copy()
 
-    # ===== RISK_FREE =====
     if not df_rf.empty:
         df_rf['prob_survival'] = 1.0
         df_rf['M_risk'] = np.inf
@@ -443,7 +580,6 @@ def calculate_composite_score(
         df_rf['imbalance_factor'] = 1.0
         df_rf['composite_score'] = RISK_FREE_SCORE_SENTINEL
 
-    # ===== NEAR_EXPIRY =====
     if not df_near.empty:
         raw_R = df_near['raw_return_percent'].astype(float)
         raw_M = df_near['raw_margin_percent'].astype(float)
@@ -451,8 +587,7 @@ def calculate_composite_score(
         base_near = (
             NEAR_EXPIRY_SCORE_BASE
             + NEAR_EXPIRY_W_R * raw_R
-            + NEAR_EXPIRY_W_M * raw_M
-        ).round(4)
+            + NEAR_EXPIRY_W_M * raw_M).round(4)
 
         df_near['prob_survival'] = NEAR_EXPIRY_PROB_SURVIVAL
         df_near['M_risk'] = np.inf
@@ -462,7 +597,6 @@ def calculate_composite_score(
         df_near['imbalance_factor'] = 1.0
         df_near['composite_score'] = base_near
 
-    # ===== NORMAL =====
     if not df_normal.empty:
         if 'M_risk' not in df_normal.columns:
             df_normal = add_margin_risk_column(df_normal)
@@ -474,37 +608,28 @@ def calculate_composite_score(
         prob_survival = norm.cdf(M_risk)
         df_normal['prob_survival'] = np.round(prob_survival, 4)
 
-        # فرمول پایه: Cobb-Douglas
         score_cd = (R30 ** w_r) * (M30 ** w_m)
         df_normal['score_cobb_douglas'] = (score_cd * prob_survival).round(4)
 
-        # فرمول CRRA (برای مقایسه)
         score_crra = np.sqrt(R30 * M30) * prob_survival
         df_normal['score_crra'] = score_crra.round(4)
 
-        # ضریب کیفیت نوسان
         if 'VolatilityQualityScore' in df_normal.columns:
-            vq = df_normal['VolatilityQualityScore'].fillna(10.0).clip(
-                lower=0.0, upper=10.0
-            )
+            vq = df_normal['VolatilityQualityScore'].fillna(5.0).clip(lower=0.0, upper=10.0)
             vol_factor = (vq / 10.0) ** vol_quality_power
         else:
             vol_factor = pd.Series(1.0, index=df_normal.index)
         df_normal['vol_quality_factor'] = np.round(vol_factor, 4)
 
-        # ضریب عدم‌تعادل (Anti-Imbalance)
         ratio = (M30 / R30.replace(0, np.nan)).replace(
-            [np.inf, -np.inf], np.nan
-        ).fillna(1.0)
+            [np.inf, -np.inf], np.nan).fillna(1.0)
         imbalance_factor = np.minimum(1.0, ratio ** imbalance_power)
         df_normal['imbalance_factor'] = np.round(imbalance_factor, 4)
 
-        # امتیاز نهایی
         df_normal['composite_score'] = (
             score_cd * prob_survival
             * vol_factor
-            * imbalance_factor
-        ).round(4)
+            * imbalance_factor).round(4)
 
     return pd.concat([df_rf, df_near, df_normal])
 
@@ -548,6 +673,21 @@ def run_bull_call_spread_strategy(
                 for j in range(i + 1, n):
                     long_leg = options_list[i]
                     short_leg = options_list[j]
+
+                    # ===== محافظ: هر دو ساق باید CALL باشند =====
+                    long_type = (
+                        long_leg['Type'].name
+                        if hasattr(long_leg['Type'], 'name')
+                        else str(long_leg['Type']).upper()
+                    )
+                    short_type = (
+                        short_leg['Type'].name
+                        if hasattr(short_leg['Type'], 'name')
+                        else str(short_leg['Type']).upper()
+                    )
+
+                    if long_type != 'CALL' or short_type != 'CALL':
+                        continue
 
                     stock_price = long_leg['UnderlyingPrice']
                     contract_size = long_leg['ContractSize']
@@ -609,6 +749,7 @@ def run_bull_call_spread_strategy(
                         'days_to_maturity': days,
                         'long_volume': int(long_leg.get('Volume', 0)),
                         'short_volume': int(short_leg.get('Volume', 0)),
+                        'maturity_date': str(long_leg.get('MaturityDate', '')),
                     })
 
     if not results_fee:
@@ -616,14 +757,14 @@ def run_bull_call_spread_strategy(
 
     result_df = pd.DataFrame(results_fee)
 
-    # ===== Merge با نوسان =====
+    # Merge با نوسان
     if df_vol is not None and not df_vol.empty:
         result_df = pd.merge(result_df, df_vol, on='underlying', how='left')
     else:
         result_df['HV_60'] = np.nan
         result_df['VolatilityQualityScore'] = np.nan
 
-    # ===== لایه ۲: فیلترینگ سخت =====
+    # لایه ۲: فیلترینگ سخت
     result_df_filtered = apply_hard_constraints(
         result_df,
         min_monthly_return=min_monthly_return,
@@ -637,7 +778,7 @@ def run_bull_call_spread_strategy(
     if result_df_filtered.empty:
         return result_df_filtered
 
-    # ===== لایه ۳: امتیازدهی =====
+    # لایه ۳: امتیازدهی
     result_df_filtered = calculate_composite_score(
         result_df_filtered,
         w_r=w_r,
@@ -646,16 +787,14 @@ def run_bull_call_spread_strategy(
         imbalance_power=imbalance_power,
     )
 
-    # ===== لایه ۴: رتبه‌بندی =====
+    # لایه ۴: رتبه‌بندی
     result_df_filtered = result_df_filtered.sort_values(
-        by='composite_score', ascending=False
-    ).reset_index(drop=True)
+        by='composite_score', ascending=False).reset_index(drop=True)
 
-    # ===== لایه ۵: تصمیم =====
+    # لایه ۵: تصمیم
     always_enter_mask = (
         (result_df_filtered['composite_score'] == RISK_FREE_SCORE_SENTINEL)
-        | (result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE)
-    )
+        | (result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE))
     result_df_filtered['decision'] = np.where(
         always_enter_mask,
         'ENTER',
@@ -690,6 +829,7 @@ def run_bull_call_spread_strategy(
         'break_even_price', 'break_even_percent',
         'break_even_percent_scale', 'risk_reward_ratio',
         'days_to_maturity', 'long_volume', 'short_volume',
+        'maturity_date',
     ]
     column_order = [c for c in column_order if c in result_df_filtered.columns]
     result_df_filtered = result_df_filtered[column_order]
@@ -765,6 +905,7 @@ def save_results_to_excel(result_df, filename="result_bull_call_spread.xlsx"):
         'days_to_maturity': 'روز تا سررسید',
         'long_volume': 'حجم خرید',
         'short_volume': 'حجم فروش',
+        'maturity_date': 'تاریخ اعمال',
     }
 
     result_df_renamed = result_df.rename(columns=rename_dict)
@@ -776,14 +917,12 @@ def save_results_to_excel(result_df, filename="result_bull_call_spread.xlsx"):
         )
         worksheet = writer.sheets['bull_call_spread']
 
-        # هدر
         for col_idx in range(1, len(result_df_renamed.columns) + 1):
             cell = worksheet.cell(row=1, column=col_idx)
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = alignment
 
-        # بدنه
         for row_idx in range(2, len(result_df_renamed) + 2):
             for col_idx in range(1, len(result_df_renamed.columns) + 1):
                 cell = worksheet.cell(row=row_idx, column=col_idx)
@@ -801,7 +940,6 @@ def save_results_to_excel(result_df, filename="result_bull_call_spread.xlsx"):
         )
         worksheet.freeze_panes = 'A2'
 
-        # تنظیم عرض ستون‌ها
         for col in worksheet.columns:
             max_length = 0
             column = col[0].column_letter
@@ -839,7 +977,17 @@ def main():
             print(f"\nVolatility profile: {len(df_vol)} symbols loaded")
 
         # ===== بارگذاری داده بازار =====
-        filtered_data = load_and_filter_data()
+        df_raw = MarketDownloader.from_tsetmc_direct()
+        df_cleaned = DataCleaner.clean(df_raw)
+        df_final = DataCleaner.add_derived_columns(df_cleaned)
+
+        # ===== فیلتر CALL =====
+        is_call_mask = df_final['Type'].apply(
+            lambda x: x.name == 'CALL' if hasattr(x, 'name')
+            else str(x).upper() == 'CALL')
+
+        filtered_data = df_final[
+            (df_final['DaysToMaturity'] >= 0.0) & is_call_mask].copy()
 
         if filtered_data.empty:
             print("No market data found.")
@@ -874,21 +1022,8 @@ def main():
         # ===== ذخیره در اکسل =====
         save_results_to_excel(results)
 
-        # ===== خلاصه تصمیم‌ها =====
-        print("\n=== Decision Summary ===")
-        for regime in ['RISK_FREE', 'NEAR_EXPIRY', 'NORMAL']:
-            regime_df = results[results['regime'] == regime]
-            if regime_df.empty:
-                continue
-            enter_count = (regime_df['decision'] == 'ENTER').sum()
-            skip_count = (regime_df['decision'] == 'SKIP').sum()
-            print(f"   [{regime}] ENTER: {enter_count}   SKIP: {skip_count}")
-
-        entered = results[results['decision'] == 'ENTER']
-        if not entered.empty:
-            best = entered.iloc[0]
-            print("\n=== Best Position ===")
-            print(f"   Composite Score: {best['composite_score']}")
+        # ===== ارسال به بله =====
+        send_best_position_to_bale(results)
 
     except Exception as e:
         import traceback

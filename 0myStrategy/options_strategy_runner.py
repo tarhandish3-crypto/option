@@ -1,475 +1,1206 @@
-# options_strategy_runner.py
+# 0myStrategy/strategies_analyzer.py
 # -*- coding: utf-8 -*-
+"""
+ماژول ترکیبی استراتژی‌های Bull Call Spread و Covered Call.
+
+معماری این ماژول:
+
+    1) دریافت صف نمادهای پایه از TSETMC (یک‌بار)
+    2) دانلود دیتای آپشن (یک‌بار، تازه‌ترین)
+    3) فیلتر CALL
+    4) استخراج option_symbols از UnderlyingTicker
+    5) حذف نمادهای صف خرید
+    6) بارگذاری Historical_Volatility.xlsx
+    7) اجرای Bull Call Spread (اختیاری - با پارامترهای اختصاصی)
+    8) اجرای Covered Call (اختیاری - با پارامترهای اختصاصی)
+    9) ذخیره در یک فایل اکسل با دو شیت مجزا
+
+نکات کلیدی:
+    - دیتای آپشن فقط یک‌بار دانلود می‌شود (اشتراک بین دو استراتژی).
+    - صف نمادهای پایه فقط یک‌بار دریافت می‌شود.
+    - پارامترهای هر استراتژی مستقل هستند.
+    - فعال/غیرفعال بودن هر استراتژی به اختیار کاربر.
+    - خروجی: strategy_results.xlsx با دو شیت.
+    - ستون‌های اضافی (Cobb-Douglas, CRRA, prob_survival, Z_score,
+      vol_quality_factor, imbalance_factor) در اکسل ذخیره نمی‌شوند.
+    - ستون‌های محاسباتی (raw_return_percent, raw_margin_percent,
+      break_even_percent_scale) حفظ می‌شوند.
+"""
 
 import sys
-import math
 from pathlib import Path
-from datetime import datetime
-import pandas as pd
-from openpyxl.utils import get_column_letter
-from openpyxl.styles import PatternFill, Font, Alignment
 
-# تنظیم مسیر پروژه
 current_file_path = Path(__file__).resolve()
 current_dir = current_file_path.parent
 root_dir = current_dir.parent
 sys.path.append(str(root_dir))
 
-from data.downloader import MarketDownloader
-from data.cleaner import DataCleaner
+import math
+import warnings
+import logging
+
+import numpy as np
+import pandas as pd
+from scipy.stats import norm
+
 from config import (
+    EXERCISE_TAX_RATE,
     get_commission_rate,
     get_exercise_fee_rate,
     get_symbol_kind,
     get_symbol_market,
-    EXERCISE_TAX_RATE,  # نرخ مالیات تسویه/اعمال سمت فروشنده سهم
 )
+from data.cleaner import DataCleaner
+from data.downloader import MarketDownloader
+from data.market_queue import (
+    get_buy_queue_symbols,
+    filter_by_option_symbols,
+)
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 
-# ============================================================================
-# ۱. تابع مستقیم محاسبه وجه تضمین (تضمین اولیه و مسدودی سمات)
-# ============================================================================
-
-def calculate_tse_margin(
-    option_type: str,
-    stock_price: float,
-    strike_price: float,
-    premium: float,
-    contract_size: int = 1000,
-    asset_kind: str = 'stock') -> dict:
-    """
-    محاسبه مستقیم وجه تضمین اولیه و مسدودی براساس فرمول رسمی سمات (بورس تهران)
-    """
-    opt_type = option_type.upper()
-    margin_coeff = 0.15 if asset_kind.lower() == 'etf' else 0.20
-
-    if opt_type == 'CALL':
-        otm_amount = max(0, strike_price - stock_price)
-    elif opt_type == 'PUT':
-        otm_amount = max(0, stock_price - strike_price)
-
-    strike_minus_otm = strike_price - otm_amount
-    stock_margin = margin_coeff * stock_price
-    base_per_share = max(strike_minus_otm, stock_margin)
-
-    initial_margin_per_share = math.ceil(base_per_share / 10000.0) * 10000.0
-    initial_margin_total = round(initial_margin_per_share * contract_size, 0)
-    total_premium = round(premium * contract_size, 0)
-    required_margin_total = max(0, initial_margin_total - total_premium)
-
-    return {
-        'initial_margin': initial_margin_total,
-        'required_margin': required_margin_total,
-        'initial_margin_per_share': initial_margin_per_share,
-    }
+warnings.filterwarnings('ignore')
+logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# ۲. توابع محاسباتی استراتژی‌ها با اعمال EXERCISE_TAX_RATE
-# ============================================================================
-
-def calc_long_call(premium, stock_price, strike_price, contract_size, buy_commission, exercise_fee_rate, days):
-    """
-    محاسبه Long Call: خریدار سهم در زمان اعمال (بدون مالیات فروش سهم)
-    """
-    premium_total = round(premium * contract_size, 0)
-    entry_fee = -round(premium_total * buy_commission, 0)
-    cost_basis = premium_total + abs(entry_fee)
-
-    intrinsic_value = max(0, stock_price - strike_price) * contract_size
-    exercise_fee = 0
-    if stock_price > strike_price:
-        settlement_amount = strike_price * contract_size
-        exercise_fee = -round(settlement_amount * exercise_fee_rate, 0)
-
-    net_profit = intrinsic_value - cost_basis + exercise_fee
-    profit_percent = round((net_profit / cost_basis) * 100, 2) if cost_basis > 0 else 0.0
-
-    days_adj = max(days, 1.0)
-    monthly_return = round(profit_percent * (30 / days_adj), 2)
-
-    break_even_price = round(strike_price + (cost_basis / contract_size), 0)
-    break_even_percent = round(((break_even_price - stock_price) / stock_price) * 100, 2) if stock_price > 0 else 0.0
-
-    return {
-        'net_profit': net_profit,
-        'profit_percent': profit_percent,
-        'monthly_return': monthly_return,
-        'break_even_price': break_even_price,
-        'break_even_percent': break_even_percent,
-        'capital_at_risk': cost_basis,
-        'fees_total': entry_fee + exercise_fee
-    }
+# ============================================================
+# ثابت‌های Sentinel
+# ============================================================
+RISK_FREE_BREAK_EVEN_SENTINEL = -999.0
+RISK_FREE_RETURN_SENTINEL = 999999.0
+RISK_FREE_SCORE_SENTINEL = 999999.0
+NEAR_EXPIRY_SCORE_BASE = RISK_FREE_SCORE_SENTINEL - 111111.0
+NEAR_EXPIRY_PROB_SURVIVAL = 0.95
 
 
-def calc_long_put(premium, stock_price, strike_price, contract_size, buy_commission, exercise_fee_rate, exercise_tax_rate, days):
-    """
-    محاسبه Long Put: خریدار اختیار فروش (در اعمال، شما فروشنده سهم هستید و مشمول EXERCISE_TAX_RATE می‌شوید)
-    """
-    premium_total = round(premium * contract_size, 0)
-    entry_fee = -round(premium_total * buy_commission, 0)
-    cost_basis = premium_total + abs(entry_fee)
+# ============================================================
+# پارامترهای اختصاصی Bull Call Spread
+# ============================================================
 
-    intrinsic_value = max(0, strike_price - stock_price) * contract_size
-    exercise_fee = 0
-    exercise_tax = 0
-
-    if stock_price < strike_price:
-        settlement_amount = strike_price * contract_size
-        exercise_fee = -round(settlement_amount * exercise_fee_rate, 0)
-        exercise_tax = -round(settlement_amount * exercise_tax_rate, 0)
-
-    total_exercise_costs = exercise_fee + exercise_tax
-    net_profit = intrinsic_value - cost_basis + total_exercise_costs
-    profit_percent = round((net_profit / cost_basis) * 100, 2) if cost_basis > 0 else 0.0
-
-    days_adj = max(days, 1.0)
-    monthly_return = round(profit_percent * (30 / days_adj), 2)
-
-    total_cost_per_share = (cost_basis + abs(total_exercise_costs)) / contract_size
-    break_even_price = round(strike_price - total_cost_per_share, 0)
-    break_even_percent = round(((stock_price - break_even_price) / stock_price) * 100, 2) if stock_price > 0 else 0.0
-
-    return {
-        'net_profit': net_profit,
-        'profit_percent': profit_percent,
-        'monthly_return': monthly_return,
-        'break_even_price': break_even_price,
-        'break_even_percent': break_even_percent,
-        'capital_at_risk': cost_basis,
-        'fees_total': entry_fee + total_exercise_costs
-    }
+BCS_ENABLED = True                      # فعال/غیرفعال
+BCS_MIN_MONTHLY_RETURN = 7.0           # حداقل سود ماهانه (%)
+BCS_MIN_MARGIN_FLOOR = 20.0            # کف مطلق حاشیه (%)
+BCS_MARGIN_PERCENTILE = 60             # صدک آستانه پویا
+BCS_MIN_RR_RATIO = 0.1                 # حداقل R/R
+BCS_W_R = 0.4                          # وزن سود
+BCS_W_M = 0.6                          # وزن امنیت
+BCS_MIN_M_RISK = 2.0                   # حداقل Z-Score
+BCS_DECISION_THRESHOLD = 3.0           # آستانه تصمیم
+BCS_VOL_QUALITY_POWER = 0.3
+BCS_IMBALANCE_POWER = 0.5
 
 
-def calc_short_call(premium, stock_price, strike_price, contract_size, sell_commission, exercise_fee_rate, exercise_tax_rate, days, asset_kind):
-    """
-    محاسبه Short Call: فروشنده اختیار خرید (در اعمال، شما فروشنده سهم هستید و مشمول EXERCISE_TAX_RATE می‌شوید)
-    """
-    premium_total = round(premium * contract_size, 0)
-    entry_fee = -round(premium_total * sell_commission, 0)
+# ============================================================
+# پارامترهای اختصاصی Covered Call
+# ============================================================
 
-    margin_info = calculate_tse_margin(
-        option_type='CALL', stock_price=stock_price, strike_price=strike_price,
-        premium=premium, contract_size=contract_size, asset_kind=asset_kind
-    )
-    capital_at_risk = margin_info['required_margin']
-
-    initial_cash_flow = premium_total + entry_fee
-    intrinsic_liability = max(0, stock_price - strike_price) * contract_size
-
-    exercise_fee = 0
-    exercise_tax = 0
-
-    if stock_price > strike_price:
-        settlement_amount = strike_price * contract_size
-        exercise_fee = -round(settlement_amount * exercise_fee_rate, 0)
-        exercise_tax = -round(settlement_amount * exercise_tax_rate, 0)
-
-    total_exercise_costs = exercise_fee + exercise_tax
-    net_profit = initial_cash_flow - intrinsic_liability + total_exercise_costs
-    profit_percent = round((net_profit / capital_at_risk) * 100, 2) if capital_at_risk > 0 else 0.0
-
-    days_adj = max(days, 1.0)
-    monthly_return = round(profit_percent * (30 / days_adj), 2)
-
-    total_credit_per_share = premium - (abs(entry_fee) / contract_size)
-    if stock_price > strike_price:
-        total_credit_per_share -= abs(total_exercise_costs) / contract_size
-
-    break_even_price = round(strike_price + total_credit_per_share, 0)
-    break_even_percent = round(((break_even_price - stock_price) / stock_price) * 100, 2) if stock_price > 0 else 0.0
-    otm_percent = round(((strike_price - stock_price) / stock_price) * 100, 2) if stock_price > 0 else 0.0
-
-    return {
-        'net_profit': net_profit,
-        'profit_percent': profit_percent,
-        'monthly_return': monthly_return,
-        'break_even_price': break_even_price,
-        'break_even_percent': break_even_percent,
-        'initial_margin': margin_info['initial_margin'],
-        'required_margin': capital_at_risk,
-        'otm_percent': otm_percent,
-        'fees_total': entry_fee + total_exercise_costs
-    }
+CC_ENABLED = True                       # فعال/غیرفعال
+CC_MIN_MONTHLY_RETURN = 5.0            # حداقل سود ماهانه (%)
+CC_MIN_MARGIN_FLOOR = 10.0             # کف مطلق حاشیه (%)
+CC_MARGIN_PERCENTILE = 70              # صدک آستانه پویا
+CC_MIN_RR_RATIO = 0.1                  # حداقل R/R
+CC_W_R = 0.4                           # وزن سود
+CC_W_M = 0.6                           # وزن امنیت
+CC_MIN_M_RISK = 2.0                    # حداقل Z-Score
+CC_DECISION_THRESHOLD = 3.0            # آستانه تصمیم
+CC_VOL_QUALITY_POWER = 0.3
+CC_IMBALANCE_POWER = 0.5
 
 
-def calc_short_put(premium, stock_price, strike_price, contract_size, sell_commission, exercise_fee_rate, days, asset_kind):
-    """
-    محاسبه Short Put: خریدار سهم در زمان اعمال (بدون مالیات فروش سهم)
-    """
-    premium_total = round(premium * contract_size, 0)
-    entry_fee = -round(premium_total * sell_commission, 0)
+# ============================================================
+# پارامترهای مشترک
+# ============================================================
 
-    margin_info = calculate_tse_margin(
-        option_type='PUT', stock_price=stock_price, strike_price=strike_price,
-        premium=premium, contract_size=contract_size, asset_kind=asset_kind
-    )
-    capital_at_risk = margin_info['required_margin']
+DEFAULT_SIGMA_FALLBACK = 0.30
+NEAR_EXPIRY_THRESHOLD_DAYS = 1.0
+NEAR_EXPIRY_MIN_RETURN = 1.5
+NEAR_EXPIRY_MIN_MARGIN = 2.0
+NEAR_EXPIRY_W_R = 0.6
+NEAR_EXPIRY_W_M = 0.4
+T_DISPLAY_EPSILON = 0.02
 
-    initial_cash_flow = premium_total + entry_fee
-    intrinsic_liability = max(0, strike_price - stock_price) * contract_size
-
-    exercise_fee = 0
-    if stock_price < strike_price:
-        settlement_amount = strike_price * contract_size
-        exercise_fee = -round(settlement_amount * exercise_fee_rate, 0)
-
-    net_profit = initial_cash_flow - intrinsic_liability + exercise_fee
-    profit_percent = round((net_profit / capital_at_risk) * 100, 2) if capital_at_risk > 0 else 0.0
-
-    days_adj = max(days, 1.0)
-    monthly_return = round(profit_percent * (30 / days_adj), 2)
-
-    total_credit_per_share = premium - (abs(entry_fee) / contract_size)
-    if stock_price < strike_price:
-        total_credit_per_share -= abs(exercise_fee) / contract_size
-
-    break_even_price = round(strike_price - total_credit_per_share, 0)
-    break_even_percent = round(((stock_price - break_even_price) / stock_price) * 100, 2) if stock_price > 0 else 0.0
-    otm_percent = round(((stock_price - strike_price) / stock_price) * 100, 2) if stock_price > 0 else 0.0
-
-    return {
-        'net_profit': net_profit,
-        'profit_percent': profit_percent,
-        'monthly_return': monthly_return,
-        'break_even_price': break_even_price,
-        'break_even_percent': break_even_percent,
-        'initial_margin': margin_info['initial_margin'],
-        'required_margin': capital_at_risk,
-        'otm_percent': otm_percent,
-        'fees_total': entry_fee + exercise_fee
-    }
+VOLATILITY_FILE_NAME = "Historical_Volatility.xlsx"
+OUTPUT_FILE_NAME = "strategy_results.xlsx"
 
 
-# ============================================================================
-# ۳. دریافت و پاکسازی داده‌ها
-# ============================================================================
+# ==========================================================================================
+# بخش ۱: مدیریت صف
+# ==========================================================================================
 
-def load_market_data():
-    """بارگذاری داده‌ها از TSE و اعمال فیلترهای استاندارد"""
-    try:
-        df_raw = MarketDownloader.from_tsetmc_direct()
-    except Exception as e:
-        print(f"Error fetching data from TSETMC server: {e}")
-        return pd.DataFrame()
+def normalize_symbol(symbol):
+    """نرمال‌سازی ی/ک عربی و فارسی."""
+    if not isinstance(symbol, str):
+        return symbol
+    return symbol.replace('ي', 'ی').replace('ك', 'ک')
 
-    if df_raw is None or df_raw.empty:
-        print("No market data received from TSETMC server.")
-        return pd.DataFrame()
 
+def extract_option_symbols(df_options):
+    """استخراج لیست نمادهای پایه دارای قرارداد اختیار از دیتای آپشن."""
+    if df_options.empty:
+        return []
+
+    symbols = df_options['UnderlyingTicker'].dropna().unique().tolist()
+    symbols = [normalize_symbol(s) for s in symbols]
+    symbols = sorted(list(set(symbols)))
+
+    return symbols
+
+
+def filter_buy_queue_with_symbols(buy_queue, option_symbols):
+    """فیلتر نمادهای صف خرید بر اساس option_symbols."""
+    if not buy_queue:
+        return []
+
+    filtered = filter_by_option_symbols(buy_queue, option_symbols)
+
+    if not filtered:
+        print("  No option symbols in buy-queue.")
+        return []
+
+    buy_queue_symbols = [s['symbol'] for s in filtered]
+
+    print(f"\n  === Buy-Queue Detection ===")
+    print(f"  Total buy-queue symbols: {len(buy_queue)}")
+    print(f"  Option symbols in buy-queue: {len(buy_queue_symbols)}")
+
+    return buy_queue_symbols
+
+
+def remove_buy_queue_underlyings(df_options, buy_queue_symbols):
+    """حذف نمادهای پایه‌ای که در صف خرید هستند."""
+    if df_options.empty:
+        return df_options
+
+    if not buy_queue_symbols:
+        return df_options
+
+    buy_queue_normalized = {normalize_symbol(s) for s in buy_queue_symbols}
+
+    before_count = len(df_options)
+    df_filtered = df_options[
+        ~df_options['UnderlyingTicker'].apply(normalize_symbol).isin(
+            buy_queue_normalized
+        )
+    ].copy()
+
+    removed = before_count - len(df_filtered)
+    print(f"  Removed: {removed} options")
+    print(f"  Remaining: {len(df_filtered)} options")
+
+    return df_filtered
+
+
+# ==========================================================================================
+# بخش ۲: بارگذاری داده (مشترک)
+# ==========================================================================================
+
+def load_and_filter_data():
+    """بارگذاری داده‌های بازار و فیلتر اولیه (مشترک)."""
+    print("\n[1/3] Fetching buy-queue from TSETMC...")
+    buy_queue = get_buy_queue_symbols()
+    if not buy_queue:
+        print("  WARNING: No buy-queue data received.")
+        buy_queue = []
+    else:
+        print(f"  Buy-queue: {len(buy_queue)} symbols")
+
+    print("\n[2/3] Downloading option market data...")
+    df_raw = MarketDownloader.from_tsetmc_direct()
     df_cleaned = DataCleaner.clean(df_raw)
     df_final = DataCleaner.add_derived_columns(df_cleaned)
 
-    df_filtered = df_final[df_final['DaysToMaturity'] > 0.0].copy()
-
-    EXCLUDED_UNDERLYING = ['اهرم']
-    EXCLUDED_NAME_PATTERN = ['1405/04', '1405-04']
-    exclude_mask = (
-        df_filtered['UnderlyingTicker'].isin(EXCLUDED_UNDERLYING)
-    ) & (
-        df_filtered['Name'].str.contains('|'.join(EXCLUDED_NAME_PATTERN), na=False)
+    is_call_mask = df_final['Type'].apply(
+        lambda x: x.name == 'CALL' if hasattr(x, 'name')
+        else str(x).upper() == 'CALL'
     )
-    return df_filtered[~exclude_mask].copy()
+
+    filter_option = df_final[
+        (df_final['DaysToMaturity'] >= 0.0) & is_call_mask
+    ].copy()
+
+    print(f"  CALL options: {len(filter_option)}")
+
+    print("\n[3/3] Filtering buy-queue by option symbols...")
+    option_symbols = extract_option_symbols(filter_option)
+    print(f"  Unique underlyings: {len(option_symbols)}")
+
+    buy_queue_symbols = filter_buy_queue_with_symbols(
+        buy_queue, option_symbols
+    )
+
+    filter_option = remove_buy_queue_underlyings(
+        filter_option, buy_queue_symbols
+    )
+
+    return filter_option
 
 
-# ============================================================================
-# ۴. پردازش هم‌زمان چهار استراتژی
-# ============================================================================
+def load_volatility_profile():
+    """بارگذاری پروفایل نوسان از Historical_Volatility.xlsx."""
+    filepath = current_dir / VOLATILITY_FILE_NAME
 
-def run_all_strategies(df_market):
-    """اجرای الگوریتم استراتژی‌های چهارگانه روی داده‌های بازار"""
-    df_call = df_market[df_market['Type'].apply(lambda x: x.name == 'CALL')].copy()
-    df_put = df_market[df_market['Type'].apply(lambda x: x.name == 'PUT')].copy()
+    if not filepath.exists():
+        print(f"WARNING: Volatility file not found: {filepath}")
+        return pd.DataFrame()
 
-    long_call_list, short_call_list = [], []
-    long_put_list, short_put_list = [], []
+    try:
+        df_vol = pd.read_excel(filepath)
+        required_cols = ['UnderlyingTicker', 'HV_60']
+        missing = [c for c in required_cols if c not in df_vol.columns]
+        if missing:
+            print(f"WARNING: Missing columns: {missing}")
+            return pd.DataFrame()
 
-    # --- A. پردازش اختیار خرید (CALL) ---
-    for underlying, group in df_call.groupby('UnderlyingTicker'):
-        market = get_symbol_market(underlying)
-        kind = get_symbol_kind(underlying)
+        df_vol = df_vol.rename(columns={'UnderlyingTicker': 'underlying'})
 
-        buy_comm = get_commission_rate(market, 'option', True)
-        sell_comm = get_commission_rate(market, 'option', False)
-        ex_fee = get_exercise_fee_rate(market, kind)
+        keep_cols = ['underlying', 'HV_60']
+        if 'VolatilityQualityScore' in df_vol.columns:
+            keep_cols.append('VolatilityQualityScore')
 
-        for _, item in group.iterrows():
-            ticker, strike = item['Ticker'], item['StrikePrice']
-            stock_price, contract_size, days = item['UnderlyingPrice'], item['ContractSize'], item['DaysToMaturity']
-            vol = int(item.get('Volume', 0))
+        return df_vol[keep_cols].copy()
 
-            ask_price = item.get('AskPrice', 0)
-            bid_price = item.get('BidPrice', 0)
+    except Exception as e:
+        print(f"ERROR loading volatility file: {e}")
+        return pd.DataFrame()
 
-            # 1. Long Call
-            if ask_price and not pd.isna(ask_price) and ask_price > 0:
-                res_lc = calc_long_call(ask_price, stock_price, strike, contract_size, buy_comm, ex_fee, days)
-                long_call_list.append({
-                    'underlying': underlying, 'stock_price': round(stock_price), 'option_symbol': ticker,
-                    'strike': strike, 'premium': round(ask_price), 'net_profit': res_lc['net_profit'],
-                    'profit_percent': res_lc['profit_percent'], 'monthly_return_%': res_lc['monthly_return'],
-                    'break_even_price': res_lc['break_even_price'], 'break_even_percent': res_lc['break_even_percent'],
-                    'capital_at_risk': res_lc['capital_at_risk'], 'days_to_maturity': days, 'volume': vol
-                })
 
-            # 2. Short Call
-            prem_sc = bid_price if (bid_price and not pd.isna(bid_price) and bid_price > 0) else ask_price
-            if prem_sc and not pd.isna(prem_sc) and prem_sc > 0:
-                res_sc = calc_short_call(
-                    prem_sc, stock_price, strike, contract_size, sell_comm,
-                    ex_fee, EXERCISE_TAX_RATE, days, kind
-                )
-                short_call_list.append({
-                    'underlying': underlying, 'stock_price': round(stock_price), 'option_symbol': ticker,
-                    'strike': strike, 'premium': round(prem_sc), 'net_profit': res_sc['net_profit'],
-                    'profit_percent': res_sc['profit_percent'], 'monthly_return_%': res_sc['monthly_return'],
-                    'break_even_price': res_sc['break_even_price'], 'break_even_percent': res_sc['break_even_percent'],
-                    'otm_percent': res_sc['otm_percent'], 'initial_margin': res_sc['initial_margin'],
-                    'required_margin': res_sc['required_margin'], 'days_to_maturity': days, 'volume': vol
-                })
+# ==========================================================================================
+# بخش ۳: توابع مشترک M_30 و M_risk
+# ==========================================================================================
 
-    # --- B. پردازش اختیار فروش (PUT) ---
-    for underlying, group in df_put.groupby('UnderlyingTicker'):
-        market = get_symbol_market(underlying)
-        kind = get_symbol_kind(underlying)
+def add_margin30_column(df):
+    """استخراج M_30 از break_even_percent_scale."""
+    df = df.copy()
+    risk_free_mask = (
+        df['break_even_percent_scale'] == RISK_FREE_BREAK_EVEN_SENTINEL
+    )
+    df['margin30'] = -df['break_even_percent_scale'].astype(float)
+    df.loc[risk_free_mask, 'margin30'] = np.inf
+    df['is_risk_free'] = risk_free_mask
+    return df
 
-        buy_comm = get_commission_rate(market, 'option', True)
-        sell_comm = get_commission_rate(market, 'option', False)
-        ex_fee = get_exercise_fee_rate(market, kind)
 
-        for _, item in group.iterrows():
-            ticker, strike = item['Ticker'], item['StrikePrice']
-            stock_price, contract_size, days = item['UnderlyingPrice'], item['ContractSize'], item['DaysToMaturity']
-            vol = int(item.get('Volume', 0))
+def add_margin_risk_column(df):
+    """محاسبه M_risk و Z_score با استفاده از HV_60 واقعی."""
+    df = df.copy()
+    if 'margin30' not in df.columns:
+        df = add_margin30_column(df)
 
-            ask_price = item.get('AskPrice', 0)
-            bid_price = item.get('BidPrice', 0)
+    risk_free_mask = df['is_risk_free']
+    raw_margin_fraction = df['raw_margin_percent'].astype(float) / 100.0
 
-            # 3. Long Put
-            if ask_price and not pd.isna(ask_price) and ask_price > 0:
-                res_lp = calc_long_put(
-                    ask_price, stock_price, strike, contract_size, buy_comm,
-                    ex_fee, EXERCISE_TAX_RATE, days
-                )
-                long_put_list.append({
-                    'underlying': underlying, 'stock_price': round(stock_price), 'option_symbol': ticker,
-                    'strike': strike, 'premium': round(ask_price), 'net_profit': res_lp['net_profit'],
-                    'profit_percent': res_lp['profit_percent'], 'monthly_return_%': res_lp['monthly_return'],
-                    'break_even_price': res_lp['break_even_price'], 'break_even_percent': res_lp['break_even_percent'],
-                    'capital_at_risk': res_lp['capital_at_risk'], 'days_to_maturity': days, 'volume': vol
-                })
+    if 'HV_60' in df.columns:
+        sigma = df['HV_60'].fillna(DEFAULT_SIGMA_FALLBACK).clip(
+            lower=0.05, upper=2.0
+        )
+    else:
+        sigma = pd.Series(DEFAULT_SIGMA_FALLBACK, index=df.index)
 
-            # 4. Short Put
-            prem_sp = bid_price if (bid_price and not pd.isna(bid_price) and bid_price > 0) else ask_price
-            if prem_sp and not pd.isna(prem_sp) and prem_sp > 0:
-                res_sp = calc_short_put(prem_sp, stock_price, strike, contract_size, sell_comm, ex_fee, days, kind)
-                short_put_list.append({
-                    'underlying': underlying, 'stock_price': round(stock_price), 'option_symbol': ticker,
-                    'strike': strike, 'premium': round(prem_sp), 'net_profit': res_sp['net_profit'],
-                    'profit_percent': res_sp['profit_percent'], 'monthly_return_%': res_sp['monthly_return'],
-                    'break_even_price': res_sp['break_even_price'], 'break_even_percent': res_sp['break_even_percent'],
-                    'otm_percent': res_sp['otm_percent'], 'initial_margin': res_sp['initial_margin'],
-                    'required_margin': res_sp['required_margin'], 'days_to_maturity': days, 'volume': vol
-                })
+    T = df['days_to_maturity'].astype(float).clip(lower=T_DISPLAY_EPSILON)
+    df['M_risk'] = raw_margin_fraction / (sigma * np.sqrt(T / 365.0))
+    df.loc[risk_free_mask, 'M_risk'] = np.inf
+    df['Z_score'] = df['M_risk']
 
-    def sort_df(df_data):
-        df = pd.DataFrame(df_data)
-        if not df.empty:
-            return df.sort_values(by=['monthly_return_%'], ascending=False).reset_index(drop=True)
-        return df
+    return df
+
+
+# ==========================================================================================
+# بخش ۴: محاسبات Bull Call Spread
+# ==========================================================================================
+
+def bull_call_spread_analysis(
+    stock_price,
+    long_strike,
+    long_ask_premium,
+    short_strike,
+    short_bid_premium,
+    contract_size,
+    opt_buy_commission,
+    opt_sell_commission,
+    exercise_fee_rate,
+    exercise_tax_rate,
+    days,
+):
+    """محاسبه پارامترهای Bull Call Spread."""
+    long_premium_total = round(long_ask_premium * contract_size, 0)
+    long_entry_fee = round(long_premium_total * opt_buy_commission, 0)
+
+    short_premium_total = round(short_bid_premium * contract_size, 0)
+    short_entry_fee = -round(short_premium_total * opt_sell_commission, 0)
+
+    net_debit = (long_premium_total + long_entry_fee) - (
+        short_premium_total + short_entry_fee
+    )
+
+    long_exercise_fee = round((long_strike * contract_size) * exercise_fee_rate, 0)
+    short_exercise_fee = round((short_strike * contract_size) * exercise_fee_rate, 0)
+    short_transfer_tax = round((short_strike * contract_size) * exercise_tax_rate, 0)
+
+    short_total_exercise_cost = short_exercise_fee + short_transfer_tax
+    total_exercise_costs = long_exercise_fee + short_total_exercise_cost
+
+    min_profit_or_loss = -net_debit
+    max_payoff = (short_strike - long_strike) * contract_size
+    max_net_profit = max_payoff - net_debit - total_exercise_costs
+
+    if max_net_profit <= 0 or net_debit <= 0:
+        return {'status': 'DISCARD'}
+
+    capital_at_risk = max(1.0, net_debit)
+    days_raw = float(days)
+    is_near_expiry = days_raw <= NEAR_EXPIRY_THRESHOLD_DAYS
+
+    if min_profit_or_loss >= 0:
+        return {
+            'status': 'RISK_FREE',
+            'is_near_expiry': False,
+            'capital_at_risk': 0,
+            'max_net_profit': max_net_profit,
+            'max_profit_percent': 'Arbitrage',
+            'monthly_return': RISK_FREE_RETURN_SENTINEL,
+            'break_even_price': 'Risk Free',
+            'break_even_percent': RISK_FREE_BREAK_EVEN_SENTINEL,
+            'break_even_percent_scale': RISK_FREE_BREAK_EVEN_SENTINEL,
+            'risk_reward_ratio': 'Infinite',
+            'raw_return_percent': None,
+            'raw_margin_percent': None,
+        }
+
+    break_even_price = long_strike + ((net_debit + long_exercise_fee) / contract_size)
+
+    if stock_price > 0:
+        break_even_percent = round(
+            ((break_even_price - stock_price) / stock_price) * 100, 2
+        )
+    else:
+        break_even_percent = 0.0
+
+    max_profit_percent = round((max_net_profit / capital_at_risk) * 100, 2)
+    raw_return_percent = max_profit_percent
+    raw_margin_percent = -break_even_percent
+    risk_reward_ratio = round(max_net_profit / capital_at_risk, 2)
+
+    days_safe_for_display = max(T_DISPLAY_EPSILON, days_raw)
+    time_factor = math.sqrt(days_safe_for_display / 30.0)
+
+    break_even_percent_scale = round(break_even_percent / time_factor, 2)
+    monthly_return = round(max_profit_percent * (30 / days_safe_for_display), 2)
 
     return {
-        'long_call': sort_df(long_call_list),
-        'short_call': sort_df(short_call_list),
-        'long_put': sort_df(long_put_list),
-        'short_put': sort_df(short_put_list)
+        'status': 'VALID',
+        'is_near_expiry': is_near_expiry,
+        'capital_at_risk': capital_at_risk,
+        'max_net_profit': max_net_profit,
+        'max_profit_percent': max_profit_percent,
+        'monthly_return': monthly_return,
+        'break_even_price': round(break_even_price, 0),
+        'break_even_percent': break_even_percent,
+        'break_even_percent_scale': break_even_percent_scale,
+        'risk_reward_ratio': risk_reward_ratio,
+        'raw_return_percent': raw_return_percent,
+        'raw_margin_percent': raw_margin_percent,
     }
 
 
-# ============================================================================
-# ۵. خروجی اکسل در یک فایل واحد با شیت‌های مجزا و اضافه کردن فیلتر
-# ============================================================================
+# ==========================================================================================
+# بخش ۵: محاسبات Covered Call
+# ==========================================================================================
 
-def export_to_excel_files(results_dict):
-    """ذخیره تمام استراتژی‌ها در یک فایل اکسل واحد شامل شیت‌های مجزا همراه با فیلتر سرستون‌ها"""
+def covered_call_analysis(
+    stock_price,
+    strike_price,
+    premium_call,
+    contract_size,
+    opt_sell_commission,
+    stock_buy_commission,
+    exercise_fee_rate,
+    exercise_tax_rate,
+    days,
+):
+    """محاسبه پارامترهای Covered Call."""
+    option_fee = -round(premium_call * contract_size * opt_sell_commission, 0)
+    stock_buy_fee = -round(
+        stock_price * contract_size * stock_buy_commission, 0
+    )
+    entry_fees = option_fee + stock_buy_fee
+
+    exercise_fee = -round(
+        strike_price * contract_size * exercise_fee_rate, 0
+    )
+    exercise_tax = -round(
+        strike_price * contract_size * exercise_tax_rate, 0
+    )
+
+    premium_received = premium_call * contract_size
+    stock_cost = -stock_price * contract_size
+
+    net_investment = stock_cost + premium_received + entry_fees
+
+    strike_received = strike_price * contract_size
+    net_received = strike_received + exercise_fee + exercise_tax
+
+    net_profit = net_received + net_investment
+
+    if net_profit <= 0 or net_investment >= 0:
+        return {'status': 'DISCARD'}
+
+    capital_at_risk = max(1.0, abs(net_investment))
+    days_raw = float(days)
+    is_near_expiry = days_raw <= NEAR_EXPIRY_THRESHOLD_DAYS
+
+    profit_percent = round((net_profit / capital_at_risk) * 100, 2)
+
+    downside_protection = (
+        premium_received + entry_fees + exercise_fee + exercise_tax
+    )
+    break_even_price = round(
+        stock_price - (downside_protection / contract_size), 0
+    )
+
+    if stock_price > 0:
+        break_even_percent = round(
+            ((break_even_price - stock_price) / stock_price) * 100, 2
+        )
+    else:
+        break_even_percent = 0.0
+
+    max_drop_percent = round(
+        ((stock_price - break_even_price) / stock_price) * 100, 2
+    )
+
+    raw_return_percent = profit_percent
+    raw_margin_percent = max_drop_percent
+
+    days_safe_for_display = max(T_DISPLAY_EPSILON, days_raw)
+    time_factor = math.sqrt(days_safe_for_display / 30.0)
+
+    break_even_percent_scale = round(break_even_percent / time_factor, 2)
+    monthly_return = round(profit_percent * (30 / days_safe_for_display), 2)
+
+    risk_reward_ratio = (
+        round(net_profit / capital_at_risk, 2) if capital_at_risk > 0 else 0
+    )
+
+    return {
+        'status': 'VALID',
+        'is_near_expiry': is_near_expiry,
+        'capital_at_risk': capital_at_risk,
+        'net_profit': net_profit,
+        'profit_percent': profit_percent,
+        'monthly_return': monthly_return,
+        'break_even_price': break_even_price,
+        'break_even_percent': break_even_percent,
+        'break_even_percent_scale': break_even_percent_scale,
+        'max_drop_percent': max_drop_percent,
+        'risk_reward_ratio': risk_reward_ratio,
+        'raw_return_percent': raw_return_percent,
+        'raw_margin_percent': raw_margin_percent,
+    }
+
+
+# ==========================================================================================
+# بخش ۶: فیلتر سخت و امتیازدهی (مشترک، پارامتری)
+# ==========================================================================================
+
+def apply_hard_constraints(
+    df,
+    min_monthly_return,
+    min_margin_floor,
+    margin_percentile,
+    min_m_risk,
+    near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
+    near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,
+):
+    """فیلتر سخت‌گیرانه (پارامتری برای هر استراتژی)."""
+    if df.empty:
+        return df
+
+    df = add_margin30_column(df)
+
+    risk_free_mask = df['is_risk_free']
+    near_expiry_mask = df['is_near_expiry'].fillna(False) & (~risk_free_mask)
+    normal_mask = ~(risk_free_mask | near_expiry_mask)
+
+    df_rf = df[risk_free_mask].copy()
+    df_near = df[near_expiry_mask].copy()
+    df_normal = df[normal_mask].copy()
+
+    if not df_near.empty:
+        df_near = df_near[
+            (df_near['raw_return_percent'] >= near_expiry_min_return)
+            & (df_near['raw_margin_percent'] >= near_expiry_min_margin)
+        ].copy()
+
+    if not df_normal.empty:
+        df_normal = df_normal[
+            df_normal['monthly_return_%'] >= min_monthly_return
+        ].copy()
+
+        if not df_normal.empty:
+            dynamic_threshold = np.percentile(
+                df_normal['margin30'], margin_percentile
+            )
+            effective_margin_min = max(min_margin_floor, dynamic_threshold)
+
+            df_normal = df_normal[
+                df_normal['margin30'] >= effective_margin_min
+            ].copy()
+
+        if not df_normal.empty:
+            df_normal = add_margin_risk_column(df_normal)
+            df_normal = df_normal[df_normal['M_risk'] >= min_m_risk].copy()
+
+    return pd.concat([df_rf, df_near, df_normal])
+
+
+def calculate_composite_score(
+    df,
+    w_r,
+    w_m,
+    vol_quality_power,
+    imbalance_power,
+):
+    """امتیازدهی نهایی (پارامتری برای هر استراتژی)."""
+    if df.empty:
+        return df
+
+    df = df.copy()
+    if 'margin30' not in df.columns:
+        df = add_margin30_column(df)
+
+    risk_free_mask = df['is_risk_free']
+    near_expiry_mask = df['is_near_expiry'].fillna(False) & (~risk_free_mask)
+    normal_mask = ~(risk_free_mask | near_expiry_mask)
+
+    df_rf = df[risk_free_mask].copy()
+    df_near = df[near_expiry_mask].copy()
+    df_normal = df[normal_mask].copy()
+
+    if not df_rf.empty:
+        df_rf['prob_survival'] = 1.0
+        df_rf['M_risk'] = np.inf
+        df_rf['composite_score'] = RISK_FREE_SCORE_SENTINEL
+
+    if not df_near.empty:
+        raw_R = df_near['raw_return_percent'].astype(float)
+        raw_M = df_near['raw_margin_percent'].astype(float)
+
+        base_near = (
+            NEAR_EXPIRY_SCORE_BASE
+            + NEAR_EXPIRY_W_R * raw_R
+            + NEAR_EXPIRY_W_M * raw_M
+        ).round(4)
+
+        df_near['prob_survival'] = NEAR_EXPIRY_PROB_SURVIVAL
+        df_near['M_risk'] = np.inf
+        df_near['composite_score'] = base_near
+
+    if not df_normal.empty:
+        if 'M_risk' not in df_normal.columns:
+            df_normal = add_margin_risk_column(df_normal)
+
+        R30 = df_normal['monthly_return_%'].astype(float).clip(lower=0.0)
+        M30 = df_normal['margin30'].astype(float).clip(lower=0.0)
+        M_risk = df_normal['M_risk'].astype(float)
+
+        prob_survival = norm.cdf(M_risk)
+        df_normal['prob_survival'] = np.round(prob_survival, 4)
+
+        score_cd = (R30 ** w_r) * (M30 ** w_m)
+
+        if 'VolatilityQualityScore' in df_normal.columns:
+            vq = df_normal['VolatilityQualityScore'].fillna(10.0).clip(
+                lower=0.0, upper=10.0
+            )
+            vol_factor = (vq / 10.0) ** vol_quality_power
+        else:
+            vol_factor = pd.Series(1.0, index=df_normal.index)
+
+        ratio = (M30 / R30.replace(0, np.nan)).replace(
+            [np.inf, -np.inf], np.nan
+        ).fillna(1.0)
+        imbalance_factor = np.minimum(1.0, ratio ** imbalance_power)
+
+        df_normal['composite_score'] = (
+            score_cd * prob_survival
+            * vol_factor
+            * imbalance_factor
+        ).round(4)
+
+    return pd.concat([df_rf, df_near, df_normal])
+
+
+# ==========================================================================================
+# بخش ۷: اجرای Bull Call Spread
+# ==========================================================================================
+
+def run_bull_call_spread(df_options, df_vol):
+    """اجرای کامل استراتژی Bull Call Spread."""
+    print("\n" + "=" * 65)
+    print("Running Bull Call Spread Strategy")
+    print("=" * 65)
+
+    results_fee = []
+
+    for underlying_symbol, group in df_options.groupby('UnderlyingTicker'):
+        market = get_symbol_market(underlying_symbol)
+        kind = get_symbol_kind(underlying_symbol)
+
+        opt_buy_commission = get_commission_rate(market, 'option', True)
+        opt_sell_commission = get_commission_rate(market, 'option', False)
+        exercise_fee_rate = get_exercise_fee_rate(market, kind)
+
+        for days, sub_group in group.groupby('DaysToMaturity'):
+            sub_group_sorted = sub_group.sort_values('StrikePrice')
+            options_list = sub_group_sorted.to_dict('records')
+            n = len(options_list)
+
+            for i in range(n):
+                for j in range(i + 1, n):
+                    long_leg = options_list[i]
+                    short_leg = options_list[j]
+
+                    stock_price = long_leg['UnderlyingPrice']
+                    contract_size = long_leg['ContractSize']
+
+                    long_ask = long_leg.get('AskPrice', 0)
+                    short_bid = short_leg.get('BidPrice', 0)
+
+                    if (
+                        pd.isna(long_ask)
+                        or long_ask <= 0
+                        or pd.isna(short_bid)
+                        or short_bid <= 0
+                    ):
+                        continue
+
+                    res = bull_call_spread_analysis(
+                        stock_price=stock_price,
+                        long_strike=long_leg['StrikePrice'],
+                        long_ask_premium=long_ask,
+                        short_strike=short_leg['StrikePrice'],
+                        short_bid_premium=short_bid,
+                        contract_size=contract_size,
+                        opt_buy_commission=opt_buy_commission,
+                        opt_sell_commission=opt_sell_commission,
+                        exercise_fee_rate=exercise_fee_rate,
+                        exercise_tax_rate=EXERCISE_TAX_RATE,
+                        days=days,
+                    )
+
+                    if res['status'] == 'DISCARD':
+                        continue
+
+                    if (
+                        res['status'] != 'RISK_FREE'
+                        and res['risk_reward_ratio'] < BCS_MIN_RR_RATIO
+                    ):
+                        continue
+
+                    results_fee.append({
+                        'underlying': underlying_symbol,
+                        'is_near_expiry': res['is_near_expiry'],
+                        'stock_price': round(stock_price, 0),
+                        'long_option_symbol': long_leg['Ticker'],
+                        'long_strike': long_leg['StrikePrice'],
+                        'long_ask_premium': round(long_ask, 0),
+                        'short_option_symbol': short_leg['Ticker'],
+                        'short_strike': short_leg['StrikePrice'],
+                        'short_bid_premium': round(short_bid, 0),
+                        'capital_at_risk': res['capital_at_risk'],
+                        'max_net_profit': res['max_net_profit'],
+                        'max_profit_percent': res['max_profit_percent'],
+                        'monthly_return_%': res['monthly_return'],
+                        'raw_return_percent': res['raw_return_percent'],
+                        'raw_margin_percent': res['raw_margin_percent'],
+                        'break_even_price': res['break_even_price'],
+                        'break_even_percent': res['break_even_percent'],
+                        'break_even_percent_scale': res['break_even_percent_scale'],
+                        'risk_reward_ratio': res['risk_reward_ratio'],
+                        'days_to_maturity': days,
+                        'long_volume': int(long_leg.get('Volume', 0)),
+                        'short_volume': int(short_leg.get('Volume', 0)),
+                    })
+
+    if not results_fee:
+        print("No valid Bull Call Spread setups.")
+        return pd.DataFrame()
+
+    result_df = pd.DataFrame(results_fee)
+
+    # Merge با نوسان
+    if df_vol is not None and not df_vol.empty:
+        result_df = pd.merge(result_df, df_vol, on='underlying', how='left')
+    else:
+        result_df['HV_60'] = np.nan
+        result_df['VolatilityQualityScore'] = np.nan
+
+    # فیلترینگ سخت
+    result_df_filtered = apply_hard_constraints(
+        result_df,
+        min_monthly_return=BCS_MIN_MONTHLY_RETURN,
+        min_margin_floor=BCS_MIN_MARGIN_FLOOR,
+        margin_percentile=BCS_MARGIN_PERCENTILE,
+        min_m_risk=BCS_MIN_M_RISK,
+    )
+
+    if result_df_filtered.empty:
+        print("No valid setups after hard constraints.")
+        return result_df_filtered
+
+    # امتیازدهی
+    result_df_filtered = calculate_composite_score(
+        result_df_filtered,
+        w_r=BCS_W_R,
+        w_m=BCS_W_M,
+        vol_quality_power=BCS_VOL_QUALITY_POWER,
+        imbalance_power=BCS_IMBALANCE_POWER,
+    )
+
+    # رتبه‌بندی
+    result_df_filtered = result_df_filtered.sort_values(
+        by='composite_score', ascending=False
+    ).reset_index(drop=True)
+
+    # تصمیم
+    always_enter_mask = (
+        (result_df_filtered['composite_score'] == RISK_FREE_SCORE_SENTINEL)
+        | (result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE)
+    )
+    result_df_filtered['decision'] = np.where(
+        always_enter_mask,
+        'ENTER',
+        np.where(
+            result_df_filtered['composite_score'] > BCS_DECISION_THRESHOLD,
+            'ENTER',
+            'SKIP',
+        ),
+    )
+
+    result_df_filtered['regime'] = np.select(
+        [
+            result_df_filtered['composite_score'] == RISK_FREE_SCORE_SENTINEL,
+            result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE,
+        ],
+        ['RISK_FREE', 'NEAR_EXPIRY'],
+        default='NORMAL',
+    )
+
+    # ستون‌های نهایی (بدون اطلاعات اضافی، با حفظ محاسباتی‌ها)
+    column_order = [
+        'underlying', 'regime', 'decision', 'composite_score',
+        'stock_price', 'long_option_symbol', 'long_strike',
+        'long_ask_premium', 'short_option_symbol', 'short_strike',
+        'short_bid_premium', 'capital_at_risk', 'max_net_profit',
+        'max_profit_percent', 'monthly_return_%', 'margin30',
+        'raw_return_percent', 'raw_margin_percent',
+        'break_even_price', 'break_even_percent',
+        'break_even_percent_scale', 'risk_reward_ratio',
+        'days_to_maturity', 'long_volume', 'short_volume',
+    ]
+    column_order = [c for c in column_order if c in result_df_filtered.columns]
+    result_df_filtered = result_df_filtered[column_order]
+
+    # جایگزینی Sentinelها
+    result_df_filtered['break_even_percent'] = result_df_filtered[
+        'break_even_percent'
+    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+    result_df_filtered['break_even_percent_scale'] = result_df_filtered[
+        'break_even_percent_scale'
+    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+    result_df_filtered['monthly_return_%'] = result_df_filtered[
+        'monthly_return_%'
+    ].replace(RISK_FREE_RETURN_SENTINEL, 'Infinite')
+    result_df_filtered['margin30'] = result_df_filtered['margin30'].apply(
+        lambda v: 'Risk Free' if v == np.inf else round(v, 2)
+    )
+    result_df_filtered['composite_score'] = result_df_filtered[
+        'composite_score'
+    ].replace(RISK_FREE_SCORE_SENTINEL, 'Risk Free')
+
+    print(f"Bull Call Spread: {len(result_df_filtered)} positions")
+    return result_df_filtered
+
+
+# ==========================================================================================
+# بخش ۸: اجرای Covered Call
+# ==========================================================================================
+
+def run_covered_call(df_options, df_vol):
+    """اجرای کامل استراتژی Covered Call."""
+    print("\n" + "=" * 65)
+    print("Running Covered Call Strategy")
+    print("=" * 65)
+
+    results_fee = []
+
+    for underlying_symbol, group in df_options.groupby('UnderlyingTicker'):
+        market = get_symbol_market(underlying_symbol)
+        kind = get_symbol_kind(underlying_symbol)
+
+        opt_sell_commission = get_commission_rate(market, 'option', False)
+        stock_buy_commission = get_commission_rate(market, kind, True)
+        exercise_fee_rate = get_exercise_fee_rate(market, kind)
+        exercise_tax_rate = EXERCISE_TAX_RATE
+
+        for _, item in group.iterrows():
+            ticker = item['Ticker']
+            strike_price = item['StrikePrice']
+            premium_call = item['BidPrice']
+            stock_price = item['UnderlyingPrice']
+            contract_size = item['ContractSize']
+            days = item['DaysToMaturity']
+
+            if premium_call <= 0 or stock_price <= 0:
+                continue
+
+            res = covered_call_analysis(
+                stock_price=stock_price,
+                strike_price=strike_price,
+                premium_call=premium_call,
+                contract_size=contract_size,
+                opt_sell_commission=opt_sell_commission,
+                stock_buy_commission=stock_buy_commission,
+                exercise_fee_rate=exercise_fee_rate,
+                exercise_tax_rate=exercise_tax_rate,
+                days=days,
+            )
+
+            if res['status'] == 'DISCARD':
+                continue
+
+            if res['risk_reward_ratio'] < CC_MIN_RR_RATIO:
+                continue
+
+            results_fee.append({
+                'underlying': underlying_symbol,
+                'is_near_expiry': res['is_near_expiry'],
+                'stock_price': round(stock_price, 0),
+                'option_symbol': ticker,
+                'strike': strike_price,
+                'premium': round(premium_call, 0),
+                'contract_size': contract_size,
+                'capital_at_risk': res['capital_at_risk'],
+                'net_profit': res['net_profit'],
+                'profit_percent': res['profit_percent'],
+                'monthly_return_%': res['monthly_return'],
+                'raw_return_percent': res['raw_return_percent'],
+                'raw_margin_percent': res['raw_margin_percent'],
+                'break_even_price': res['break_even_price'],
+                'break_even_percent': res['break_even_percent'],
+                'break_even_percent_scale': res['break_even_percent_scale'],
+                'max_drop_%': res['max_drop_percent'],
+                'risk_reward_ratio': res['risk_reward_ratio'],
+                'days_to_maturity': days,
+                'volume': int(item.get('Volume', 0)),
+            })
+
+    if not results_fee:
+        print("No valid Covered Call setups.")
+        return pd.DataFrame()
+
+    result_df = pd.DataFrame(results_fee)
+
+    # Merge با نوسان
+    if df_vol is not None and not df_vol.empty:
+        result_df = pd.merge(result_df, df_vol, on='underlying', how='left')
+    else:
+        result_df['HV_60'] = np.nan
+        result_df['VolatilityQualityScore'] = np.nan
+
+    # فیلترینگ سخت
+    result_df_filtered = apply_hard_constraints(
+        result_df,
+        min_monthly_return=CC_MIN_MONTHLY_RETURN,
+        min_margin_floor=CC_MIN_MARGIN_FLOOR,
+        margin_percentile=CC_MARGIN_PERCENTILE,
+        min_m_risk=CC_MIN_M_RISK,
+    )
+
+    if result_df_filtered.empty:
+        print("No valid setups after hard constraints.")
+        return result_df_filtered
+
+    # امتیازدهی
+    result_df_filtered = calculate_composite_score(
+        result_df_filtered,
+        w_r=CC_W_R,
+        w_m=CC_W_M,
+        vol_quality_power=CC_VOL_QUALITY_POWER,
+        imbalance_power=CC_IMBALANCE_POWER,
+    )
+
+    # رتبه‌بندی
+    result_df_filtered = result_df_filtered.sort_values(
+        by='composite_score', ascending=False
+    ).reset_index(drop=True)
+
+    # تصمیم
+    always_enter_mask = (
+        (result_df_filtered['composite_score'] == RISK_FREE_SCORE_SENTINEL)
+        | (result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE)
+    )
+    result_df_filtered['decision'] = np.where(
+        always_enter_mask,
+        'ENTER',
+        np.where(
+            result_df_filtered['composite_score'] > CC_DECISION_THRESHOLD,
+            'ENTER',
+            'SKIP',
+        ),
+    )
+
+    result_df_filtered['regime'] = np.select(
+        [
+            result_df_filtered['composite_score'] == RISK_FREE_SCORE_SENTINEL,
+            result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE,
+        ],
+        ['RISK_FREE', 'NEAR_EXPIRY'],
+        default='NORMAL',
+    )
+
+    # ستون‌های نهایی (بدون اطلاعات اضافی، با حفظ محاسباتی‌ها)
+    column_order = [
+        'underlying', 'regime', 'decision', 'composite_score',
+        'stock_price', 'option_symbol', 'strike', 'premium',
+        'contract_size', 'capital_at_risk', 'net_profit',
+        'profit_percent', 'monthly_return_%', 'margin30',
+        'raw_return_percent', 'raw_margin_percent',
+        'break_even_price', 'break_even_percent',
+        'break_even_percent_scale', 'max_drop_%',
+        'risk_reward_ratio', 'days_to_maturity', 'volume',
+    ]
+    column_order = [c for c in column_order if c in result_df_filtered.columns]
+    result_df_filtered = result_df_filtered[column_order]
+
+    # جایگزینی Sentinelها
+    result_df_filtered['break_even_percent'] = result_df_filtered[
+        'break_even_percent'
+    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+    result_df_filtered['break_even_percent_scale'] = result_df_filtered[
+        'break_even_percent_scale'
+    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+    result_df_filtered['monthly_return_%'] = result_df_filtered[
+        'monthly_return_%'
+    ].replace(RISK_FREE_RETURN_SENTINEL, 'Infinite')
+    result_df_filtered['margin30'] = result_df_filtered['margin30'].apply(
+        lambda v: 'Risk Free' if v == np.inf else round(v, 2)
+    )
+    result_df_filtered['composite_score'] = result_df_filtered[
+        'composite_score'
+    ].replace(RISK_FREE_SCORE_SENTINEL, 'Risk Free')
+
+    print(f"Covered Call: {len(result_df_filtered)} positions")
+    return result_df_filtered
+
+
+# ==========================================================================================
+# بخش ۹: ذخیره در اکسل (دو شیت)
+# ==========================================================================================
+
+def save_results_to_excel(bcs_df, cc_df, filename=OUTPUT_FILE_NAME):
+    """ذخیره نتایج دو استراتژی در یک فایل اکسل با دو شیت."""
+    filepath = current_dir / filename
+
     header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
+    header_fill = PatternFill(
+        start_color='203764', end_color='203764', fill_type='solid'
+    )
     alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     body_font = Font(name='Segoe UI', size=10)
+    gray_font = Font(color='808080', italic=True, name='Segoe UI', size=10)
 
-    color_scheme = {
-        'long_call': '1E6B39',   # سبز
-        'short_call': '4C2882',  # بنفش
-        'long_put': 'A61C1C',    # قرمز
-        'short_put': '1F497D'    # آبی
+    # rename dicts
+    bcs_rename = {
+        'underlying': 'نماد پایه',
+        'regime': 'رژیم',
+        'decision': 'تصمیم',
+        'composite_score': 'امتیاز نهایی',
+        'stock_price': 'قیمت سهم',
+        'long_option_symbol': 'نماد خرید',
+        'long_strike': 'قیمت اعمال خرید',
+        'long_ask_premium': 'پریمیوم خرید',
+        'short_option_symbol': 'نماد فروش',
+        'short_strike': 'قیمت اعمال فروش',
+        'short_bid_premium': 'پریمیوم فروش',
+        'capital_at_risk': 'سرمایه درگیر',
+        'max_net_profit': 'حداکثر سود خالص',
+        'max_profit_percent': 'درصد بازدهی',
+        'monthly_return_%': 'سود ماهانه (R30)',
+        'margin30': 'حاشیه ماهانه (M30)',
+        'raw_return_percent': 'سود خام',
+        'raw_margin_percent': 'حاشیه خام',
+        'break_even_price': 'قیمت سربه‌سر',
+        'break_even_percent': 'درصد رشد تا سربه‌سر',
+        'break_even_percent_scale': 'مقیاس سربه‌سر',
+        'risk_reward_ratio': 'R/R',
+        'days_to_maturity': 'روز تا سررسید',
+        'long_volume': 'حجم خرید',
+        'short_volume': 'حجم فروش',
     }
 
-    rename_dict = {
+    cc_rename = {
         'underlying': 'نماد پایه',
+        'regime': 'رژیم',
+        'decision': 'تصمیم',
+        'composite_score': 'امتیاز نهایی',
         'stock_price': 'قیمت سهم',
         'option_symbol': 'نماد اختیار',
         'strike': 'قیمت اعمال',
-        'premium': 'پریمیوم (قیمت)',
-        'net_profit': 'سود خالص (ریال)',
-        'profit_percent': 'درصد سود کل',
-        'monthly_return_%': 'درصد سود ماهانه',
+        'premium': 'پریمیوم فروش',
+        'contract_size': 'اندازه قرارداد',
+        'capital_at_risk': 'سرمایه درگیر',
+        'net_profit': 'سود خالص',
+        'profit_percent': 'درصد سود',
+        'monthly_return_%': 'سود ماهانه (R30)',
+        'margin30': 'حاشیه ماهانه (M30)',
+        'raw_return_percent': 'سود خام',
+        'raw_margin_percent': 'حاشیه خام',
         'break_even_price': 'قیمت سربه‌سر',
-        'break_even_percent': 'فاصله تا سربه‌سر (%)',
-        'capital_at_risk': 'سرمایه درگیر (خرید)',
-        'initial_margin': 'وجه تضمین اولیه',
-        'required_margin': 'وجه تضمین مسدودی (سرمایه درگیر)',
-        'otm_percent': 'درصد OTM بودن',
+        'break_even_percent': 'درصد رشد تا سربه‌سر',
+        'break_even_percent_scale': 'مقیاس سربه‌سر',
+        'max_drop_%': 'حداکثر افت مجاز',
+        'risk_reward_ratio': 'R/R',
         'days_to_maturity': 'روز تا سررسید',
-        'volume': 'حجم معاملات'
+        'volume': 'حجم',
     }
 
-    file_name = "options_strategies_result.xlsx"
-    filepath = Path(__file__).parent / file_name
-
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
-        for strategy_name, df in results_dict.items():
-            if df.empty:
-                continue
+        # ===== شیت Bull Call Spread =====
+        if bcs_df is not None and not bcs_df.empty:
+            bcs_renamed = bcs_df.rename(columns=bcs_rename)
+            bcs_renamed.to_excel(
+                writer, sheet_name='bull_call_spread', index=False
+            )
+            ws = writer.sheets['bull_call_spread']
+            _format_worksheet(ws, bcs_renamed, header_font, header_fill,
+                              alignment, body_font, gray_font)
+        else:
+            # شیت خالی
+            pd.DataFrame({'پیام': ['هیچ موقعیتی یافت نشد']}).to_excel(
+                writer, sheet_name='bull_call_spread', index=False
+            )
 
-            df_renamed = df.rename(columns=rename_dict)
-            df_renamed.to_excel(writer, sheet_name=strategy_name, index=False)
-            ws = writer.sheets[strategy_name]
+        # ===== شیت Covered Call =====
+        if cc_df is not None and not cc_df.empty:
+            cc_renamed = cc_df.rename(columns=cc_rename)
+            cc_renamed.to_excel(
+                writer, sheet_name='covered_call', index=False
+            )
+            ws = writer.sheets['covered_call']
+            _format_worksheet(ws, cc_renamed, header_font, header_fill,
+                              alignment, body_font, gray_font)
+        else:
+            pd.DataFrame({'پیام': ['هیچ موقعیتی یافت نشد']}).to_excel(
+                writer, sheet_name='covered_call', index=False
+            )
 
-            # اضافه کردن استایل سرستون
-            fill = PatternFill(start_color=color_scheme.get(strategy_name, '1F497D'),
-                               end_color=color_scheme.get(strategy_name, '1F497D'), 
-                               fill_type='solid')
-            
-            for col_idx in range(1, len(df_renamed.columns) + 1):
-                cell = ws.cell(row=1, column=col_idx)
-                cell.font, cell.fill, cell.alignment = header_font, fill, alignment
-
-            # تنظیم عرض ستون‌ها و استایل داده‌ها
-            for col in ws.columns:
-                max_len = max(len(str(cell.value or '')) for cell in col)
-                ws.column_dimensions[col[0].column_letter].width = min(max_len + 5, 40)
-                for cell in col:
-                    if cell.row > 1:
-                        cell.font, cell.alignment = body_font, alignment
-
-            # فعال‌سازی AutoFilter روی تمام سرستون‌ها
-            ws.auto_filter.ref = ws.dimensions
-
-    print(f"Result file saved successfully: {file_name}")
+    print(f"\nResults saved to: {filename}")
+    print(f"  - Sheet 'bull_call_spread': {len(bcs_df) if bcs_df is not None else 0} rows")
+    print(f"  - Sheet 'covered_call': {len(cc_df) if cc_df is not None else 0} rows")
 
 
-# ============================================================================
-# ۶. نقطه ورود اصلی (Main)
-# ============================================================================
+def _format_worksheet(ws, df_renamed, header_font, header_fill,
+                       alignment, body_font, gray_font):
+    """فرمت‌بندی یک worksheet."""
+    # هدر
+    for col_idx in range(1, len(df_renamed.columns) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = alignment
+
+    # بدنه
+    for row_idx in range(2, len(df_renamed) + 2):
+        for col_idx in range(1, len(df_renamed.columns) + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            val = cell.value
+            if val is None or pd.isna(val) or val == "":
+                cell.value = "-"
+                cell.font = gray_font
+            else:
+                cell.font = body_font
+            cell.alignment = alignment
+
+    ws.auto_filter.ref = (
+        f"A1:{get_column_letter(len(df_renamed.columns))}"
+        f"{len(df_renamed) + 1}"
+    )
+    ws.freeze_panes = 'A2'
+
+    # تنظیم عرض
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            if cell.value:
+                text = str(cell.value)
+                if '\n' in text:
+                    lines = text.split('\n')
+                    line_length = max(len(line) for line in lines)
+                else:
+                    line_length = len(text)
+                if line_length > max_length:
+                    max_length = line_length
+        adjusted_width = min(max_length + 5, 50)
+        ws.column_dimensions[column].width = adjusted_width
+
+
+# ==========================================================================================
+# بخش ۱۰: تابع اصلی
+# ==========================================================================================
 
 def main():
-    df_market = load_market_data()
+    """تابع اصلی اجرای استراتژی‌ها."""
+    try:
+        print("=" * 65)
+        print("Strategies Analyzer (Bull Call Spread + Covered Call)")
+        print("=" * 65)
+        print(f"  BCS Enabled: {BCS_ENABLED}")
+        print(f"  CC Enabled:  {CC_ENABLED}")
+        print("=" * 65)
 
-    if df_market.empty:
-        print("No market data found or server error.")
-        return
+        if not BCS_ENABLED and not CC_ENABLED:
+            print("No strategy is enabled. Exiting.")
+            return
 
-    results = run_all_strategies(df_market)
-    export_to_excel_files(results)
+        # ===== بارگذاری پروفایل نوسان (مشترک) =====
+        df_vol = load_volatility_profile()
+        if df_vol.empty:
+            print("\nWARNING: Volatility profile not loaded.")
+        else:
+            print(f"\nVolatility profile: {len(df_vol)} symbols loaded")
+
+        # ===== بارگذاری داده بازار (مشترک) =====
+        filtered_data = load_and_filter_data()
+
+        if filtered_data.empty:
+            print("No market data found.")
+            return
+
+        print(f"\nMarket data: {len(filtered_data)} CALL options loaded")
+
+        # ===== اجرای Bull Call Spread =====
+        bcs_results = None
+        if BCS_ENABLED:
+            bcs_results = run_bull_call_spread(filtered_data, df_vol)
+        else:
+            print("\n[SKIP] Bull Call Spread is disabled.")
+
+        # ===== اجرای Covered Call =====
+        cc_results = None
+        if CC_ENABLED:
+            cc_results = run_covered_call(filtered_data, df_vol)
+        else:
+            print("\n[SKIP] Covered Call is disabled.")
+
+        # ===== ذخیره در اکسل =====
+        save_results_to_excel(bcs_results, cc_results)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
