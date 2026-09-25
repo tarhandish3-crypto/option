@@ -412,6 +412,8 @@ def run_long_call_kala_strategy(df_options, max_break_even_percent=25):
         results = long_call_with_fees_kala(
             premium_call, stock_price, strike_price, contract_size,
             opt_buy_commission, exercise_fee_rate, days)
+        if days < 1:
+            days = 1.0
 
         max_loss_price_percent_scale = results['max_loss_price_percent'] * ((30 / days) ** 0.5)
         break_even_percent_scale = results['break_even_percent'] * ((30 / days) ** 0.5)

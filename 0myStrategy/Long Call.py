@@ -123,7 +123,7 @@ def load_and_filter_data():
 
     # فیلتر کردن گزینه‌های اختیار خرید
     filter_option = df_final[
-        (df_final['DaysToMaturity'] > 1.0) &
+        (df_final['DaysToMaturity'] > 0.0) &
         (df_final['Type'].apply(lambda x: x.name == 'CALL'))].copy()
 
     # حذف موارد نامطلوب
@@ -177,7 +177,6 @@ def run_long_call_strategy(df_options, max_break_even_percent=12):
                 'option_symbol': ticker,
                 'strike': strike_price,
                 'premium': round(premium_call, 0),
-                'stock_price': round(stock_price, 0),
                 'net_profit': results['net_profit'],
                 'profit_percent': results['profit_percent'],
                 'monthly_return_%': results['monthly_return'],

@@ -70,6 +70,7 @@ class OptionContract:
     last_price: float = 0.0                   # آخرین قیمت معامله شده
     close_price: float = 0.0                  # قیمت پایانی جلسه قبل
     underlying_price: float = 0.0             # قیمت لحظه‌ای دارایی پایه
+    UnderlyingClosingPrice: float = 0.0       # قیمت پابانی دارایی پایه
     yesterday_price: float = 0.0              # قیمت دیروز قرارداد
 
     # ===== حجم و ارزش =====
@@ -133,7 +134,7 @@ class OptionContract:
             'option_type': self.option_type.value if isinstance(self.option_type, Enum) else self.option_type,
             'strike_price': self.strike_price, 'contract_size': self.contract_size,
             'days_to_maturity': self.days_to_maturity, 'bid': self.bid, 'ask': self.ask,
-            'last_price': self.last_price, 'underlying_price': self.underlying_price, 'volume': self.volume,
+            'last_price': self.last_price, 'underlying_price': self.underlying_price, 'underlying_ClosingPrice': self.UnderlyingClosingPrice, 'volume': self.volume,
             'open_interest': self.open_interest, 'iv': self.iv, 'delta': self.delta, 'instrument_code': self.instrument_code
         }
 
@@ -456,6 +457,8 @@ class MarketSnapshot:
             ticker_str = str(ticker)
             underlying_price = cls._clean_float(
                 group['UnderlyingPrice'].iloc[0])
+            underlying_ClosingPrice = cls._clean_float(
+                group['UnderlyingClosingPrice'].iloc[0])
             name = str(group['Name'].iloc[0])
 
             market = ExchangeType.TSE
@@ -469,7 +472,7 @@ class MarketSnapshot:
 
             underlyings[ticker_str] = UnderlyingAsset(
                 ticker=ticker_str, name=name, last_price=underlying_price,
-                close_price=underlying_price, market=market, asset_type=asset_type, yesterday_price=underlying_price)
+                close_price=underlying_ClosingPrice, market=market, asset_type=asset_type, yesterday_price=underlying_price)
         return underlyings
 
     @classmethod
@@ -486,7 +489,8 @@ class MarketSnapshot:
                 row.get('DaysToMaturity')) else 0,
             bid=cls._clean_float(row.get('BidPrice')), ask=cls._clean_float(row.get('AskPrice')),
             last_price=cls._clean_float(row.get('LastPrice')), close_price=cls._clean_float(row.get('ClosePrice')),
-            underlying_price=cls._clean_float(row.get('UnderlyingPrice')), yesterday_price=cls._clean_float(row.get('ClosePrice')),
+            underlying_price=cls._clean_float(row.get('UnderlyingPrice')), underlying_ClosingPrice=cls._clean_float(row.get('UnderlyingClosingPrice')),
+            yesterday_price=cls._clean_float(row.get('ClosePrice')),
             volume=int(row.get('Volume', 0)) if pd.notna(
                 row.get('Volume')) else 0,
             open_interest=int(row.get('OpenPositions', 0)) if pd.notna(
