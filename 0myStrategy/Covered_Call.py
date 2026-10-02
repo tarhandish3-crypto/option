@@ -779,25 +779,20 @@ def calculate_composite_score(
 # ==========================================================================================
 
 def analyze_covered_call(
-    output_file: str = "covered_call_results.xlsx",
-    min_monthly_return=DEFAULT_MIN_MONTHLY_RETURN,
-    min_margin_floor=DEFAULT_MIN_MARGIN_FLOOR,
-    margin_percentile=DEFAULT_MARGIN_PERCENTILE,
-    min_rr_ratio=DEFAULT_MIN_RR_RATIO,
-    w_r=DEFAULT_W_R,
-    w_m=DEFAULT_W_M,
-    vol_quality_power=DEFAULT_VOL_QUALITY_POWER,
-    imbalance_power=DEFAULT_IMBALANCE_POWER,
-    min_m_risk=DEFAULT_MIN_M_RISK,
-    decision_threshold=DEFAULT_DECISION_THRESHOLD,
-    near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
-    near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,
-) -> pd.DataFrame:
+        output_file: str = "covered_call_results.xlsx",
+        min_monthly_return=DEFAULT_MIN_MONTHLY_RETURN,
+        min_margin_floor=DEFAULT_MIN_MARGIN_FLOOR,
+        margin_percentile=DEFAULT_MARGIN_PERCENTILE,
+        min_rr_ratio=DEFAULT_MIN_RR_RATIO,
+        w_r=DEFAULT_W_R,
+        w_m=DEFAULT_W_M,
+        vol_quality_power=DEFAULT_VOL_QUALITY_POWER,
+        imbalance_power=DEFAULT_IMBALANCE_POWER,
+        min_m_risk=DEFAULT_MIN_M_RISK,
+        decision_threshold=DEFAULT_DECISION_THRESHOLD,
+        near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
+        near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,) -> pd.DataFrame:
     """اجرای کامل تحلیل Covered Call."""
-    print("=" * 65)
-    print("Covered Call Strategy")
-    print("=" * 65)
-
     # ===== بارگذاری پروفایل نوسان =====
     df_vol = load_volatility_profile()
     if df_vol.empty:
@@ -842,8 +837,7 @@ def analyze_covered_call(
                 stock_buy_commission=stock_buy_commission,
                 exercise_fee_rate=exercise_fee_rate,
                 exercise_tax_rate=exercise_tax_rate,
-                days=days,
-            )
+                days=days,)
 
             if res['status'] == 'DISCARD':
                 continue
@@ -895,8 +889,7 @@ def analyze_covered_call(
         margin_percentile=margin_percentile,
         min_m_risk=min_m_risk,
         near_expiry_min_return=near_expiry_min_return,
-        near_expiry_min_margin=near_expiry_min_margin,
-    )
+        near_expiry_min_margin=near_expiry_min_margin,)
 
     if result_df_filtered.empty:
         print("No valid setups after hard constraints.")
@@ -908,28 +901,23 @@ def analyze_covered_call(
         w_r=w_r,
         w_m=w_m,
         vol_quality_power=vol_quality_power,
-        imbalance_power=imbalance_power,
-    )
+        imbalance_power=imbalance_power,)
 
     # ===== رتبه‌بندی =====
     result_df_filtered = result_df_filtered.sort_values(
-        by='composite_score', ascending=False
-    ).reset_index(drop=True)
+        by='composite_score', ascending=False).reset_index(drop=True)
 
     # ===== تصمیم =====
     always_enter_mask = (
         (result_df_filtered['composite_score'] == RISK_FREE_SCORE_SENTINEL)
-        | (result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE)
-    )
+        | (result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE))
     result_df_filtered['decision'] = np.where(
         always_enter_mask,
         'ENTER',
         np.where(
             result_df_filtered['composite_score'] > decision_threshold,
             'ENTER',
-            'SKIP',
-        ),
-    )
+            'SKIP',),)
 
     result_df_filtered['regime'] = np.select(
         [
@@ -937,8 +925,7 @@ def analyze_covered_call(
             result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE,
         ],
         ['RISK_FREE', 'NEAR_EXPIRY'],
-        default='NORMAL',
-    )
+        default='NORMAL',)
 
     # چیدمان ستون‌ها
     column_order = [
@@ -961,23 +948,17 @@ def analyze_covered_call(
 
     # جایگزینی Sentinelها
     result_df_filtered['break_even_percent'] = result_df_filtered[
-        'break_even_percent'
-    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+        'break_even_percent'].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
     result_df_filtered['break_even_percent_scale'] = result_df_filtered[
-        'break_even_percent_scale'
-    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+        'break_even_percent_scale'].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
     result_df_filtered['monthly_return_%'] = result_df_filtered[
-        'monthly_return_%'
-    ].replace(RISK_FREE_RETURN_SENTINEL, 'Infinite')
+        'monthly_return_%'].replace(RISK_FREE_RETURN_SENTINEL, 'Infinite')
     result_df_filtered['margin30'] = result_df_filtered['margin30'].apply(
-        lambda v: 'Risk Free' if v == np.inf else round(v, 2)
-    )
+        lambda v: 'Risk Free' if v == np.inf else round(v, 2))
     result_df_filtered['M_risk'] = result_df_filtered['M_risk'].apply(
-        lambda v: 'N/A' if (pd.isna(v) or v == np.inf) else round(v, 2)
-    )
+        lambda v: 'N/A' if (pd.isna(v) or v == np.inf) else round(v, 2))
     result_df_filtered['composite_score'] = result_df_filtered[
-        'composite_score'
-    ].replace(RISK_FREE_SCORE_SENTINEL, 'Risk Free')
+        'composite_score'].replace(RISK_FREE_SCORE_SENTINEL, 'Risk Free')
 
     # ===== ذخیره در اکسل =====
     save_results_to_excel(result_df_filtered, output_file)
@@ -1012,8 +993,7 @@ def save_results_to_excel(result_df, filename="covered_call_results.xlsx"):
     """ذخیره نتایج خروجی در فایل اکسل."""
     header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
     header_fill = PatternFill(
-        start_color='203764', end_color='203764', fill_type='solid'
-    )
+        start_color='203764', end_color='203764', fill_type='solid')
     alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     body_font = Font(name='Segoe UI', size=10)
     gray_font = Font(color='808080', italic=True, name='Segoe UI', size=10)
@@ -1059,8 +1039,7 @@ def save_results_to_excel(result_df, filename="covered_call_results.xlsx"):
 
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
         result_df_renamed.to_excel(
-            writer, sheet_name='covered_call', index=False
-        )
+            writer, sheet_name='covered_call', index=False)
         worksheet = writer.sheets['covered_call']
 
         for col_idx in range(1, len(result_df_renamed.columns) + 1):
@@ -1082,8 +1061,7 @@ def save_results_to_excel(result_df, filename="covered_call_results.xlsx"):
 
         worksheet.auto_filter.ref = (
             f"A1:{get_column_letter(len(result_df_renamed.columns))}"
-            f"{len(result_df_renamed) + 1}"
-        )
+            f"{len(result_df_renamed) + 1}")
         worksheet.freeze_panes = 'A2'
 
         for col in worksheet.columns:
@@ -1111,5 +1089,4 @@ def save_results_to_excel(result_df, filename="covered_call_results.xlsx"):
 
 if __name__ == "__main__":
     OUTPUT_FILE = "covered_call_results.xlsx"
-
     df_result = analyze_covered_call(output_file=OUTPUT_FILE,)

@@ -37,17 +37,55 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# 🎯 پیکربندی Bale (کاربر باید وارد کند)
+# 🎯 بارگذاری پیکربندی Bale از user_settings.json
 # ============================================================
 
-BALE_ENABLED = True
-BALE_BOT_TOKEN = "2144104837:M-1qbeWfXUTducuJS0aV4zu70P8xTr8Jzjk"
-BALE_CHAT_ID = "@Option_Mehdi"
-BALE_TOP_N = 1
+def load_bale_config():
+
+    settings_file = root_dir / "user_settings.json"
+
+    try:
+        with open(settings_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        active_profile = data.get('active_profile', '')
+        profiles = data.get('profiles')
+
+        if active_profile and active_profile in profiles:
+            profile_data = profiles[active_profile]
+            bale_config = profile_data.get('bale')
+
+            return {
+                "enabled": bool(bale_config.get('enabled', False)),
+                "bot_token": str(bale_config.get('bot_token')),
+                "chat_id": str(bale_config.get('chat_id')),
+                "top_n": int(bale_config.get('top_n', 1)),
+            }
+
+    except json.JSONDecodeError as e:
+        print(f"[BALE-CONFIG] ERROR: Invalid JSON: {e}")
+        return {default_config}
+    except Exception as e:
+        print(f"[BALE-CONFIG] ERROR: {e}")
+        return {}
+
+
+# ============================================================
+# بارگذاری پیکربندی در زمان import
+# ============================================================
+
+_BALE_CONFIG = load_bale_config()
+
+BALE_ENABLED = _BALE_CONFIG['enabled']
+BALE_BOT_TOKEN = _BALE_CONFIG['bot_token']
+BALE_CHAT_ID = _BALE_CONFIG['chat_id']
+BALE_TOP_N = _BALE_CONFIG['top_n']
+
+# پارامترهای ثابت (در user_settings.json نیستند)
 BALE_PARSE_MODE = "Markdown"
 BALE_TIMEOUT = 10
 
-# --- جلوگیری از ارسال تکراری ---
+# جلوگیری از ارسال پیغام تکراری
 BALE_DEDUP_ENABLED = True
 BALE_SENT_HISTORY_FILE = current_dir / "sent_positions.json"
 
@@ -104,11 +142,11 @@ def send_message_to_bale(message_text, bot_token=None, chat_id=None,
     mode = parse_mode if parse_mode is not None else BALE_PARSE_MODE
     t_out = timeout or BALE_TIMEOUT
 
-    if not token or token == "YOUR_BOT_TOKEN":
+    if not token:
         print("[BALE] Bot token is not configured.")
         return None
 
-    if not c_id or c_id == "YOUR_CHAT_ID":
+    if not c_id:
         print("[BALE] Chat ID is not configured.")
         return None
 
@@ -252,7 +290,27 @@ def _is_already_sent(fingerprint, history):
 
 
 def _mark_as_sent(fingerprint, history, row, strategy_type="bull_call_spread"):
-    """ثبت موقعیت به‌عنوان ارسال‌شده."""
+    """
+    ثبت موقعیت به‌عنوان ارسال‌شده.
+
+    نکته مهم: composite_score ممکن است رشته 'Risk Free' باشد
+    (برای رژیم آربیتراژ). این حالت با try/except مدیریت می‌شود.
+    """
+    raw_score = row.get('composite_score', 0)
+
+    # ===== تبدیل امن composite_score =====
+    if isinstance(raw_score, str):
+        # حالت 'Risk Free' یا هر رشته دیگر
+        score_value = (
+            RISK_FREE_SCORE_SENTINEL if raw_score.strip() == 'Risk Free'
+            else 0.0
+        )
+    else:
+        try:
+            score_value = float(raw_score) if pd.notna(raw_score) else 0.0
+        except (ValueError, TypeError):
+            score_value = 0.0
+
     history[fingerprint] = {
         'sent_at': pd.Timestamp.now().isoformat(),
         'strategy': strategy_type,
@@ -261,25 +319,17 @@ def _mark_as_sent(fingerprint, history, row, strategy_type="bull_call_spread"):
         'short_option_symbol': str(row.get('short_option_symbol', '')),
         'days_to_maturity': int(row.get('days_to_maturity', 0)),
         'maturity_date': str(row.get('maturity_date', '')),
-        'composite_score': float(row.get('composite_score', 0))
-            if pd.notna(row.get('composite_score', 0)) else 0.0,
+        'composite_score': score_value,
     }
 
 
 def send_best_position_to_bale(result_df):
-    """
-    ارسال بهترین موقعیت Bull Call Spread به بله.
 
-    منطق جلوگیری از تکرار:
-        - اثر انگشت = strategy | underlying | long_sym | short_sym | days
-        - اگر موقعیت قبلاً ارسال شده باشد، دوباره ارسال نمی‌شود.
-        - اگر حتی یکی از این ۵ عنصر تغییر کند، موقعیت جدید است و ارسال می‌شود.
-    """
     if not BALE_ENABLED:
         print("\n[SKIP] Bale notification is disabled.")
         return
 
-    if BALE_BOT_TOKEN == "YOUR_BOT_TOKEN" or BALE_CHAT_ID == "YOUR_CHAT_ID":
+    if not BALE_BOT_TOKEN or not BALE_CHAT_ID:
         print("\n[SKIP] Bale bot_token or chat_id is not configured.")
         return
 
@@ -296,12 +346,20 @@ def send_best_position_to_bale(result_df):
     history = _load_sent_history()
     print(f"\n[BALE-DEDUP] History: {len(history)} records.")
 
-    top_n = enter_df.head(BALE_TOP_N)
+    # ===== استخر بزرگ‌تر از BALE_TOP_N =====
+    pool_size = max(BALE_TOP_N * 10, 20)
+    candidate_pool = enter_df.head(min(len(enter_df), pool_size))
+    print(f"[BALE-DEDUP] Candidate pool: {len(candidate_pool)} positions "
+          f"(looking for up to {BALE_TOP_N} new).")
+
     sent_count = 0
     skipped_count = 0
 
-    for _, row in top_n.iterrows():
-        # ساخت اثر انگشت (شامل strategy)
+    for _, row in candidate_pool.iterrows():
+        # اگر به تعداد موردنیاز رسیدیم، توقف
+        if sent_count >= BALE_TOP_N:
+            break
+
         fingerprint = _build_fingerprint(
             underlying=row.get('underlying', ''),
             long_sym=row.get('long_option_symbol', ''),
@@ -331,6 +389,10 @@ def send_best_position_to_bale(result_df):
     _save_sent_history(history)
     print(f"[BALE-DEDUP] Sent: {sent_count}, Skipped: {skipped_count}")
 
+    if sent_count == 0:
+        print(f"[BALE-DEDUP] WARNING: No new positions to send "
+              f"(all {len(candidate_pool)} candidates were duplicates).")
+
 
 # ============================================================
 # لایه ۱: محاسبه پارامترهای هر اسپرد
@@ -346,8 +408,7 @@ def bull_call_spread_analysis(
     opt_sell_commission,
     exercise_fee_rate,
     exercise_tax_rate,
-    days,
-):
+    days,):
     """محاسبه پارامترهای استراتژی Bull Call Spread با کارمزد و مالیات."""
     long_premium_total = round(long_ask_premium * contract_size, 0)
     long_entry_fee = round(long_premium_total * opt_buy_commission, 0)
@@ -505,8 +566,7 @@ def apply_hard_constraints(
     margin_percentile,
     min_m_risk,
     near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
-    near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,
-):
+    near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,):
     """فیلتر سخت‌گیرانه."""
     if df.empty:
         return df
@@ -553,8 +613,7 @@ def calculate_composite_score(
     w_r=DEFAULT_W_R,
     w_m=DEFAULT_W_M,
     vol_quality_power=DEFAULT_VOL_QUALITY_POWER,
-    imbalance_power=DEFAULT_IMBALANCE_POWER,
-):
+    imbalance_power=DEFAULT_IMBALANCE_POWER,):
     """امتیازدهی نهایی با ضرایب ترکیبی."""
     if df.empty:
         return df
@@ -651,8 +710,7 @@ def run_bull_call_spread_strategy(
     min_m_risk=DEFAULT_MIN_M_RISK,
     decision_threshold=DEFAULT_DECISION_THRESHOLD,
     near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
-    near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,
-):
+    near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,):
     """اجرای کامل استراتژی."""
     results_fee = []
 
@@ -678,13 +736,11 @@ def run_bull_call_spread_strategy(
                     long_type = (
                         long_leg['Type'].name
                         if hasattr(long_leg['Type'], 'name')
-                        else str(long_leg['Type']).upper()
-                    )
+                        else str(long_leg['Type']).upper())
                     short_type = (
                         short_leg['Type'].name
                         if hasattr(short_leg['Type'], 'name')
-                        else str(short_leg['Type']).upper()
-                    )
+                        else str(short_leg['Type']).upper())
 
                     if long_type != 'CALL' or short_type != 'CALL':
                         continue
@@ -699,8 +755,7 @@ def run_bull_call_spread_strategy(
                         pd.isna(long_ask)
                         or long_ask <= 0
                         or pd.isna(short_bid)
-                        or short_bid <= 0
-                    ):
+                        or short_bid <= 0):
                         continue
 
                     res = bull_call_spread_analysis(
@@ -714,16 +769,14 @@ def run_bull_call_spread_strategy(
                         opt_sell_commission=opt_sell_commission,
                         exercise_fee_rate=exercise_fee_rate,
                         exercise_tax_rate=EXERCISE_TAX_RATE,
-                        days=days,
-                    )
+                        days=days,)
 
                     if res['status'] == 'DISCARD':
                         continue
 
                     if (
                         res['status'] != 'RISK_FREE'
-                        and res['risk_reward_ratio'] < min_rr_ratio
-                    ):
+                        and res['risk_reward_ratio'] < min_rr_ratio):
                         continue
 
                     results_fee.append({
@@ -749,8 +802,7 @@ def run_bull_call_spread_strategy(
                         'days_to_maturity': days,
                         'long_volume': int(long_leg.get('Volume', 0)),
                         'short_volume': int(short_leg.get('Volume', 0)),
-                        'maturity_date': str(long_leg.get('MaturityDate', '')),
-                    })
+                        'maturity_date': str(long_leg.get('MaturityDate', '')),})
 
     if not results_fee:
         return pd.DataFrame()
@@ -772,8 +824,7 @@ def run_bull_call_spread_strategy(
         margin_percentile=margin_percentile,
         min_m_risk=min_m_risk,
         near_expiry_min_return=near_expiry_min_return,
-        near_expiry_min_margin=near_expiry_min_margin,
-    )
+        near_expiry_min_margin=near_expiry_min_margin,)
 
     if result_df_filtered.empty:
         return result_df_filtered
@@ -784,8 +835,7 @@ def run_bull_call_spread_strategy(
         w_r=w_r,
         w_m=w_m,
         vol_quality_power=vol_quality_power,
-        imbalance_power=imbalance_power,
-    )
+        imbalance_power=imbalance_power,)
 
     # لایه ۴: رتبه‌بندی
     result_df_filtered = result_df_filtered.sort_values(
@@ -802,8 +852,7 @@ def run_bull_call_spread_strategy(
             result_df_filtered['composite_score'] > decision_threshold,
             'ENTER',
             'SKIP',
-        ),
-    )
+        ),)
 
     result_df_filtered['regime'] = np.select(
         [
@@ -811,8 +860,7 @@ def run_bull_call_spread_strategy(
             result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE,
         ],
         ['RISK_FREE', 'NEAR_EXPIRY'],
-        default='NORMAL',
-    )
+        default='NORMAL',)
 
     # چیدمان ستون‌ها
     column_order = [
@@ -836,23 +884,17 @@ def run_bull_call_spread_strategy(
 
     # جایگزینی Sentinelها
     result_df_filtered['break_even_percent'] = result_df_filtered[
-        'break_even_percent'
-    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+        'break_even_percent'].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
     result_df_filtered['break_even_percent_scale'] = result_df_filtered[
-        'break_even_percent_scale'
-    ].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+        'break_even_percent_scale'].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
     result_df_filtered['monthly_return_%'] = result_df_filtered[
-        'monthly_return_%'
-    ].replace(RISK_FREE_RETURN_SENTINEL, 'Infinite')
+        'monthly_return_%'].replace(RISK_FREE_RETURN_SENTINEL, 'Infinite')
     result_df_filtered['margin30'] = result_df_filtered['margin30'].apply(
-        lambda v: 'Risk Free' if v == np.inf else round(v, 2)
-    )
+        lambda v: 'Risk Free' if v == np.inf else round(v, 2))
     result_df_filtered['M_risk'] = result_df_filtered['M_risk'].apply(
-        lambda v: 'N/A' if (pd.isna(v) or v == np.inf) else round(v, 2)
-    )
+        lambda v: 'N/A' if (pd.isna(v) or v == np.inf) else round(v, 2))
     result_df_filtered['composite_score'] = result_df_filtered[
-        'composite_score'
-    ].replace(RISK_FREE_SCORE_SENTINEL, 'Risk Free')
+        'composite_score'].replace(RISK_FREE_SCORE_SENTINEL, 'Risk Free')
 
     return result_df_filtered
 
@@ -864,8 +906,7 @@ def save_results_to_excel(result_df, filename="result_bull_call_spread.xlsx"):
     """ذخیره نتایج خروجی در فایل اکسل."""
     header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
     header_fill = PatternFill(
-        start_color='203764', end_color='203764', fill_type='solid'
-    )
+        start_color='203764', end_color='203764', fill_type='solid')
     alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     body_font = Font(name='Segoe UI', size=10)
     gray_font = Font(color='808080', italic=True, name='Segoe UI', size=10)
@@ -913,8 +954,7 @@ def save_results_to_excel(result_df, filename="result_bull_call_spread.xlsx"):
 
     with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
         result_df_renamed.to_excel(
-            writer, sheet_name='bull_call_spread', index=False
-        )
+            writer, sheet_name='bull_call_spread', index=False)
         worksheet = writer.sheets['bull_call_spread']
 
         for col_idx in range(1, len(result_df_renamed.columns) + 1):
@@ -936,8 +976,7 @@ def save_results_to_excel(result_df, filename="result_bull_call_spread.xlsx"):
 
         worksheet.auto_filter.ref = (
             f"A1:{get_column_letter(len(result_df_renamed.columns))}"
-            f"{len(result_df_renamed) + 1}"
-        )
+            f"{len(result_df_renamed) + 1}")
         worksheet.freeze_panes = 'A2'
 
         for col in worksheet.columns:
@@ -965,10 +1004,6 @@ def save_results_to_excel(result_df, filename="result_bull_call_spread.xlsx"):
 def main():
     """تابع اصلی اجرای استراتژی Bull Call Spread."""
     try:
-        print("=" * 65)
-        print("Bull Call Spread Strategy")
-        print("=" * 65)
-
         # ===== بارگذاری پروفایل نوسان =====
         df_vol = load_volatility_profile()
         if df_vol.empty:
@@ -1010,8 +1045,7 @@ def main():
             min_m_risk=DEFAULT_MIN_M_RISK,
             decision_threshold=DEFAULT_DECISION_THRESHOLD,
             near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
-            near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,
-        )
+            near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,)
 
         if results.empty:
             print("No valid strategy setups found after filtering.")
