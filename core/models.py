@@ -70,7 +70,7 @@ class OptionContract:
     last_price: float = 0.0                   # آخرین قیمت معامله شده
     close_price: float = 0.0                  # قیمت پایانی جلسه قبل
     underlying_price: float = 0.0             # قیمت لحظه‌ای دارایی پایه
-    UnderlyingClosingPrice: float = 0.0       # قیمت پابانی دارایی پایه
+    underlying_ClosingPrice: float = 0.0       # قیمت پابانی دارایی پایه
     yesterday_price: float = 0.0              # قیمت دیروز قرارداد
 
     # ===== حجم و ارزش =====
@@ -134,7 +134,7 @@ class OptionContract:
             'option_type': self.option_type.value if isinstance(self.option_type, Enum) else self.option_type,
             'strike_price': self.strike_price, 'contract_size': self.contract_size,
             'days_to_maturity': self.days_to_maturity, 'bid': self.bid, 'ask': self.ask,
-            'last_price': self.last_price, 'underlying_price': self.underlying_price, 'underlying_ClosingPrice': self.UnderlyingClosingPrice, 'volume': self.volume,
+            'last_price': self.last_price, 'underlying_price': self.underlying_price, 'underlying_ClosingPrice': self.underlying_ClosingPrice, 'volume': self.volume,
             'open_interest': self.open_interest, 'iv': self.iv, 'delta': self.delta, 'instrument_code': self.instrument_code
         }
 

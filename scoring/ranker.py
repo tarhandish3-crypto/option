@@ -55,6 +55,7 @@ class OpportunityRanker:
     ۱. حذف کامل رویکرد حذفی (No Discard Flow) جهت حفظ تمام پوزیشن‌ها برای DSS.
     ۲. محاسبه همزمان امتیازات برای ۵ پروفایل رفتاری مختلف به صورت موازی.
     ۳. پشتیبانی داینامیک از ورودی Dict و شیء دامنه‌ای Opportunity (ترازبندی قراردادها).
+    ۴. 🆕 ادغام امتیاز Cobb-Douglas (نقطه‌ای) با پروفایل‌های موجود.
     """
 
     def __init__(self, default_profile: RankingProfile = RankingProfile.BALANCED):
@@ -328,6 +329,96 @@ class OpportunityRanker:
     def _calculate_liquidity_score_for_opportunity(self, opp: Dict[str, Any]) -> float:
         """متد موروثی و سازگار نگهداری شده برای کدهای قدیمی لایه‌های بالا"""
         return self._calculate_liquidity_score(opp, True)
+
+    # ═════════════════════════════════════════════════════════════
+    # 🆕 متد جدید: ادغام امتیاز نقطه‌ای (Cobb-Douglas)
+    # ═════════════════════════════════════════════════════════════
+
+    def add_point_scores(
+        self,
+        opportunities: List[Opportunity],
+        w_r: float = 0.4,
+        w_m: float = 0.6,
+    ) -> List[Opportunity]:
+        """
+        افزودن شاخص‌های نقطه‌ای (R30، M30، سربه‌سر) و امتیاز Cobb-Douglas
+        به Opportunity های از قبل رتبه‌بندی‌شده.
+
+        این متد profile_scores را دست نمی‌زند - فقط metadata را غنی می‌کند.
+
+        Args:
+            opportunities: لیست Opportunity (باید قبلاً rank شده باشند)
+            w_r: وزن R30 در Cobb-Douglas
+            w_m: وزن M30 در Cobb-Douglas
+
+        Returns:
+            همان لیست (به‌روزرسانی‌شده)
+        """
+        if not opportunities:
+            return []
+
+        try:
+            from scoring.point_analyzer import enrich_opportunity
+        except ImportError as e:
+            logger.warning("Cannot import point_analyzer: %s", e)
+            return opportunities
+
+        count = 0
+        for opp in opportunities:
+            try:
+                enrich_opportunity(opp, w_r=w_r, w_m=w_m)
+                count += 1
+            except Exception as e:
+                logger.warning(
+                    "add_point_scores failed for %s: %s",
+                    getattr(opp, 'strategy_name', '?'),
+                    e,
+                )
+
+        logger.info(
+            "Point scores added to %d/%d opportunities",
+            count, len(opportunities)
+        )
+        return opportunities
+
+    # ═════════════════════════════════════════════════════════════
+    # 🆕 متد کمکی: دریافت Opportunity ها بر اساس composite_score
+    # ═════════════════════════════════════════════════════════════
+
+    def sort_by_composite_score(
+        self,
+        opportunities: List[Opportunity],
+        descending: bool = True,
+    ) -> List[Opportunity]:
+        """
+        مرتب‌سازی Opportunity ها بر اساس composite_score (Cobb-Douglas).
+
+        Args:
+            opportunities: لیست Opportunity (باید enrich شده باشند)
+            descending: اگر True، نزولی (بیشترین امتیاز اول)
+
+        Returns:
+            لیست مرتب‌شده
+        """
+        if not opportunities:
+            return []
+
+        try:
+            opportunities.sort(
+                key=lambda o: float(
+                    getattr(o, 'metadata', {}).get(
+                        'composite_score', 0.0) or 0.0
+                ),
+                reverse=descending,
+            )
+        except Exception as e:
+            logger.warning("sort_by_composite_score failed: %s", e)
+
+        return opportunities
+
+    # ═════════════════════════════════════════════════════════════
+    # متدهای موجود (دست‌نخورده)
+    # ═════════════════════════════════════════════════════════════
 
     def get_top_n(self, ranked_opportunities: List[Opportunity], n: int = 100) -> List[Opportunity]:
         """انتخاب سطرهای برتر جهت مانیتورینگ اولیه یا کنترل موضعی فلو"""

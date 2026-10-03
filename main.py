@@ -31,6 +31,7 @@ from scoring.ranker import OpportunityRanker, RankingProfile
 from ui import theme as ui_theme
 from ui.main_window import MainWindow
 from ui.settings_manager import settings_manager
+from automation.brokers.Omex_khobregan import get_devtools_snippet_server
 
 logger = logging.getLogger("OptionScanner.Main")
 
@@ -332,7 +333,8 @@ class OptionScanner:
         self,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         stop_check_callback: Optional[Callable[[], bool]] = None,
-        force_refresh: bool = True) -> List[Any]:
+        force_refresh: bool = True,
+        strategy_filter: Optional[str] = None,) -> List[Any]:
 
         self._cancel_event.clear()
 
@@ -357,7 +359,7 @@ class OptionScanner:
                 self._lazy_init()
 
                 res, dur = self._execute_scan(
-                    update_progress, is_stopped, force_refresh)
+                    update_progress, is_stopped, force_refresh, strategy_filter=strategy_filter,)
                 scan_output["results"] = res
                 scan_output["duration"] = dur
             except Exception as e:
@@ -415,7 +417,8 @@ class OptionScanner:
         self,
         update_progress: Callable[[int, str], None],
         is_stopped: Callable[[], bool],
-        force_refresh: bool) -> Tuple[List[Any], float]:
+        force_refresh: bool,
+        strategy_filter: Optional[str] = None,) -> Tuple[List[Any], float]:
 
         start_time = time.time()
 
@@ -452,7 +455,7 @@ class OptionScanner:
         update_progress(
             30, f"📊 تحلیل {len(snapshot.option_contracts)} قرارداد...")
         engine = ScannerEngine(snapshot=snapshot)
-        scan_result = engine.execute_full_scan()
+        scan_result = engine.execute_full_scan(strategy_filter=strategy_filter,)
 
         if is_stopped() or not scan_result or not getattr(scan_result, 'opportunities', None):
             return [], 0.0

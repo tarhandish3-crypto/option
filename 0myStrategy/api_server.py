@@ -237,25 +237,27 @@ def analyze_market():
         
         print(f"\n[{datetime.now().strftime('%H:%M:%S')}] شروع تحلیل ({active})...")
 
+        # ===== بارگذاری پروفایل نوسان =====
+        df_vol = load_volatility_profile()
+        if df_vol.empty:
+            print("\nWARNING: Volatility profile not loaded.")
+        else:
+            print(f"\nVolatility profile: {len(df_vol)} symbols loaded")
+            
         # ۲. دریافت داده
         df_raw = MarketDownloader.from_tsetmc_direct()
-        if df_raw is None or df_raw.empty:
-            print("  ⚠️ داده‌ای دریافت نشد")
-            return
-
         df_cleaned = DataCleaner.clean(df_raw)
         df_final = DataCleaner.add_derived_columns(df_cleaned)
 
         # ۳. فیلتر CALL
         is_call = df_final['Type'].apply(
             lambda x: x.name == 'CALL' if hasattr(x, 'name')
-            else str(x).upper() == 'CALL'
-        )
+            else str(x).upper() == 'CALL')
         calls = df_final[(df_final['DaysToMaturity'] >= 0) & is_call].copy()
+        if filtered_data.empty:
+            print("No market data found.")
+            return
         print(f"  CALLs: {len(calls)}")
-
-        # ۴. بارگذاری پروفایل نوسان
-        df_vol = load_volatility_from_root()
 
         # ═══════════════════════════════════════════════════════
         # 🎯 ۵. تحلیل فقط استراتژی فعال

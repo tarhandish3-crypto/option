@@ -95,13 +95,32 @@ class ScannerEngine:
         self.total_generated_stats = 0
         self.total_filtered_stats = 0
 
-    def execute_full_scan(self) -> ScanResult:
-        """اجرای اسکن کامل بازار با مدیریت آمارگیری دقیق."""
+    def execute_full_scan(self, strategy_filter: Optional[str] = None,) -> ScanResult:
+        """
+        اجرای اسکن کامل بازار با مدیریت آمارگیری دقیق.
+
+        Args:
+            strategy_filter: اگر داده شود، فقط این استراتژی اسکن می‌شود.
+                            اگر None باشد، همه‌ی استراتژی‌های فعال اسکن می‌شوند.
+        """
         start_time = time.time()
         self._reset_stats()
 
         target_tickers = list(self.snapshot.underlying_assets.keys())
         all_strategies = get_all_strategies()
+
+        # 🆕 فیلتر استراتژی
+        if strategy_filter:
+            all_strategies = {
+                k: v for k, v in all_strategies.items()
+                if k == strategy_filter}
+            logger.info(
+                "Strategy filter: scanning only '%s' (%d strategies)",
+                strategy_filter, len(all_strategies))
+            if not all_strategies:
+                logger.warning(
+                    "Strategy '%s' not found — returning empty result", strategy_filter)
+                return self._create_result([], start_time)
 
         if self.parallel and len(target_tickers) > 1:
             all_opportunities = self._scan_parallel(

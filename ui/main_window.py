@@ -36,6 +36,8 @@ from ui.table_filter_manager import TableFilterManager
 from ui import theme as ui_theme
 from alerts.bale_notifier import BaleNotifier
 
+from automation.brokers.Omex_khobregan import get_devtools_snippet_server
+
 import config
 
 logger = logging.getLogger("OptionScanner.UI.MainWindow")
@@ -149,6 +151,25 @@ class MainWindow(QMainWindow):
         self._init_background_services()
         self.load_settings()
         self._show_empty_state()
+
+        # 🆕 شروع خودکار DevTools Snippet Server
+        self._snippet_server = None
+        try:
+            self._snippet_server = get_devtools_snippet_server()
+            if not self._snippet_server.is_running:
+                self._snippet_server.start()
+            logger.info("DevTools Snippet server started")
+        except Exception as e:
+            logger.warning(f"DevTools Snippet server failed: {e}")
+            self._snippet_server = None
+
+        # 🆕 وضعیت Backend (برای فعال/غیرفعال کردن دکمه Snippet)
+        self._backend_online = bool(
+            self._snippet_server and self._snippet_server.is_running
+        )
+
+        # 🆕 پنجره تحلیلگر نقطه‌ای (Lazy Loading)
+        self._spread_window = None
 
         logger.info("Main window initialized cleanly")
 
@@ -336,6 +357,17 @@ class MainWindow(QMainWindow):
         self.btn_settings.setStyleSheet(
             ui_theme.get_button_style(self._theme_mode, role="secondary"))
         layout.addWidget(self.btn_settings)
+
+        # 🆕 دکمه تحلیلگر نقطه‌ای
+        self.btn_spread_analyzer = QPushButton("📊 تحلیلگر نقطه‌ای")
+        self.btn_spread_analyzer.setStyleSheet(
+            ui_theme.get_button_style(self._theme_mode, role="primary"))
+        self.btn_spread_analyzer.setToolTip(
+            "نمای نقطه‌ای استراتژی‌ها (R30، M30، سربه‌سر، Cobb-Douglas)"
+        )
+        self.btn_spread_analyzer.clicked.connect(
+            self._open_spread_analyzer)
+        layout.addWidget(self.btn_spread_analyzer)
 
         return toolbar
 
@@ -1151,6 +1183,11 @@ class MainWindow(QMainWindow):
             self.btn_settings.setStyleSheet(
                 ui_theme.get_button_style(mode, role="secondary"))
 
+        # 🆕 دکمه تحلیلگر نقطه‌ای
+        if hasattr(self, "btn_spread_analyzer"):
+            self.btn_spread_analyzer.setStyleSheet(
+                ui_theme.get_button_style(mode, role="primary"))
+
         # دکمه‌های نوار پایینی
         if hasattr(self, "btn_broker_connect"):
             self.btn_broker_connect.setStyleSheet(
@@ -1539,6 +1576,22 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.worker.wait(2000)
 
+        # 🆕 توقف DevTools Snippet Server
+        try:
+            if self._snippet_server and self._snippet_server.is_running:
+                self._snippet_server.stop()
+                logger.info("DevTools Snippet server stopped")
+        except Exception as e:
+            logger.warning(f"Failed to stop Snippet server: {e}")
+
+        # 🆕 بستن پنجره تحلیلگر نقطه‌ای
+        try:
+            if self._spread_window is not None:
+                self._spread_window.close()
+                self._spread_window = None
+        except Exception:
+            pass
+
         event.accept()
         logger.info("Application terminated cleanly")
 
@@ -1669,3 +1722,56 @@ class MainWindow(QMainWindow):
         total_count = self.table.rowCount()
         self.status_update_signal.emit(
             f"تمام فیلترها حذف شدند | {total_count} ردیف نمایش داده می‌شود")
+
+    # =========================================================================
+    # 🆕 تحلیلگر نقطه‌ای
+    # =========================================================================
+
+    def _open_spread_analyzer(self):
+        """
+        باز کردن پنجره‌ی تحلیلگر نقطه‌ای.
+
+        این پنجره از همان scanner_engine موجود استفاده می‌کند و
+        شاخص‌های نقطه‌ای (R30، M30، سربه‌سر) را استخراج می‌کند.
+
+        نکته: import داخل متد به دلیل جلوگیری از circular import
+        (spread_analyzer_window ممکن است به ui وابسته باشد).
+        """
+        try:
+            from ui.spread_analyzer_window import SpreadAnalyzerWindow
+        except ImportError as e:
+            QMessageBox.critical(
+                self, "خطا",
+                f"بارگذاری پنجره تحلیلگر ناموفق بود:\n{e}"
+            )
+            logger.error(f"SpreadAnalyzerWindow import failed: {e}")
+            return
+
+        # ایجاد پنجره در بار اول
+        if self._spread_window is None:
+            try:
+                self._spread_window = SpreadAnalyzerWindow(
+                    scanner_engine=self.scanner_engine,
+                    parent=None,  # پنجره‌ی مستقل
+                )
+                logger.info("SpreadAnalyzerWindow created")
+            except Exception as e:
+                logger.error(
+                    f"Failed to create SpreadAnalyzerWindow: {e}",
+                    exc_info=True
+                )
+                QMessageBox.critical(
+                    self, "خطا",
+                    f"ایجاد پنجره تحلیلگر ناموفق بود:\n{e}"
+                )
+                return
+
+        # نمایش پنجره
+        try:
+            self._spread_window.show()
+            self._spread_window.raise_()
+            self._spread_window.activateWindow()
+        except RuntimeError:
+            # اگر پنجره قبلاً بسته شده باشد
+            self._spread_window = None
+            self._open_spread_analyzer()
