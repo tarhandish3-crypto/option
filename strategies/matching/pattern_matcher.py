@@ -17,6 +17,7 @@ from core.models import (
     LegDefinition,)
 from core.enums import OptionType, Side
 from strategies.matching.contract_index import ContractIndex, StrikeBucket
+from ui.settings_manager import settings_manager
 
 logger = logging.getLogger("OptionScanner.Strategies.Matching")
 
@@ -82,6 +83,25 @@ class PatternMatcher:
                     "Strategy has stock leg but no valid underlying price; skipping"
                 )
                 return
+
+            # بررسی فیلتر نمادهای در صف (exclusion) برای لگ‌های خرید سهم پایه
+            # فقط استراتژی‌هایی که لگ خرید سهم پایه دارند باید فیلتر شوند
+            excluded_symbols = set(settings_manager.get_excluded_symbols())
+            if excluded_symbols:
+                # بررسی آیا این استراتژی لگ خرید سهم پایه دارد که نمادش در exclusion است
+                has_excluded_long_stock = False
+                for stock_pattern in stock_patterns:
+                    if stock_pattern.side == Side.BUY and underlying.ticker in excluded_symbols:
+                        has_excluded_long_stock = True
+                        logger.debug(
+                            f"Skipping strategy with stock leg: {underlying.ticker} is excluded "
+                            f"(stock pattern: side={stock_pattern.side})"
+                        )
+                        break
+                
+                if has_excluded_long_stock:
+                    # این استراتژی را اصلاً تولید نکن
+                    return
 
             stock_contract = OptionContract(
                 ticker=underlying.ticker,

@@ -434,24 +434,6 @@ class OptionScanner:
         if is_stopped() or not snapshot or not getattr(snapshot, 'option_contracts', None):
             return [], 0.0
 
-        # ── فیلتر نمادهای بلاک‌شده توسط کاربر ─────────────
-        excluded = set(settings_manager.get_excluded_symbols())
-        if excluded:
-            before_contracts = len(snapshot.option_contracts)
-            before_underlyings = len(snapshot.underlying_assets)
-
-            # حذف از قراردادهای اختیار
-            snapshot.option_contracts = [
-                c for c in snapshot.option_contracts
-                if getattr(c, 'underlying_ticker', '') not in excluded]
-            # حذف از دارایی‌های پایه — این کلید است که scanner loop نزند
-            for sym in excluded:
-                snapshot.underlying_assets.pop(sym, None)
-
-            snapshot.build_indices()
-
-        # ─────────────────────────────────────────────────────────────
-
         update_progress(
             30, f"📊 تحلیل {len(snapshot.option_contracts)} قرارداد...")
         engine = ScannerEngine(snapshot=snapshot)

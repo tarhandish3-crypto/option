@@ -38,5 +38,15 @@
     "days_to_maturity": 16,
     "maturity_date": "1405-07-26",
     "composite_score": 20.2454
+  },
+  "bull_call_spread|بساما|ضبساما726|ضبساما731|15": {
+    "sent_at": "2026-10-03T22:29:26.071785",
+    "strategy": "bull_call_spread",
+    "underlying": "بساما",
+    "long_option_symbol": "ضبساما726",
+    "short_option_symbol": "ضبساما731",
+    "days_to_maturity": 15,
+    "maturity_date": "1405-07-26",
+    "composite_score": 20.8964
   }
 }

@@ -31,8 +31,7 @@ class ThreeLegGenerator(BaseGenerator):
         self,
         underlying: UnderlyingAsset,
         index: ContractIndex,
-        contract_scores: Dict[str, float],
-    ) -> Iterator[Opportunity]:
+        contract_scores: Dict[str, float],) -> Iterator[Opportunity]:
         spot = self._get_S0_stock(underlying)
         if spot <= 0 or index.is_empty:
             return

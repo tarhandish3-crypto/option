@@ -57,8 +57,7 @@ class RiskEngine:
         pct_steps: np.ndarray,
         days_to_maturity: int,
         volatility: float = DEFAULT_VOLATILITY,
-        risk_free_rate: float = RISK_FREE_RATE
-    ) -> np.ndarray:
+        risk_free_rate: float = RISK_FREE_RATE) -> np.ndarray:
         """
         محاسبه احتمالات برای هر سطح قیمتی با استفاده از توزیع لگ-نرمال بومی
         """
@@ -74,8 +73,7 @@ class RiskEngine:
     @staticmethod
     def calculate_expected_value(
         net_pnl_profile: np.ndarray,
-        probabilities: np.ndarray
-    ) -> float:
+        probabilities: np.ndarray) -> float:
         """
         محاسبه امید ریاضی واقعی سود (توزیع وزنی سناریوها)
         """
@@ -381,22 +379,6 @@ class RiskEngine:
 # ============================================================================
 # بخش ۳: توابع کمکی و متدهای تطبیقی کلاینت (Facade)
 # ============================================================================
-
-def print_risk_summary(risk_metrics: RiskMetrics) -> None:
-    """نمایش شکیل و خلاصه معیارهای ارزیابی ریسک در کنسول"""
-    print("=" * 55)
-    print("خلاصه تحلیل ریسک استراتژی (اصلاح شده آماری V4)")
-    print("=" * 55)
-    print(f"مساحت سود (Profit Area)     : {risk_metrics.profit_area:>12.2f}")
-    print(f"مساحت زیان (Loss Area)      : {risk_metrics.loss_area:>12.2f}")
-    print(f"نسبت مساحت‌ها               : {risk_metrics.area_ratio:>12.4f}")
-    print(
-        f"امید ریاضی واقعی (EV)       : {risk_metrics.expected_value:>12.2f}")
-    print(f"نسبت شارپ وزنی              : {risk_metrics.sharpe_ratio:>12.4f}")
-    print(f"حداکثر کاهش افت منحنی       : {risk_metrics.max_drawdown:>12.2f}%")
-    print(f"نوع منحنی استراتژی          : {risk_metrics.curve_type.value:>12}")
-    print("=" * 55)
-
 
 def calculate_risk_metrics_from_payoff(
     # ⚡ رفع باگ تطبیق: ورودی به عنوان دیکشنری تایپ‌دهی شد

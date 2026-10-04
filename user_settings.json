@@ -24,35 +24,18 @@
             "custom_prices": {},
             "custom_prices_enabled": true,
             "excluded_symbols": [
-                "شستا"
+                "تاصيكو",
+                "خودرو",
+                "شستا",
+                "فزر",
+                "فملي"
             ],
             "active_strategies": [
-                "covered_call",
-                "bull_call_spread",
-                "bull_put_spread",
-                "long_call",
-                "short_put",
-                "collar",
-                "married_put",
-                "bear_put_spread",
-                "bear_call_spread",
-                "long_put",
-                "short_call",
-                "iron_condor",
-                "iron_butterfly",
-                "short_straddle",
-                "short_strangle",
-                "strap",
-                "strip",
-                "long_straddle",
-                "long_strangle",
-                "long_guts",
-                "conversion",
-                "long_box"
+                "bull_call_spread"
             ],
             "strategy_filters": {
                 "covered_call": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "above_level",
                     "profit_above_pct": -4.5,
                     "min_profit_pct": 2.5,
@@ -66,70 +49,70 @@
                     "use_dte_factor": true
                 },
                 "bull_put_spread": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "above_level",
                     "profit_above_pct": -4.0,
                     "min_profit_pct": 3.0,
                     "use_dte_factor": true
                 },
                 "long_call": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "above_level",
                     "profit_above_pct": 4.0,
                     "min_profit_pct": 15.0,
                     "use_dte_factor": true
                 },
                 "short_put": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "above_level",
                     "profit_above_pct": -5.0,
                     "min_profit_pct": 2.5,
                     "use_dte_factor": true
                 },
                 "collar": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "above_level",
                     "profit_above_pct": -5.0,
                     "min_profit_pct": 2.0,
                     "use_dte_factor": true
                 },
                 "married_put": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "above_level",
                     "profit_above_pct": 2.0,
                     "min_profit_pct": 4.0,
                     "use_dte_factor": true
                 },
                 "bear_put_spread": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "below_level",
                     "profit_below_pct": -3.0,
                     "min_profit_pct": 5.0,
                     "use_dte_factor": true
                 },
                 "bear_call_spread": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "below_level",
                     "profit_below_pct": 4.0,
                     "min_profit_pct": 3.0,
                     "use_dte_factor": true
                 },
                 "long_put": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "below_level",
                     "profit_below_pct": -4.0,
                     "min_profit_pct": 15.0,
                     "use_dte_factor": true
                 },
                 "short_call": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "below_level",
                     "profit_below_pct": 5.0,
                     "min_profit_pct": 2.5,
                     "use_dte_factor": true
                 },
                 "iron_condor": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "inside_range",
                     "profit_range_min": -8.0,
                     "profit_range_max": 8.0,
@@ -137,7 +120,7 @@
                     "use_dte_factor": true
                 },
                 "iron_butterfly": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "inside_range",
                     "profit_range_min": -6.0,
                     "profit_range_max": 6.0,
@@ -145,7 +128,7 @@
                     "use_dte_factor": true
                 },
                 "short_straddle": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "inside_range",
                     "profit_range_min": -6.0,
                     "profit_range_max": 6.0,
@@ -153,7 +136,7 @@
                     "use_dte_factor": true
                 },
                 "short_strangle": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "inside_range",
                     "profit_range_min": -8.0,
                     "profit_range_max": 8.0,
@@ -161,7 +144,7 @@
                     "use_dte_factor": true
                 },
                 "strap": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "outside_range",
                     "loss_range_min": -5.0,
                     "loss_range_max": 5.0,
@@ -169,7 +152,7 @@
                     "use_dte_factor": true
                 },
                 "strip": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "outside_range",
                     "loss_range_min": -5.0,
                     "loss_range_max": 5.0,
@@ -177,7 +160,7 @@
                     "use_dte_factor": true
                 },
                 "long_straddle": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "outside_range",
                     "loss_range_min": -7.0,
                     "loss_range_max": 7.0,
@@ -185,7 +168,7 @@
                     "use_dte_factor": true
                 },
                 "long_strangle": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "outside_range",
                     "loss_range_min": -9.0,
                     "loss_range_max": 9.0,
@@ -193,7 +176,7 @@
                     "use_dte_factor": true
                 },
                 "long_guts": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "outside_range",
                     "loss_range_min": -8.0,
                     "loss_range_max": 8.0,
@@ -201,7 +184,7 @@
                     "use_dte_factor": true
                 },
                 "conversion": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "inside_range",
                     "profit_range_min": -45.0,
                     "profit_range_max": 45.0,
@@ -209,7 +192,7 @@
                     "use_dte_factor": true
                 },
                 "long_box": {
-                    "enabled": true,
+                    "enabled": false,
                     "rule_type": "inside_range",
                     "profit_range_min": -45.0,
                     "profit_range_max": 45.0,
