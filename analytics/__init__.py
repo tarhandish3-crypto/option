@@ -22,7 +22,6 @@ from analytics.risk_engine import (
     RiskEngine,
     RiskMetrics,
     CurveType,
-    print_risk_summary,
     calculate_risk_metrics_from_payoff
 )
 

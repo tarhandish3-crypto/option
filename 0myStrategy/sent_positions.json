@@ -48,5 +48,45 @@
     "days_to_maturity": 15,
     "maturity_date": "1405-07-26",
     "composite_score": 20.8964
+  },
+  "bull_call_spread|بساما|ضبساما728|ضبساما731|12": {
+    "sent_at": "2026-10-06T10:53:59.418825",
+    "strategy": "bull_call_spread",
+    "underlying": "بساما",
+    "long_option_symbol": "ضبساما728",
+    "short_option_symbol": "ضبساما731",
+    "days_to_maturity": 12,
+    "maturity_date": "1405-07-26",
+    "composite_score": 21.8965
+  },
+  "bull_call_spread|بساما|ضبساما729|ضبساما731|12": {
+    "sent_at": "2026-10-06T11:17:40.471669",
+    "strategy": "bull_call_spread",
+    "underlying": "بساما",
+    "long_option_symbol": "ضبساما729",
+    "short_option_symbol": "ضبساما731",
+    "days_to_maturity": 12,
+    "maturity_date": "1405-07-26",
+    "composite_score": 21.0892
+  },
+  "bull_call_spread|شستا|ضستا7050|ضستا7056|1": {
+    "sent_at": "2026-10-06T11:20:16.070227",
+    "strategy": "bull_call_spread",
+    "underlying": "شستا",
+    "long_option_symbol": "ضستا7050",
+    "short_option_symbol": "ضستا7056",
+    "days_to_maturity": 1,
+    "maturity_date": "1405-07-15",
+    "composite_score": 888913.702
+  },
+  "bull_call_spread|بساما|ضبساما730|ضبساما731|12": {
+    "sent_at": "2026-10-06T22:40:17.752001",
+    "strategy": "bull_call_spread",
+    "underlying": "بساما",
+    "long_option_symbol": "ضبساما730",
+    "short_option_symbol": "ضبساما731",
+    "days_to_maturity": 12,
+    "maturity_date": "1405-07-26",
+    "composite_score": 17.7943
   }
 }
