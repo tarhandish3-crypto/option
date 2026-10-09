@@ -17,9 +17,21 @@ from core.enums import Side, OptionType
 from scoring.liquidity_score import LiquidityScorer
 from analytics.margin_calculator import MarginCalculator
 from analytics.payoff_calculator import IranMarketPayoffCalculator
+from data.volatility_provider import get_volatility
 import config
 
 logger = logging.getLogger("OptionScanner.Engine.OpportunityBuilder")
+
+
+# ═══════════════════════════════════════════════════════════════
+# ثابت‌های محاسباتی
+# ═══════════════════════════════════════════════════════════════
+
+_DEFAULT_SIGMA = 0.30      # برای M_risk
+_DEFAULT_HV_60 = 0.30
+_DEFAULT_VQ = 5.0
+_T_DISPLAY_EPSILON = 0.02
+_DAYS_IN_YEAR = 365
 
 
 class OpportunityBuilder:
@@ -98,10 +110,16 @@ class OpportunityBuilder:
         execution_score = LiquidityScorer.execution_score(legs)
 
         # ── ۴. واگذاری مطلق محاسبات P&L و سود ماهانه به ماژول تخصصی ───────────────
+        payoff = None
+        returns_pct = np.array([], dtype=float)
+        max_profit = 0.0
+        max_loss = 0.0
+        break_even: List[float] = []
+        total_premium = 0.0
+
         try:
             price_levels = config.get_price_levels(spot)
 
-            # 🟢 اعمال تغییرات هماهنگی زنجیره پ&ال و قوانین کارمزد:
             payoff = IranMarketPayoffCalculator.calculate_payoff(
                 legs=legs,
                 spot_price=spot,
@@ -119,12 +137,52 @@ class OpportunityBuilder:
         except Exception as e:
             logger.error(
                 f"Payoff calculation failed via PayoffCalculator for {strategy_def.name}: {e}")
-            returns_pct = np.array([], dtype=float)
-            max_profit, max_loss, total_premium = 0.0, 0.0, 0.0
-            break_even = []
 
-        # ── ۵. ساخت خروجی نهایی ───────────────────────────────────────────────────
-        metadata: Dict[str, Any] = {}
+        # ── ۵. استخراج داده‌های VQ از Historical_Volatility.xlsx ──────────────
+        vol_data = get_volatility(underlying.ticker)
+
+        hv_60 = float(vol_data.get("HV_60", _DEFAULT_HV_60))
+        vq = float(vol_data.get("VolatilityQualityScore", _DEFAULT_VQ))
+
+        # ── ۶. محاسبه‌ی R30، M30، raw_margin، M_risk ────────────────────────
+        R30, M30, raw_margin = OpportunityBuilder._calculate_r30_m30(
+            payoff=payoff,
+            break_even=break_even,
+            spot=spot,
+            days=days_to_maturity,
+        )
+
+        M_risk = OpportunityBuilder._calculate_m_risk(
+            raw_margin=raw_margin,
+            days=days_to_maturity,
+            hv_60=hv_60,
+        )
+
+        # ── ۷. ساخت metadata نهایی ──────────────────────────────────────
+        metadata: Dict[str, Any] = {
+            # ─── داده‌های پایه برای امتیازدهی ───
+            "R30": R30,
+            "M30": M30,
+            "raw_margin_percent": raw_margin,
+            "M_risk": M_risk,
+            "risk_reward_ratio": 0.0,   # ← بعداً توسط RiskEngine پر می‌شود
+            # ─── داده‌های VQ (از Historical_Volatility.xlsx) ───
+            "HV_60": hv_60,
+            "VQ": vq,
+            "LongTrend": vol_data.get("LongTrend", 0.0),
+            "Alpha": vol_data.get("Alpha", 0.0),
+            "RSI_14": vol_data.get("RSI_14", 50.0),
+            "RecoveryStrength": vol_data.get("RecoveryStrength", 0.0),
+            "TechnicalDecline": vol_data.get("TechnicalDecline", 0.0),
+            "BuyerStrength": vol_data.get("BuyerStrength", 0.0),
+            # ─── داده‌های کمکی ───
+            "HV_20": vol_data.get("HV_20", 0.30),
+            "HV_120": vol_data.get("HV_120", 0.30),
+            "RelativeReturn_1Y": vol_data.get("RelativeReturn_1Y", 0.0),
+            "SupportProximity": vol_data.get("SupportProximity", 0.0),
+            "ResistanceProximity": vol_data.get("ResistanceProximity", 0.0),
+        }
+
         return Opportunity(
             strategy_name=strategy_def.name,
             underlying_ticker=underlying.ticker,
@@ -143,6 +201,106 @@ class OpportunityBuilder:
             timestamp=datetime.now(), )
 
     # ──────────────────────────────────────────────────────────────────────
+    # محاسبات کمکی
+    # ──────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _calculate_r30_m30(
+            payoff: Any,
+            break_even: List[float],
+            spot: float,
+            days: int,
+    ) -> tuple[float, float, float]:
+        """
+        محاسبه‌ی R30 (سود ماهانه)، M30 (حاشیه امنیت ماهانه)، و raw_margin_percent.
+
+        ⚠️ نکته‌ی مهم: R30 باید از returns_pct (آرایه‌ی بازدهی ماهانه) استخراج شود،
+        نه از max_profit (که ریال است و نه درصد).
+
+        Args:
+            payoff: خروجی PayoffCalculator
+            break_even: لیست نقاط سربه‌سر
+            spot: قیمت فعلی سهم پایه
+            days: روز تا سررسید
+
+        Returns:
+            (R30, M30, raw_margin)
+        """
+        R30 = 0.0
+        M30 = 0.0
+        raw_margin = 0.0
+
+        if payoff is None or days <= 0:
+            return 0.0, 0.0, 0.0
+
+        # ── R30: از returns_pct (که در payoff_calculator محاسبه شده) ──
+        returns_arr = getattr(payoff, 'returns_pct', None)
+        if returns_arr is not None and len(returns_arr) > 0:
+            try:
+                returns_arr = np.asarray(returns_arr, dtype=float)
+                positive = returns_arr[returns_arr > 0]
+                if len(positive) > 0:
+                    R30 = float(np.max(positive))
+                else:
+                    R30 = float(np.max(returns_arr))
+            except (ValueError, TypeError):
+                R30 = 0.0
+
+        # ── raw_margin و M30: از نزدیک‌ترین break-even ──
+        if break_even and spot > 0:
+            try:
+                # فاصله‌ی نسبی از spot به نزدیک‌ترین break-even
+                distances = []
+                for be in break_even:
+                    if be is None:
+                        continue
+                    try:
+                        be_val = float(be)
+                        distances.append(abs(be_val - spot) / spot)
+                    except (ValueError, TypeError):
+                        continue
+
+                if distances:
+                    raw_margin = min(distances) * 100  # تبدیل به درصد
+                    time_factor = (days / 30.0) ** 0.5
+                    M30 = raw_margin / time_factor if time_factor > 0 else 0.0
+            except Exception as e:
+                logger.debug(f"M30 calculation failed: {e}")
+
+        return (
+            round(R30, 2),
+            round(M30, 2),
+            round(raw_margin, 2),
+        )
+
+    @staticmethod
+    def _calculate_m_risk(
+            raw_margin: float,
+            days: int,
+            hv_60: float,
+    ) -> float:
+        """
+        محاسبه‌ی M_risk (Z-Score).
+
+        فرمول:
+            M_risk = (raw_margin / 100) / (sigma × sqrt(T/365))
+        """
+        if days <= 0:
+            return 0.0
+
+        sigma = float(hv_60) if hv_60 and hv_60 > 0 else _DEFAULT_SIGMA
+        sigma = max(0.05, min(sigma, 2.0))
+
+        days_safe = max(float(days), _T_DISPLAY_EPSILON)
+        raw_fraction = raw_margin / 100.0
+        denom = sigma * (days_safe / _DAYS_IN_YEAR) ** 0.5
+
+        if denom <= 0:
+            return 0.0
+
+        return round(raw_fraction / denom, 4)
+
+    # ──────────────────────────────────────────────────────────────────────
     # متد اصلاح‌شده سازگاری با FourLegGenerator
     # ──────────────────────────────────────────────────────────────────────
 
@@ -156,7 +314,7 @@ class OpportunityBuilder:
             underlying_price: float = 0.0,
             break_even_points: Optional[List[float]] = None, ) -> Optional[Opportunity]:
         """Legacy — اصلاح‌شده بر پایه Single Source of Truth جهت تامین نیازمندی ژنراتورها"""
-        metadata = metrics or {}
+        metadata = dict(metrics or {})
         spot = underlying_price
 
         # محاسبات مارجین از طریق ماژول تخصصی مرجع
@@ -171,7 +329,7 @@ class OpportunityBuilder:
         except Exception as e:
             logger.debug(f"Legacy create_opportunity margin failed: {e}")
 
-        # 🟢 استخراج داینامیک base_option_size برای هماهنگی کامل متد لگاسی با ماژول محاسبات
+        # استخراج داینامیک base_option_size برای هماهنگی کامل متد لگاسی با ماژول محاسبات
         base_option_size = 1000
         for leg in legs:
             if leg.contract and leg.contract.option_type != OptionType.STOCK:
@@ -179,7 +337,12 @@ class OpportunityBuilder:
                     base_option_size = leg.contract.contract_size
                     break
 
-        # ارجاع محاسبات پی‌آف و پرمیوم به مرجع تخصصی برداری بورس ایران همراه با متغیرهای زمانی و اندازه قرارداد
+        # ارجاع محاسبات پی‌آف و پرمیوم به مرجع تخصصی برداری
+        payoff = None
+        total_premium = 0.0
+        returns_pct = np.array([], dtype=float)
+        derived_break_even = []
+
         try:
             price_levels = config.get_price_levels(spot)
             payoff = IranMarketPayoffCalculator.calculate_payoff(
@@ -195,14 +358,46 @@ class OpportunityBuilder:
             derived_break_even = payoff.break_even_points
         except Exception as e:
             logger.debug(f"Legacy create_opportunity payoff failed: {e}")
-            total_premium = 0.0
-            returns_pct = np.array([], dtype=float)
-            derived_break_even = []
 
-        # امتیازدهی نقدشوندگی استاندارد بدون متدهای لوکال منسوخ‌شده
+        # امتیازدهی نقدشوندگی
         liquidity_score = LiquidityScorer.score_strategy(legs, {})
 
         final_be = break_even_points if break_even_points is not None else derived_break_even
+
+        # ── استخراج VQ (نکته‌ی مهم: در متد legacy هم باید VQ تزریق شود) ──
+        vol_data = get_volatility(ticker)
+        hv_60 = float(vol_data.get("HV_60", _DEFAULT_HV_60))
+        vq = float(vol_data.get("VolatilityQualityScore", _DEFAULT_VQ))
+
+        # ── محاسبه‌ی R30، M30، raw_margin، M_risk ──
+        R30, M30, raw_margin = OpportunityBuilder._calculate_r30_m30(
+            payoff=payoff,
+            break_even=final_be,
+            spot=spot,
+            days=days_to_maturity,
+        )
+
+        M_risk = OpportunityBuilder._calculate_m_risk(
+            raw_margin=raw_margin,
+            days=days_to_maturity,
+            hv_60=hv_60,
+        )
+
+        # ── تکمیل metadata ──
+        metadata.update({
+            "R30": R30,
+            "M30": M30,
+            "raw_margin_percent": raw_margin,
+            "M_risk": M_risk,
+            "HV_60": hv_60,
+            "VQ": vq,
+            "LongTrend": vol_data.get("LongTrend", 0.0),
+            "Alpha": vol_data.get("Alpha", 0.0),
+            "RSI_14": vol_data.get("RSI_14", 50.0),
+            "RecoveryStrength": vol_data.get("RecoveryStrength", 0.0),
+            "TechnicalDecline": vol_data.get("TechnicalDecline", 0.0),
+            "BuyerStrength": vol_data.get("BuyerStrength", 0.0),
+        })
 
         return Opportunity(
             strategy_name=strategy_name,

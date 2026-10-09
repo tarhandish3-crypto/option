@@ -254,7 +254,7 @@ def analyze_market():
             lambda x: x.name == 'CALL' if hasattr(x, 'name')
             else str(x).upper() == 'CALL')
         calls = df_final[(df_final['DaysToMaturity'] >= 0) & is_call].copy()
-        if filtered_data.empty:
+        if calls.empty:
             print("No market data found.")
             return
         print(f"  CALLs: {len(calls)}")
@@ -701,12 +701,13 @@ def run_api_server_threaded():
     print("✅ Watcher thread started")
 
     # FastAPI در Thread جداگانه
+    API_PORT = 8001
     def _run_uvicorn():
-        print("🌐 FastAPI starting on port 8000...")
+        print(f"FastAPI starting on port {API_PORT}...")
         try:
-            uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+            uvicorn.run(app, host="127.0.0.1", port=API_PORT, log_level="warning")
         except Exception as e:
-            print(f"❌ FastAPI error: {e}")
+            print(f"FastAPI error: {e}")
 
     api_thread = threading.Thread(target=_run_uvicorn, daemon=True)
     api_thread.start()

@@ -64,7 +64,7 @@ def load_bale_config():
 
     except json.JSONDecodeError as e:
         print(f"[BALE-CONFIG] ERROR: Invalid JSON: {e}")
-        return {default_config}
+        return {}
     except Exception as e:
         print(f"[BALE-CONFIG] ERROR: {e}")
         return {}

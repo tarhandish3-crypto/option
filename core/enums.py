@@ -42,25 +42,10 @@ class AssetType(Enum):
     ETF_FIX = "etf-fix"
     ETF_MIX = "etf-mix"
 
-
-class VolatilitySignal(Enum):
-    """سیگنال نوسان‌پذیری"""
-    OVERPRICED = "OVERPRICED"
-    UNDERPRICED = "UNDERPRICED"
-    FAIR = "FAIR"
-
-
 class Side(Enum):
     """سمت معامله"""
     BUY = "BUY"
     SELL = "SELL"
-
-
-class ExecutionMode(Enum):
-    """حالت اجرای برنامه"""
-    NORMAL = "normal"
-    BACKTEST = "backtest"
-    SIMULATION = "simulation"
 
 
 # ✅ انوم رتبه‌بندی پروفایل (پایبند به کدهای قدیمی شما)

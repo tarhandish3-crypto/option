@@ -562,4 +562,78 @@ QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top right; pa
 QProgressBar { border: 1px solid #30363d; border-radius: 4px; text-align: center; color: #cdd9e5; background-color: #161b22; }
 QProgressBar::chunk { background-color: #238636; border-radius: 4px; }
 QStatusBar { background-color: #161b22; border-top: 1px solid #30363d; color: #8b949e; }
+
+/* ═══ اسکرول‌بار (تم تاریک) — روشن‌تر برای دید بهتر ═══ */
+QScrollBar:vertical {
+    background: #1c2128;
+    width: 14px;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+}
+QScrollBar::handle:vertical {
+    background: #4d5560;
+    min-height: 30px;
+    border-radius: 6px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #6e7681;
+}
+QScrollBar::handle:vertical:pressed {
+    background: #8b949e;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+    background: none;
+    border: none;
+}
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+QScrollBar::up-arrow:vertical,
+QScrollBar::down-arrow:vertical {
+    background: none;
+    width: 0;
+    height: 0;
+}
+
+QScrollBar:horizontal {
+    background: #1c2128;
+    height: 14px;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+}
+QScrollBar::handle:horizontal {
+    background: #4d5560;
+    min-width: 30px;
+    border-radius: 6px;
+    margin: 2px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #6e7681;
+}
+QScrollBar::handle:horizontal:pressed {
+    background: #8b949e;
+}
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0;
+    background: none;
+    border: none;
+}
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+QScrollBar::left-arrow:horizontal,
+QScrollBar::right-arrow:horizontal {
+    background: none;
+    width: 0;
+    height: 0;
+}
+
 """

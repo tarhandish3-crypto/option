@@ -4,26 +4,29 @@
 """
 ماژول امتیازدهی و رتبه‌بندی (Scoring Module)
 
-این ماژول مسئولیت محاسبه معیارها، امتیازدهی نهایی و تحلیل نقطه‌ای
-استراتژی‌ها را بر عهده دارد.
+این ماژول مسئولیت محاسبه معیارها، امتیازدهی چند-شخصیتی و تحلیل
+نقطه‌ای استراتژی‌ها را بر عهده دارد.
 
 قابلیت‌ها:
-    - محاسبه معیارهای کلیدی (Win Rate, Risk/Reward, Margin, ROM)
-    - امتیازدهی چندبعدی و رتبه‌بندی بر اساس ۵ پروفایل سرمایه‌گذاری
+    - محاسبه معیارهای کلیدی (Risk/Reward، ROM، Margin Efficiency)
+    - 🆕 امتیازدهی سه‌شخصیتی (محافظه‌کار، متعادل، پرریسک)
     - امتیاز نقدشوندگی قراردادها
-    - 🆕 تحلیل نقطه‌ای (R30، M30، سربه‌سر، Cobb-Douglas)
-    - 🆕 فیلتر نقطه‌ای و استخراج شاخص‌های ساده
+    - تحلیل نقطه‌ای (R30، M30، سربه‌سر، Cobb-Douglas)
 
-نکته مهم:
-    ماژول point_analyzer یک ماژول مستقل است و می‌تواند بدون ranker
-    استفاده شود. اما استفاده‌ی همزمان از آن‌ها انعطاف بیشتری می‌دهد.
+معماری امتیازدهی:
+    هر فرصت معاملاتی، سه امتیاز می‌گیرد:
+        - conservative : برای شخص محافظه‌کار
+        - balanced     : برای شخص متعادل (پیش‌فرض)
+        - aggressive   : برای شخص پرریسک
+
+    اگر فرصت در یک شخصیت رد شود، امتیاز آن -1.0 می‌شود.
 """
 
 from __future__ import annotations
 
 
 # ═════════════════════════════════════════════════════════════
-# ۱. Metrics — معیارهای آماری
+# ۱. Metrics — معیارهای آماری پایه
 # ═════════════════════════════════════════════════════════════
 
 from scoring.metrics import (
@@ -36,17 +39,15 @@ from scoring.metrics import (
 
 
 # ═════════════════════════════════════════════════════════════
-# ۲. Ranker — رتبه‌بندی چندبعدی
+# ۲. Ranker — رتبه‌بندی سه‌شخصیتی
 # ═════════════════════════════════════════════════════════════
 
 from scoring.ranker import (
     OpportunityRanker,
-    RankingWeights,
-    PROFILES,
+    PERSONALITY_WEIGHTS,
+    PERSONALITY_ORDER,
+    DEFAULT_PERSONALITY,
 )
-
-# سازگاری با importهای قدیمی
-from core.enums import RankingProfile
 
 
 # ═════════════════════════════════════════════════════════════
@@ -57,7 +58,7 @@ from scoring.liquidity_score import LiquidityScorer
 
 
 # ═════════════════════════════════════════════════════════════
-# ۴. 🆕 Point Analyzer — تحلیل نقطه‌ای
+# ۴. Point Analyzer — تحلیل نقطه‌ای
 # ═════════════════════════════════════════════════════════════
 
 from scoring.point_analyzer import (
@@ -93,16 +94,16 @@ __all__ = [
     "calculate_margin_efficiency",
     "calculate_all_metrics",
 
-    # ─── Ranker ──────────────────────────────────
+    # ─── Ranker (سه‌شخصیتی) ──────────────────────
     "OpportunityRanker",
-    "RankingWeights",
-    "PROFILES",
-    "RankingProfile",
+    "PERSONALITY_WEIGHTS",
+    "PERSONALITY_ORDER",
+    "DEFAULT_PERSONALITY",
 
     # ─── Liquidity ───────────────────────────────
     "LiquidityScorer",
 
-    # ─── 🆕 Point Analyzer ──────────────────────
+    # ─── Point Analyzer ──────────────────────────
     # Enrichment
     "enrich_opportunity",
     "enrich_all",

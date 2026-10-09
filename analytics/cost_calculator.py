@@ -87,8 +87,7 @@ class IranMarketCostCalculator:
             return spot_price
 
         entry_prices = np.array([
-            getattr(l, 'entry_price', None) or _get_valid_price(l) for l in legs
-        ], dtype=np.float64)
+            getattr(l, 'entry_price', None) or _get_valid_price(l) for l in legs], dtype=np.float64)
 
         # ۲. ساخت ماسک‌های شرطی برداری
         is_option = (option_types != OptionType.STOCK.value)

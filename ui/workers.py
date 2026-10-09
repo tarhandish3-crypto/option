@@ -10,10 +10,13 @@ from __future__ import annotations
 import logging
 import queue
 import socket
+import subprocess
+import sys
 import threading
 import time
 import traceback
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from PySide6.QtCore import (
@@ -807,3 +810,196 @@ class BrokerExecutionWorker(QThread):
             self._safe_emit_finished(
                 False, f"خطا در ارتباط با کارگزاری: {e}"
             )
+
+
+# =========================================================================
+# ۶. ورکر به‌روزرسانی داده نوسان تاریخی (Volatility Refresh Worker)
+# =========================================================================
+
+class VolatilityRefreshWorker(QThread):
+    """
+    ورکر پس‌زمینه برای اجرای اسکریپت 0myStrategy/volatility_calculate.py.
+
+    این Worker اسکریپت را از طریق subprocess اجرا می‌کند، منتظر اتمام
+    می‌ماند، و نتیجه را از طریق سیگنال‌ها به UI اطلاع می‌دهد.
+
+    ⚠️ این Worker هیچ progress گزارشی نمی‌دهد (طبق تصمیم طراحی).
+    فقط پس از اتمام، success یا error را emit می‌کند.
+
+    Signals:
+        success: dict با کلیدهای:
+            - n_symbols: int      (تعداد نمادهای بارگذاری‌شده)
+            - duration: float     (مدت اجرا به ثانیه)
+            - filepath: str       (مسیر فایل خروجی)
+            - stdout_tail: str    (بخش پایانی stdout — برای دیباگ)
+
+        error: str — پیغام خطای کاربرپسند
+    """
+
+    success = Signal(dict)
+    error = Signal(str)
+
+    # ── تنظیمات ──────────────────────────────────────────
+    _TIMEOUT_SEC: int = 60   # ۱ دقیقه
+
+    # ── مسیر اسکریپت (relative به ریشه پروژه) ─────────────
+    @classmethod
+    def _get_script_path(cls) -> Path:
+        """مسیر مطلق اسکریپت volatility_calculate.py"""
+        # ui/workers.py → ../0myStrategy/volatility_calculate.py
+        project_root = Path(__file__).resolve().parent.parent
+        return project_root / "0myStrategy" / "volatility_calculate.py"
+
+    # ──────────────────────────────────────────────────────
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._should_stop = False
+
+    def stop(self, wait: bool = True, timeout_ms: int = 2000) -> None:
+        """درخواست توقف (اگر لازم شد)."""
+        self._should_stop = True
+        if wait and not self.wait(timeout_ms):
+            logger.warning(
+                f"VolatilityRefreshWorker did not stop within {timeout_ms}ms"
+            )
+
+    def run(self) -> None:
+        """اجرای اسکریپت در Thread جداگانه."""
+
+        # ─── ۱. بررسی وجود اسکریپت ───────────────────────
+        script_path = self._get_script_path()
+
+        if not script_path.exists():
+            msg = (
+                f"اسکریپت محاسبه نوسان یافت نشد:\n\n"
+                f"{script_path}\n\n"
+                f"لطفاً از نصب صحیح پروژه مطمئن شوید."
+            )
+            logger.error(f"Volatility script not found: {script_path}")
+            self.error.emit(msg)
+            return
+
+        logger.info(f"Starting volatility calculation: {script_path}")
+
+        # ─── ۲. اجرا در subprocess ────────────────────────
+        start_time = time.time()
+
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",  # برای مدیریت کاراکترهای نامعتبر
+                timeout=self._TIMEOUT_SEC,
+                cwd=str(script_path.parent),  # اجرا در پوشه‌ی اسکریپت
+            )
+        except subprocess.TimeoutExpired:
+            duration = time.time() - start_time
+            msg = (
+                f"زمان اجرای محاسبه نوسان بیش از {self._TIMEOUT_SEC} ثانیه "
+                f"طول کشید و متوقف شد.\n\n"
+                f"دلایل احتمالی:\n"
+                f"  • کندی یا قطعی سایت TSETMC\n"
+                f"  • کندی اینترنت\n\n"
+                f"لطفاً چند دقیقه بعد دوباره تلاش کنید."
+            )
+            logger.error(f"Volatility calculation timeout: {duration:.1f}s")
+            self.error.emit(msg)
+            return
+
+        except FileNotFoundError:
+            msg = (
+                f"خطا در اجرای اسکریپت:\n\n"
+                f"پایتون یافت نشد یا مسیر آن معتبر نیست.\n"
+                f"path: {sys.executable}"
+            )
+            logger.exception("Python executable not found")
+            self.error.emit(msg)
+            return
+
+        except Exception as e:
+            msg = (
+                f"خطای غیرمنتظره در اجرای اسکریپت:\n\n"
+                f"{type(e).__name__}: {e}"
+            )
+            logger.exception("Unexpected error in volatility worker")
+            self.error.emit(msg)
+            return
+
+        duration = time.time() - start_time
+
+        # ─── ۳. بررسی return code ─────────────────────────
+        if result.returncode != 0:
+            # بخش پایانی stderr برای نمایش به کاربر
+            stderr_tail = (result.stderr or "").strip()[-600:]
+            stdout_tail = (result.stdout or "").strip()[-300:]
+
+            # لاگ کامل برای دیباگ
+            logger.error(
+                f"Volatility script failed (returncode={result.returncode}).\n"
+                f"STDERR: {result.stderr}\n"
+                f"STDOUT: {result.stdout}"
+            )
+
+            msg = (
+                f"اسکریپت محاسبه نوسان با خطا خارج شد.\n\n"
+                f"کد خروج: {result.returncode}\n"
+                f"مدت اجرا: {duration:.1f} ثانیه\n"
+            )
+            if stderr_tail:
+                msg += f"\n--- جزئیات خطا ---\n{stderr_tail}"
+
+            self.error.emit(msg)
+            return
+
+        # ─── ۴. بررسی وجود فایل خروجی ─────────────────────
+        output_file = script_path.parent / "Historical_Volatility.xlsx"
+
+        if not output_file.exists():
+            msg = (
+                f"اسکریپت اجرا شد ولی فایل خروجی ساخته نشد.\n\n"
+                f"مسیر انتظاری: {output_file}\n\n"
+                f"لطفاً لاگ‌های برنامه را بررسی کنید."
+            )
+            logger.error(f"Output file not found: {output_file}")
+            self.error.emit(msg)
+            return
+
+        # ─── ۵. بارگذاری و شمارش نمادها ──────────────────
+        try:
+            from data.volatility_provider import (
+                preload_volatility,
+                get_all_loaded_tickers,
+            )
+            preload_volatility(force=True)
+            n_symbols = len(get_all_loaded_tickers())
+        except Exception as e:
+            logger.warning(f"Failed to reload volatility: {e}")
+            n_symbols = 0
+
+        # ─── ۶. emit موفقیت ──────────────────────────────
+        stdout_tail = (result.stdout or "").strip()[-200:]
+
+        logger.info(
+            f"Volatility calculation completed successfully: "
+            f"n_symbols={n_symbols}, duration={duration:.1f}s"
+        )
+
+        self.success.emit({
+            "n_symbols": n_symbols,
+            "duration": round(duration, 1),
+            "filepath": str(output_file),
+            "stdout_tail": stdout_tail,
+        })
+
+
+__all__ = [
+    "BatchUpdateManager",
+    "TelemetryWorker",
+    "ScannerWorker",
+    "BrokerLoginWorker",
+    "BrokerExecutionWorker",
+    "VolatilityRefreshWorker",
+]

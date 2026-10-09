@@ -27,13 +27,38 @@ from engine.scanner_engine import ScannerEngine
 from filters.strategy_filters import apply_strategy_filter
 from reports.chart_plotter import ChartPlotter
 from reports.excel_exporter import ExcelExporter
-from scoring.ranker import OpportunityRanker, RankingProfile
+from scoring.ranker import OpportunityRanker
 from ui import theme as ui_theme
 from ui.main_window import MainWindow
 from ui.settings_manager import settings_manager
 from automation.brokers.Omex_khobregan import get_devtools_snippet_server
+from strategies.core import _load_strategies
+from data.volatility_provider import (
+    preload_volatility,
+    get_all_loaded_tickers,
+)
 
 logger = logging.getLogger("OptionScanner.Main")
+
+
+# =====================================================
+# ثابت‌ها
+# =====================================================
+
+# پیغام خطای VQ (کاربرپسند)
+_VQ_MISSING_MESSAGE = (
+    "❌ فایل Historical_Volatility.xlsx یافت نشد!\n\n"
+    "برای امتیازدهی فرصت‌ها، ابتدا باید داده‌ی نوسان تاریخی محاسبه شود.\n\n"
+    "📌 راه‌حل:\n"
+    "   ۱. دکمه‌ی «📊 ورود به پنجره داده تاریخی نوسان» را بزنید\n"
+    "   ۲. در پنجره باز شده، دکمه‌ی «🔄 محاسبه نوسان تاریخی» را بزنید\n"
+    "   ۳. پس از ۳۰-۶۰ ثانیه، فایل ساخته می‌شود\n"
+    "   ۴. مجدداً اسکن کنید\n\n"
+    "⚠️ بدون این فایل، امتیازدهی امکان‌پذیر نیست."
+)
+
+# کد خطای داخلی برای VQ
+_VQ_MISSING_ERROR_CODE = "VQ_MISSING"
 
 
 # =====================================================
@@ -98,6 +123,8 @@ class OptionScanner:
         '_total_opportunities',
         '_total_scans',
         '_user_filters',
+        '_vq_available',      # ← جدید: پرچم موجود بودن VQ
+        '_vq_error_msg',      # ← جدید: پیغام خطای VQ
         'chart_plotter',
         'data_manager',
         'excel_exporter',
@@ -124,6 +151,10 @@ class OptionScanner:
         self._db_path = config.DATA_DIR / "scans.db"
         self._user_filters: dict[str, Any] = {}
 
+        # ─── پرچم VQ ─────────────────────────────────
+        self._vq_available: bool = False
+        self._vq_error_msg: str = ""
+
         # متغیرهای سنگین را در init فقط تعریف می‌کنیم
         self.data_manager = None
         self.ranker = None
@@ -135,13 +166,15 @@ class OptionScanner:
         if self._is_initialized:
             return
 
+        # ═══ ۱. بارگذاری VQ قبل از هر چیز ═══
+        self._check_and_preload_vq()
+
         if self._db_enabled:
             self._init_database()
 
         self._load_user_filters()
 
         # بارگذاری استراتژی‌ها
-        from strategies.core import _load_strategies
         _load_strategies()
 
         # ساخت مدیر داده و ابزارها
@@ -150,21 +183,45 @@ class OptionScanner:
             use_cache=True,
             ttl_seconds=config.CACHE_TTL_SECONDS)
 
-        profile_map = {
-            "conservative": RankingProfile.CONSERVATIVE,
-            "balanced": RankingProfile.BALANCED,
-            "aggressive": RankingProfile.AGGRESSIVE,
-            "income": RankingProfile.INCOME,
-            "volatility": RankingProfile.VOLATILITY,}
-        
-        profile_name = config.RANKING_CONFIG.get("default_profile", "balanced")
-        profile = profile_map.get(profile_name, RankingProfile.BALANCED)
-
-        self.ranker = OpportunityRanker(default_profile=profile)
+        self.ranker = OpportunityRanker(default_personality=2)
         self.excel_exporter = ExcelExporter(output_dir=str(config.OUTPUT_DIR))
         self.chart_plotter = ChartPlotter(output_dir=str(config.CHARTS_DIR))
 
         self._is_initialized = True
+
+    def _check_and_preload_vq(self) -> None:
+        """
+        بارگذاری پیش‌دستانه VQ از فایل Historical_Volatility.xlsx.
+
+        نتیجه در self._vq_available و self._vq_error_msg ذخیره می‌شود.
+        """
+        try:
+            ok = preload_volatility()
+            if ok:
+                n_symbols = len(get_all_loaded_tickers())
+                self._vq_available = True
+                self._vq_error_msg = ""
+                logger.info(
+                    f"✅ VQ preloaded successfully: {n_symbols} symbols"
+                )
+            else:
+                self._vq_available = False
+                self._vq_error_msg = _VQ_MISSING_MESSAGE
+                logger.warning(
+                    "⚠️ VQ file not available. Scoring will be disabled."
+                )
+        except Exception as e:
+            self._vq_available = False
+            self._vq_error_msg = _VQ_MISSING_MESSAGE
+            logger.error(f"VQ preload failed: {e}", exc_info=True)
+
+    def is_vq_available(self) -> bool:
+        """آیا VQ بارگذاری شده؟"""
+        return self._vq_available
+
+    def get_vq_error_message(self) -> str:
+        """دریافت پیغام خطای VQ (اگر موجود نباشد)."""
+        return self._vq_error_msg or _VQ_MISSING_MESSAGE
 
     # =====================================================
     # مدیریت دیتابیس و فیلترها
@@ -242,15 +299,16 @@ class OptionScanner:
         min_profit = self._user_filters.get('min_profit')
 
         for opp in opportunities:
-            score = getattr(opp, 'score', getattr(opp, 'rank_score', 0))
+            score = getattr(opp, 'final_score', 0.0)
             if min_score is not None and score < min_score:
                 continue
 
-            risk = getattr(opp, 'risk', getattr(opp, 'max_risk', 0))
+            risk = getattr(opp, 'max_loss', getattr(opp, 'max_risk', 0))
             if max_risk is not None and risk > max_risk:
                 continue
 
-            profit = getattr(opp, 'profit', getattr(opp, 'expected_profit', 0))
+            profit = getattr(opp, 'max_profit',
+                             getattr(opp, 'expected_profit', 0))
             if min_profit is not None and profit < min_profit:
                 continue
 
@@ -319,7 +377,8 @@ class OptionScanner:
             'db_enabled': self._db_enabled,
             'cache_ttl': self._cache_ttl,
             'scan_timeout': self._scan_timeout,
-            'is_running': self.is_running
+            'is_running': self.is_running,
+            'vq_available': self._vq_available,
         }
 
     def invalidate_cache(self) -> None:
@@ -359,7 +418,8 @@ class OptionScanner:
                 self._lazy_init()
 
                 res, dur = self._execute_scan(
-                    update_progress, is_stopped, force_refresh, strategy_filter=strategy_filter,)
+                    update_progress, is_stopped, force_refresh,
+                    strategy_filter=strategy_filter,)
                 scan_output["results"] = res
                 scan_output["duration"] = dur
             except Exception as e:
@@ -378,8 +438,16 @@ class OptionScanner:
             return []
 
         if scan_output["error"]:
-            logger.error(f"Scan error: {scan_output['error']}", exc_info=True)
-            update_progress(0, f"خطا: {str(scan_output['error'])}")
+            err = scan_output["error"]
+            logger.error(f"Scan error: {err}", exc_info=True)
+
+            # ─── خطای VQ ───
+            if isinstance(err, RuntimeError) and str(err) == _VQ_MISSING_ERROR_CODE:
+                update_progress(0, "❌ فایل VQ یافت نشد")
+                # در MainWindow نمایش داده می‌شود
+                raise err
+
+            update_progress(0, f"خطا: {str(err)}")
             return []
 
         if self._cancel_event.is_set():
@@ -421,6 +489,12 @@ class OptionScanner:
         strategy_filter: Optional[str] = None,) -> Tuple[List[Any], float]:
 
         start_time = time.time()
+
+        # ═══ بررسی VQ ═══
+        if not self._vq_available:
+            logger.error("Scan aborted: VQ file not available.")
+            update_progress(0, "❌ فایل Historical_Volatility.xlsx یافت نشد")
+            raise RuntimeError(_VQ_MISSING_ERROR_CODE)
 
         update_progress(10, "🔍 دریافت اطلاعات بازار...")
         if is_stopped():
@@ -505,7 +579,6 @@ def main():
     ui_theme.apply_app_theme(app, theme_setting)
 
     # همگام‌سازی پیکربندی بازه قیمت از تنظیمات کاربر با ماژول config
-    # تا محاسبه payoff و ستون‌های UI از یک تعداد نقطه استفاده کنند
     active_settings = settings_manager.get_active_settings()
     user_price_range = active_settings.get("price_range")
     if user_price_range:

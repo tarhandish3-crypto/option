@@ -203,8 +203,7 @@ class SettingsManager:
         self,
         new_settings: Dict[str, Any],
         profile_name: Optional[str] = None,
-        set_active: bool = False,
-    ) -> bool:
+        set_active: bool = False,) -> bool:
         """ذخیره تنظیمات با ادغام عمیق"""
         with self._lock:
             if not isinstance(new_settings, dict):
@@ -215,8 +214,7 @@ class SettingsManager:
                 return False
 
             current = self._profiles_data.get(
-                target, copy.deepcopy(DEFAULT_SETTINGS)
-            )
+                target, copy.deepcopy(DEFAULT_SETTINGS))
             merged = self._deep_merge(current, new_settings)
             self._profiles_data[target] = merged
 
@@ -382,8 +380,7 @@ class SettingsManager:
         return self._profiles_data[self._active_profile_name]
 
     def _deep_merge(
-        self, base: Dict[str, Any], custom: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, base: Dict[str, Any], custom: Dict[str, Any]) -> Dict[str, Any]:
         """
         ادغام عمیق دو دیکشنری.
 
@@ -394,16 +391,14 @@ class SettingsManager:
             if (
                 isinstance(v, dict)
                 and k in result
-                and isinstance(result[k], dict)
-            ):
+                and isinstance(result[k], dict)):
                 result[k] = self._deep_merge(result[k], v)
             else:
                 result[k] = copy.deepcopy(v)
         return result
 
     def _normalize_settings(
-        self, settings: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, settings: Dict[str, Any]) -> Dict[str, Any]:
         """
         سازگاری با ساختار flat قدیمی → nested جدید.
 
@@ -439,11 +434,9 @@ class SettingsManager:
         """بارگذاری از فایل JSON یا ایجاد مقادیر پیش‌فرض"""
         if not os.path.exists(self.filepath):
             logger.info(
-                f"Settings file '{self.filepath}' not found. Creating default."
-            )
+                f"Settings file '{self.filepath}' not found. Creating default.")
             self._profiles_data = {
-                _DEFAULT_PROFILE_NAME: copy.deepcopy(DEFAULT_SETTINGS)
-            }
+                _DEFAULT_PROFILE_NAME: copy.deepcopy(DEFAULT_SETTINGS)}
             self._active_profile_name = _DEFAULT_PROFILE_NAME
             self._save_to_disk()
             return
@@ -456,8 +449,7 @@ class SettingsManager:
                 raise ValueError("JSON root must be a dictionary")
 
             self._active_profile_name = str(
-                data.get("active_profile", _DEFAULT_PROFILE_NAME)
-            )
+                data.get("active_profile", _DEFAULT_PROFILE_NAME))
             profiles = data.get("profiles", {})
 
             if not isinstance(profiles, dict) or not profiles:
@@ -465,8 +457,7 @@ class SettingsManager:
                 flat = self._normalize_settings(data)
                 self._profiles_data = {
                     _DEFAULT_PROFILE_NAME: self._deep_merge(
-                        DEFAULT_SETTINGS, flat
-                    )
+                        DEFAULT_SETTINGS, flat)
                 }
             else:
                 self._profiles_data = {}
@@ -482,8 +473,7 @@ class SettingsManager:
                 self._active_profile_name = list(self._profiles_data.keys())[0]
 
             logger.info(
-                f"Settings loaded. Active profile: '{self._active_profile_name}'"
-            )
+                f"Settings loaded. Active profile: '{self._active_profile_name}'")
 
         except Exception as e:
             logger.error(f"Error loading '{self.filepath}': {e}")
@@ -499,8 +489,7 @@ class SettingsManager:
                 logger.error(f"Failed to backup corrupted file: {backup_err}")
 
             self._profiles_data = {
-                _DEFAULT_PROFILE_NAME: copy.deepcopy(DEFAULT_SETTINGS)
-            }
+                _DEFAULT_PROFILE_NAME: copy.deepcopy(DEFAULT_SETTINGS)}
             self._active_profile_name = _DEFAULT_PROFILE_NAME
             self._save_to_disk()
 
@@ -510,8 +499,7 @@ class SettingsManager:
             temp_path = f"{self.filepath}.tmp"
             output_payload = {
                 "active_profile": self._active_profile_name,
-                "profiles": self._profiles_data,
-            }
+                "profiles": self._profiles_data,}
 
             try:
                 # اطمینان از وجود پوشه والد
@@ -531,16 +519,12 @@ class SettingsManager:
                 return True
 
             except PermissionError as e:
-                logger.error(
-                    f"Cannot replace settings file (Permission Denied): {e}"
-                )
+                logger.error(f"Cannot replace settings file (Permission Denied): {e}")
                 self._cleanup_temp_file(temp_path)
                 return False
 
             except Exception as e:
-                logger.error(
-                    f"Failed to save settings: {e}", exc_info=True
-                )
+                logger.error(f"Failed to save settings: {e}", exc_info=True)
                 self._cleanup_temp_file(temp_path)
                 return False
 

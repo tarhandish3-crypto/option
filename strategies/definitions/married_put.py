@@ -28,7 +28,6 @@ DEFINITION = StrategyDefinition(
 
     rules={
         "maturity_order": "same",
-        "strike_order": "any",
-        "min_strike_gap_pct": 0.0,
+        # قوانین strike غیرضروری هستند چون فقط یک آپشن داریم
     },
 )

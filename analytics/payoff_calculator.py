@@ -15,7 +15,7 @@ from analytics.cost_calculator import IranMarketCostCalculator
 # بخش ۱: محاسبه سود/زیان ناخالص (Numba)
 # ============================================================
 
-@njit(cache=True)
+# @njit(cache=True)
 def calc_pure_gross_payoff_numba(
         price_levels: np.ndarray,
         weights: np.ndarray,
@@ -65,7 +65,7 @@ def calc_pure_gross_payoff_numba(
 # بخش ۲: محاسبه جریان نقدی اولیه و سرمایه درگیر (Numba)
 # ============================================================
 
-@njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 def calculate_initial_cash_flow_and_capital(
         weights: np.ndarray,
         entry_prices: np.ndarray,

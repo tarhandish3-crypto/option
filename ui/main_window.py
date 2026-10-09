@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QCheckBox,
     QSpinBox, QLabel, QHeaderView, QMessageBox, QStatusBar,
     QProgressBar, QFrame, QApplication, QSplitter, QFileDialog,
-    QMenu, QLineEdit, QDialog
+    QMenu, QLineEdit, QDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QBrush, QColor
@@ -43,17 +43,29 @@ import config
 logger = logging.getLogger("OptionScanner.UI.MainWindow")
 
 
+# ═══════════════════════════════════════════════════════════════
+# ثابت‌های شخصیت
+# ═══════════════════════════════════════════════════════════════
+
+PERSONALITY_HEADERS = ["محافظه‌کار", "متعادل", "پرریسک"]
+PERSONALITY_KEYS = ["conservative", "balanced", "aggressive"]
+
+# آستانه‌های رنگ‌بندی برای هر شخصیت
+PERSONALITY_THRESHOLDS = {
+    "conservative": {"high": 15.0, "medium": 8.0},
+    "balanced":     {"high": 20.0, "medium": 10.0},
+    "aggressive":   {"high": 25.0, "medium": 12.0},
+}
+
+# ─── حداکثر عرض مجاز ستون‌ها (جلوگیری از بزرگ شدن پنجره) ───
+_MAX_DYNAMIC_COLUMN_WIDTH = 100
+
+
 def _build_strategy_key(strategy: Any) -> tuple:
     """
     ساخت کلید یکتای پایدار برای یک استراتژی، مستقل از شیء پایتونی آن.
-    برای تطبیق «همان استراتژی» بین دو اسکن متوالی و تشخیص تغییر مقدار سود/زیان
-    (جهت انیمیشن فلش) استفاده می‌شود؛ چون در هر اسکن، جدول کاملاً از نو ساخته
-    می‌شود و آبجکت‌های Opportunity قبلی از بین می‌روند.
-
-    نکته: days_to_maturity از کلید خارج شده است چون با گذشت زمان تغییر می‌کند
-    و باعث می‌شود کلیدهای یکسان در اسکن‌های متفاوت با هم تطبیق نشوند.
     """
-    legs = getattr(strategy, 'legs')
+    legs = getattr(strategy, 'legs', [])
     leg_signature = tuple(
         (
             getattr(leg.contract, 'ticker', ''),
@@ -87,8 +99,7 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
 class MainWindow(QMainWindow):
     """
-    پنجره اصلی برنامه Option Strategy Scanner
-    شامل نوار ابزار متمرکز، جدول بهینه‌شده با میکروچارت و هیت‌مپ، پنل Inspector و منوی عملیات
+    پنجره اصلی برنامه Option Strategy Scanner.
     """
     status_update_signal = Signal(str)
 
@@ -117,15 +128,21 @@ class MainWindow(QMainWindow):
 
         self.current_results: List = []
         self.price_steps: List[float] = []
-        self._active_quick_filters: set[str] = set()
+        self._active_quick_filters: set = set()
 
-        # مدیریت انیمیشن فلش تغییر قیمت + نگهداری آخرین مقادیر برای مقایسه بین اسکن‌ها
+        self._fixed_column_count = 0
+        self._personality_column_start = 0
+
         self._flash_manager = get_flash_manager(self)
         self._prev_cell_values: Dict[tuple, Dict[int, float]] = {}
 
         self._theme_mode: ui_theme.ThemeMode = ui_theme.resolve_theme(
             self.config.get("theme", ui_theme.THEME_LIGHT)
         )
+
+        # ─── ذخیره‌ی حداکثر اندازه‌ی مجاز پنجره ───
+        self._max_window_width = 0
+        self._max_window_height = 0
 
         self.init_ui()
         self._apply_theme(self.config.get("theme", ui_theme.THEME_LIGHT))
@@ -135,7 +152,6 @@ class MainWindow(QMainWindow):
             bot_token=bale_cfg.get("bot_token", ""),
             chat_id=bale_cfg.get("chat_id", ""),
         )
-        # تنظیم callback‌ها برای نمایش پیام به کاربر پس از ارسال
         self._bale_notifier.set_callbacks(
             on_success=self._on_bale_send_success,
             on_error=self._on_bale_send_error
@@ -152,7 +168,7 @@ class MainWindow(QMainWindow):
         self.load_settings()
         self._show_empty_state()
 
-        # 🆕 شروع خودکار DevTools Snippet Server
+        # شروع خودکار DevTools Snippet Server
         self._snippet_server = None
         try:
             self._snippet_server = get_devtools_snippet_server()
@@ -163,15 +179,18 @@ class MainWindow(QMainWindow):
             logger.warning(f"DevTools Snippet server failed: {e}")
             self._snippet_server = None
 
-        # 🆕 وضعیت Backend (برای فعال/غیرفعال کردن دکمه Snippet)
         self._backend_online = bool(
             self._snippet_server and self._snippet_server.is_running
         )
 
-        # 🆕 پنجره تحلیلگر نقطه‌ای (Lazy Loading)
         self._spread_window = None
+        self._position_manager_window = None
 
         logger.info("Main window initialized cleanly")
+
+    # ═══════════════════════════════════════════════════════════════
+    # Layout & Theme
+    # ═══════════════════════════════════════════════════════════════
 
     def _generate_price_step_columns(self) -> List[str]:
         cfg = self.price_range_config
@@ -195,10 +214,7 @@ class MainWindow(QMainWindow):
                 step = (max_p - min_p) / (num_pts - 1)
                 self.price_steps = [min_p + i * step for i in range(num_pts)]
 
-        headers = []
-        for val in self.price_steps:
-            headers.append(fmt.format(val))
-        return headers
+        return [fmt.format(val) for val in self.price_steps]
 
     def _apply_layout_direction(self, layout_dir: str) -> None:
         """تنظیم جهت چیدمان کل پنجره و جدول نتایج"""
@@ -224,7 +240,6 @@ class MainWindow(QMainWindow):
             self._bottom_toolbar.setLayoutDirection(direction)
 
         if hasattr(self, "table"):
-            # اعمال مستقیم جهت به جدول (بدون معکوس کردن)
             self.table.setLayoutDirection(direction)
             header = self.table.horizontalHeader()
             if header:
@@ -233,14 +248,39 @@ class MainWindow(QMainWindow):
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter if is_ltr
                     else Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 )
-            # بازنشانی و ترسیم مجدد ردیف‌های جدول برای اعمال تراز جدید
             if self.current_results:
                 self.populate_table(self.current_results)
 
     def init_ui(self):
         self.setWindowTitle(
             "Option Strategy Scanner — دستیار هوشمند معاملات اختیار معامله")
+
+        # ═══════════════════════════════════════════════════════════
+        # 🆕 قفل کردن حداکثر اندازه‌ی پنجره به اندازه‌ی مانیتور
+        # این جلوگیری می‌کند از بزرگ‌تر شدن پنجره پس از اسکن
+        # ═══════════════════════════════════════════════════════════
+        screen = QApplication.primaryScreen()
+        if screen:
+            available = screen.availableGeometry()
+            self._max_window_width = available.width()
+            self._max_window_height = available.height()
+
+            # حداکثر = اندازه‌ی مانیتور
+            self.setMaximumWidth(self._max_window_width)
+            self.setMaximumHeight(self._max_window_height)
+
+            # حداقل = ۹۰٪ عرض و ۷۰٪ ارتفاع مانیتور
+            self.setMinimumWidth(int(self._max_window_width * 0.9))
+            self.setMinimumHeight(int(self._max_window_height * 0.7))
+        else:
+            # Fallback اگر مانیتور شناسایی نشد
+            self._max_window_width = 1920
+            self._max_window_height = 1080
+            self.setMaximumWidth(self._max_window_width)
+            self.setMaximumHeight(self._max_window_height)
+
         self.resize(1440, 840)
+        self.setWindowState(Qt.WindowState.WindowMaximized)
         self.showMaximized()
 
         layout_dir = self.config.get("layout_direction", "راست‌چین (RTL)")
@@ -288,6 +328,102 @@ class MainWindow(QMainWindow):
         self.table_filter_manager = TableFilterManager(self.table)
         self._setup_table_context_menu()
 
+    # ═══════════════════════════════════════════════════════════════
+    # 🆕 resizeEvent — مکانیزم دفاعی
+    # ═══════════════════════════════════════════════════════════════
+
+    def resizeEvent(self, event):
+        """
+        مکانیزم دفاعی: اگر پنجره از اندازه‌ی مانیتور بزرگ‌تر شد،
+        آن را محدود کن.
+
+        ⚠️ نکته: چون setMaximumWidth/Height اعمال شده، این متد
+        به‌ندرت وارد شرط resize می‌شود.
+        """
+        super().resizeEvent(event)
+
+        if self._max_window_width <= 0 or self._max_window_height <= 0:
+            return
+
+        # بررسی اینکه پنجره از حداکثر بزرگ‌تر نشده
+        if (self.width() > self._max_window_width or
+                self.height() > self._max_window_height):
+            # فقط اگر واقعاً بزرگ‌تر شده، resize کن
+            new_w = min(self.width(), self._max_window_width)
+            new_h = min(self.height(), self._max_window_height)
+            # استفاده از singleShot برای جلوگیری از loop
+            QTimer.singleShot(0, lambda: self.resize(new_w, new_h))
+
+    # ═══════════════════════════════════════════════════════════════
+    # Toolbar
+    # ═══════════════════════════════════════════════════════════════
+
+    def _get_uniform_toolbar_btn_style(self) -> str:
+        """
+        استایل یکسان برای همه‌ی دکمه‌های نوار بالا.
+
+        رنگ سبز هماهنگ با دکمه‌ی «ذخیره اکسل» در نوار پایین.
+        فونت 11px برای جا شدن متن کامل.
+        """
+        mode = self._theme_mode
+
+        if mode == "dark":
+            bg = "#238636"
+            bg_hover = "#2ea043"
+            bg_pressed = "#1a7f37"
+            bg_checked = "#1a7f37"
+            text = "#ffffff"
+            text_hover = "#ffffff"
+            text_checked = "#ffffff"
+            text_disabled = "#8b949e"
+            border = "#238636"
+            border_hover = "#3fb950"
+        else:
+            bg = "#1f883d"
+            bg_hover = "#2c974b"
+            bg_pressed = "#1a7f37"
+            bg_checked = "#1a7f37"
+            text = "#ffffff"
+            text_hover = "#ffffff"
+            text_checked = "#ffffff"
+            text_disabled = "#8c959f"
+            border = "#1f883d"
+            border_hover = "#2c974b"
+
+        return f"""
+            QPushButton {{
+                background-color: {bg};
+                color: {text};
+                border: 1px solid {border};
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-weight: bold;
+                font-size: 11px;
+                min-height: 22px;
+            }}
+            QPushButton:hover {{
+                background-color: {bg_hover};
+                color: {text_hover};
+                border-color: {border_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {bg_pressed};
+                color: {text_checked};
+                border-color: {bg_pressed};
+            }}
+            QPushButton:checked {{
+                background-color: {bg_checked};
+                color: {text_checked};
+                border-color: {bg_checked};
+            }}
+            QPushButton:disabled {{
+                background-color: {bg};
+                color: {text_disabled};
+                border-color: {border};
+                opacity: 0.5;
+            }}
+        """
+
     def _create_toolbar(self) -> QFrame:
         toolbar = QFrame()
         toolbar.setStyleSheet(
@@ -296,16 +432,17 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 6, 10, 6)
         layout.setSpacing(8)
 
-        # دکمه اسکن بازار
+        uniform_btn_style = self._get_uniform_toolbar_btn_style()
+
+        # ── دکمه اسکن بازار ──
         self.btn_refresh = QPushButton("🔄 اسکن بازار")
-        self.btn_refresh.setStyleSheet(
-            ui_theme.get_button_style(self._theme_mode, role="success"))
+        self.btn_refresh.setStyleSheet(uniform_btn_style)
         self.btn_refresh.clicked.connect(self.start_scan)
         layout.addWidget(self.btn_refresh)
 
         layout.addWidget(self._create_separator())
 
-        # تکرار خودکار
+        # ── تکرار خودکار ──
         self.chk_auto_scan = QCheckBox("تکرار خودکار:")
         self.chk_auto_scan.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.chk_auto_scan.stateChanged.connect(self.toggle_auto_scan)
@@ -328,46 +465,46 @@ class MainWindow(QMainWindow):
         self.chk_auto_scan.setChecked(True)
         layout.addStretch()
 
-        # دکمه یکپارچه تنظیمات و فیلترهای استراتژی‌ها
-        self.btn_strategy_settings = QPushButton(
-            "🎯 تنظیمات و فیلترهای استراتژی")
-        self.btn_strategy_settings.setStyleSheet(
-            ui_theme.get_button_style(self._theme_mode, role="primary"))
-        self.btn_strategy_settings.clicked.connect(
-            self.open_strategy_settings_dialog)
-        layout.addWidget(self.btn_strategy_settings)
+        # ── همه‌ی دکمه‌های نوار بالا با استایل یکسان ──
+        # متن‌های کوتاه برای جا شدن کامل
+        toolbar_buttons = [
+            ("btn_strategy_settings", "🎯 تنظیمات استراتژی",
+             self.open_strategy_settings_dialog),
+            ("btn_symbol_filter", "🔍 فیلتر نمادها",
+             self.open_symbol_filter_dialog),
+            ("btn_custom_price", "💰 قیمت دستی",
+             self.open_custom_price_dialog),
+            ("btn_settings", "⚙️ تنظیمات سیستم",
+             self.open_settings_dialog),
+            ("btn_vq_refresh", "📊 داده نوسان تاریخی",
+             self._open_volatility_refresh_dialog),
+            ("btn_spread_analyzer", "📊 تحلیلگر نقطه‌ای",
+             self._open_spread_analyzer),
+            ("btn_position_manager", "📋 مدیریت موقعیت‌ها",
+             self._open_position_manager),
+        ]
 
-        # فیلتر نمادها
-        self.btn_symbol_filter = QPushButton("🔍 فیلتر نمادها")
-        self.btn_symbol_filter.clicked.connect(self.open_symbol_filter_dialog)
-        self.btn_symbol_filter.setStyleSheet(
-            ui_theme.get_button_style(self._theme_mode, role="secondary"))
-        layout.addWidget(self.btn_symbol_filter)
+        for attr_name, label, callback in toolbar_buttons:
+            btn = QPushButton(label)
+            btn.setStyleSheet(uniform_btn_style)
+            btn.clicked.connect(callback)
+            setattr(self, attr_name, btn)
+            layout.addWidget(btn)
 
-        # قیمت دستی نمادها
-        self.btn_custom_price = QPushButton("💰 قیمت دستی نمادها")
-        self.btn_custom_price.setStyleSheet(
-            ui_theme.get_accent_button_style(self._theme_mode))
-        self.btn_custom_price.clicked.connect(self.open_custom_price_dialog)
-        layout.addWidget(self.btn_custom_price)
-
-        # تنظیمات سیستم
-        self.btn_settings = QPushButton("⚙️ تنظیمات سیستم")
-        self.btn_settings.clicked.connect(self.open_settings_dialog)
-        self.btn_settings.setStyleSheet(
-            ui_theme.get_button_style(self._theme_mode, role="secondary"))
-        layout.addWidget(self.btn_settings)
-
-        # 🆕 دکمه تحلیلگر نقطه‌ای
-        self.btn_spread_analyzer = QPushButton("📊 تحلیلگر نقطه‌ای")
-        self.btn_spread_analyzer.setStyleSheet(
-            ui_theme.get_button_style(self._theme_mode, role="primary"))
+        # Tooltipها
+        self.btn_vq_refresh.setToolTip(
+            "به‌روزرسانی داده‌ی نوسان تاریخی (VQ)\n"
+            "این داده برای امتیازدهی دقیق فرصت‌ها استفاده می‌شود."
+        )
         self.btn_spread_analyzer.setToolTip(
             "نمای نقطه‌ای استراتژی‌ها (R30، M30، سربه‌سر، Cobb-Douglas)"
         )
-        self.btn_spread_analyzer.clicked.connect(
-            self._open_spread_analyzer)
-        layout.addWidget(self.btn_spread_analyzer)
+        self.btn_position_manager.setToolTip(
+            "مدیریت موقعیت‌های باز، ثبت سفارش‌ها و پیگیری اجرا"
+        )
+        self.btn_strategy_settings.setToolTip(
+            "تنظیمات و فیلترهای هوشمند استراتژی‌ها"
+        )
 
         return toolbar
 
@@ -416,7 +553,11 @@ class MainWindow(QMainWindow):
         self._apply_quick_filters()
 
     def _refresh_chips_style(self):
-        for key, btn in (("arbitrage", self.chip_arbitrage), ("dte_30", self.chip_dte), ("roi_15", self.chip_roi)):
+        for key, btn in (
+            ("arbitrage", self.chip_arbitrage),
+            ("dte_30", self.chip_dte),
+            ("roi_15", self.chip_roi),
+        ):
             active = key in self._active_quick_filters
             btn.setStyleSheet(ui_theme.get_filter_chip_style(
                 active, self._theme_mode))
@@ -457,12 +598,19 @@ class MainWindow(QMainWindow):
         separator.setStyleSheet(ui_theme.get_separator_style(self._theme_mode))
         return separator
 
+    # ═══════════════════════════════════════════════════════════════
+    # Table
+    # ═══════════════════════════════════════════════════════════════
+
     def _create_table(self) -> QTableWidget:
         table = QTableWidget()
+
         fixed_headers = ["✓", "Rank", "Strategy", "Positions",
                          "DTE / سررسید", "Ticker", "Breakeven"]
         dynamic_price_headers = self._generate_price_step_columns()
-        all_headers = fixed_headers + dynamic_price_headers
+        personality_headers = list(PERSONALITY_HEADERS)
+
+        all_headers = fixed_headers + dynamic_price_headers + personality_headers
 
         table.setColumnCount(len(all_headers))
         table.setHorizontalHeaderLabels(all_headers)
@@ -473,6 +621,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSortIndicatorShown(True)
 
+        # عرض ستون‌های ثابت
         table.setColumnWidth(0, 35)
         table.setColumnWidth(1, 50)
         table.setColumnWidth(2, 130)
@@ -481,16 +630,47 @@ class MainWindow(QMainWindow):
         table.setColumnWidth(5, 85)
         table.setColumnWidth(6, 110)
 
-        for col_idx in range(len(fixed_headers), len(all_headers)):
-            header.setSectionResizeMode(col_idx, QHeaderView.ResizeMode.ResizeToContents)
+        # ─── ستون‌های P&L: Interactive (نه ResizeToContents) ───
+        price_start = len(fixed_headers)
+        price_end = price_start + len(dynamic_price_headers)
+        for col_idx in range(price_start, price_end):
+            header.setSectionResizeMode(
+                col_idx, QHeaderView.ResizeMode.Interactive)
             table.setColumnWidth(col_idx, 85)
 
+        # ─── ستون‌های شخصیت: Interactive ───
+        personality_start = price_end
+        personality_end = len(all_headers)
+        for col_idx in range(personality_start, personality_end):
+            header.setSectionResizeMode(
+                col_idx, QHeaderView.ResizeMode.Interactive)
+            table.setColumnWidth(col_idx, 95)
+
+        # ذخیره‌ی شماره‌ی ستون‌ها
         self._fixed_column_count = len(fixed_headers)
+        self._personality_column_start = personality_start
 
         table.setSortingEnabled(True)
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+
+        # ─── 🆕 scroll افقی و عمودی فعال ───
+        table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setHorizontalScrollMode(
+            QTableWidget.ScrollMode.ScrollPerPixel)
+        table.setVerticalScrollMode(
+            QTableWidget.ScrollMode.ScrollPerPixel)
+
+        # ─── 🆕 جدول نباید عرض ذاتی داشته باشد ───
+        table.setMinimumWidth(0)
+        table.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
 
         table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         table.customContextMenuRequested.connect(self._on_table_context_menu)
@@ -582,7 +762,22 @@ class MainWindow(QMainWindow):
             parts.append(f"{t} ({r}x{s})")
         positions_str = " | ".join(parts)
 
-        text = f"🎯 استراتژی: {strat_name}\n📌 نماد پایه: {ticker}\n📋 پایه‌ها: {positions_str}"
+        scores = getattr(strategy, 'scores', {}) or {}
+        score_lines = []
+        for key, label in zip(PERSONALITY_KEYS, PERSONALITY_HEADERS):
+            val = scores.get(key, -1.0)
+            if val > 0:
+                score_lines.append(f"  • {label}: {val:.2f}")
+            else:
+                score_lines.append(f"  • {label}: —")
+        scores_str = "\n".join(score_lines)
+
+        text = (
+            f"🎯 استراتژی: {strat_name}\n"
+            f"📌 نماد پایه: {ticker}\n"
+            f"📋 پایه‌ها: {positions_str}\n"
+            f"⭐ امتیازها:\n{scores_str}"
+        )
         QApplication.clipboard().setText(text)
         self.status_update_signal.emit(
             "📋 اطلاعات استراتژی در کلیپ‌بورد کپی شد")
@@ -632,6 +827,10 @@ class MainWindow(QMainWindow):
 
         self._update_stats()
 
+    # ═══════════════════════════════════════════════════════════════
+    # Bottom Toolbar
+    # ═══════════════════════════════════════════════════════════════
+
     def _create_bottom_toolbar(self) -> QFrame:
         toolbar = QFrame()
         toolbar.setStyleSheet(
@@ -677,6 +876,10 @@ class MainWindow(QMainWindow):
 
         return toolbar
 
+    # ═══════════════════════════════════════════════════════════════
+    # Settings / Scan lifecycle
+    # ═══════════════════════════════════════════════════════════════
+
     def load_settings(self):
         auto_scan_enabled = self.config.get('auto_scan_enabled', True)
         self.chk_auto_scan.setChecked(auto_scan_enabled)
@@ -714,10 +917,29 @@ class MainWindow(QMainWindow):
             self.worker.deleteLater()
             self.worker = None
 
+        # ─── 🆕 پس از پایان اسکن، مطمئن شو پنجره بزرگ نشده ───
+        QTimer.singleShot(50, self._enforce_window_size)
+
+    def _enforce_window_size(self):
+        """
+        اجبار پنجره به اندازه‌ی مانیتور.
+        """
+        if self._max_window_width <= 0 or self._max_window_height <= 0:
+            return
+
+        new_w = min(self.width(), self._max_window_width)
+        new_h = min(self.height(), self._max_window_height)
+
+        if new_w != self.width() or new_h != self.height():
+            logger.debug(
+                f"Enforcing window size: {self.width()}x{self.height()} "
+                f"→ {new_w}x{new_h}"
+            )
+            self.resize(new_w, new_h)
+
     def on_scan_finished(self, results):
         all_results = results or []
 
-        # فیلتر کردن بر اساس نمادهای بلاک‌شده
         excluded = set(settings_manager.get_excluded_symbols())
         if excluded:
             all_results = [
@@ -725,7 +947,6 @@ class MainWindow(QMainWindow):
                 if getattr(opp, 'underlying_ticker', '') not in excluded
             ]
 
-        # فیلتر کردن بر اساس استراتژی‌های فعال
         active_strategies = settings_manager.get_active_strategies()
         if active_strategies:
             all_results = [
@@ -752,6 +973,24 @@ class MainWindow(QMainWindow):
 
     def on_scan_failed(self, error_msg):
         self.status_update_signal.emit(f"❌ خطا در اسکن: {error_msg}")
+
+        # ─── خطای VQ ───
+        if "VQ_MISSING" in error_msg or "Historical_Volatility" in error_msg:
+            QMessageBox.critical(
+                self,
+                "فایل Historical_Volatility.xlsx یافت نشد",
+                "❌ فایل Historical_Volatility.xlsx یافت نشد!\n\n"
+                "برای امتیازدهی فرصت‌ها، ابتدا باید داده‌ی نوسان تاریخی محاسبه شود.\n\n"
+                "📌 راه‌حل:\n"
+                "   ۱. دکمه‌ی «📊 داده نوسان تاریخی» را بزنید\n"
+                "   ۲. در پنجره باز شده، دکمه‌ی «🔄 محاسبه نوسان تاریخی» را بزنید\n"
+                "   ۳. پس از ۳۰-۶۰ ثانیه، فایل ساخته می‌شود\n"
+                "   ۴. مجدداً اسکن کنید\n\n"
+                "⚠️ بدون این فایل، امتیازدهی امکان‌پذیر نیست."
+            )
+            return
+
+        # ─── خطای عادی ───
         QMessageBox.critical(
             self,
             "خطا در اسکن",
@@ -762,9 +1001,11 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(percent)
         self.progress_bar.setFormat(f"{percent}% - {status}")
 
+    # ═══════════════════════════════════════════════════════════════
+    # Populate table
+    # ═══════════════════════════════════════════════════════════════
+
     def populate_table(self, results: List):
-        # ۱. پاک‌سازی فلش‌های در حال اجرا قبل از بازسازی جدول
-        #    (جلوگیری از RuntimeError به دلیل ارجاع به QTableWidgetItemهای حذف‌شده)
         flash_mgr = get_flash_manager()
         flash_mgr.clear()
 
@@ -776,6 +1017,8 @@ class MainWindow(QMainWindow):
             self._show_empty_state()
             self._prev_cell_values = {}
             self._update_stats()
+            self.table.blockSignals(False)
+            self.table.setSortingEnabled(True)
             return
 
         new_cell_values: Dict[tuple, Dict[int, float]] = {}
@@ -789,29 +1032,26 @@ class MainWindow(QMainWindow):
         self.table.setSortingEnabled(True)
         self.table.blockSignals(False)
 
+        # ─── 🆕 محدود کردن عرض ستون‌ها ───
+        # به جای resizeColumnToContents آزاد، حداکثر عرض را محدود می‌کنیم
         for col_idx in range(self._fixed_column_count, self.table.columnCount()):
             self.table.resizeColumnToContents(col_idx)
+            if self.table.columnWidth(col_idx) > _MAX_DYNAMIC_COLUMN_WIDTH:
+                self.table.setColumnWidth(
+                    col_idx, _MAX_DYNAMIC_COLUMN_WIDTH)
 
-        # جایگزینی نقشه‌ی مقادیر قبلی؛ اسکن بعدی بر مبنای همین مقادیر، تغییرات را
-        # تشخیص داده و سلول‌های مربوطه را فلش می‌زند.
         self._prev_cell_values = new_cell_values
         self._update_heatmap_scale(new_cell_values)
 
-        # فیلترهای ستونی فعال را روی ردیف‌های تازه‌ساخته دوباره اعمال کن؛ چون
-        # جدول همین الان کاملاً از نو ساخته شد (setRowCount(0) + insertRow)،
-        # بدون این فراخوانی، فیلتری که کاربر تنظیم کرده بی‌اثر می‌ماند — با
-        # اینکه آیکون 🔍 روی هدر همچنان نمایش داده می‌شود.
         if self.table_filter_manager:
             self.table_filter_manager.apply_filters()
 
         self._update_stats()
 
+        # ─── 🆕 پس از populate، اندازه‌ی پنجره را چک کن ───
+        QTimer.singleShot(0, self._enforce_window_size)
+
     def _update_heatmap_scale(self, cell_values: Dict[tuple, Dict[int, float]]) -> None:
-        """
-        کالیبره‌کردن مقیاس نوار هیت‌مپ ستون‌های سود/زیان بر مبنای بیشینه‌ی واقعی
-        مقادیر همین اسکن؛ به‌جای یک ثابت حدسی که برای مقیاس ریال کالیبره شده
-        بود ولی این ستون‌ها عملاً بازده درصدی نمایش می‌دهند.
-        """
         delegate = self.table.itemDelegate()
         if not hasattr(delegate, "set_heatmap_scale"):
             return
@@ -823,7 +1063,9 @@ class MainWindow(QMainWindow):
         if max_abs > 0:
             delegate.set_heatmap_scale(max_abs)
 
-    def _populate_row(self, row: int, strategy: Any, cell_values_out: Optional[Dict[tuple, Dict[int, float]]] = None):
+    def _populate_row(self, row: int, strategy: Any,
+                      cell_values_out: Optional[Dict[tuple, Dict[int, float]]] = None):
+        # ── ✓ ──
         check_item = QTableWidgetItem()
         check_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable |
                             Qt.ItemFlag.ItemIsEnabled)
@@ -832,19 +1074,20 @@ class MainWindow(QMainWindow):
         check_item.setData(Qt.ItemDataRole.UserRole + 1, strategy)
         self.table.setItem(row, 0, check_item)
 
+        # ── Rank ──
         rank_val = getattr(strategy, 'rank', row + 1)
         rank_item = NumericTableWidgetItem(str(rank_val))
         rank_item.setData(Qt.ItemDataRole.UserRole, int(rank_val))
         rank_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, 1, rank_item)
 
+        # ── Strategy ──
         strat_name = str(getattr(strategy, 'strategy_name', 'N/A'))
         item_strat = QTableWidgetItem(strat_name)
         font = item_strat.font()
         font.setBold(True)
         item_strat.setFont(font)
 
-        # بررسی و نشان‌دادن قیمت دستی
         underlying_ticker = str(getattr(strategy, 'underlying_ticker', 'N/A'))
         custom_prices = settings_manager.get_custom_prices()
         if underlying_ticker in custom_prices:
@@ -853,6 +1096,7 @@ class MainWindow(QMainWindow):
 
         self.table.setItem(row, 2, item_strat)
 
+        # ── Positions ──
         legs = getattr(strategy, 'legs', [])
         if legs:
             positions_parts = []
@@ -867,31 +1111,30 @@ class MainWindow(QMainWindow):
             positions = 'N/A'
         self._set_item(row, 3, positions)
 
+        # ── DTE ──
         dte_val = int(getattr(strategy, 'days_to_maturity', 0))
-        contract = legs[0].contract if legs else None
-        expiry_val = getattr(contract, 'expiry_date', None)
-
         dte_item = NumericTableWidgetItem(f"{dte_val}")
         dte_item.setData(Qt.ItemDataRole.UserRole, dte_val)
         dte_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, 4, dte_item)
 
+        # ── Ticker ──
         ticker = str(getattr(strategy, 'underlying_ticker', 'N/A'))
         self._set_item(row, 5, ticker, bold=True)
 
-        be_list = getattr(strategy, 'break_even_points')
-        metadata = getattr(strategy, 'metadata', {})
-        if not be_list:
-            be_list = strategy.break_even_points
+        # ── Breakeven ──
+        be_list = getattr(strategy, 'break_even_points', [])
         if be_list:
             be_str = ", ".join(ui_theme.format_rial(p) for p in be_list)
         else:
             be_str = '0.0'
-        
         self._set_item(row, 6, be_str)
 
-        pnl_data = strategy.returns_monthly_pct
-        if hasattr(pnl_data, 'tolist'):
+        # ── P&L steps ──
+        pnl_data = getattr(strategy, 'returns_monthly_pct', None)
+        if pnl_data is None:
+            pnl_data = []
+        elif hasattr(pnl_data, 'tolist'):
             pnl_data = pnl_data.tolist()
         else:
             pnl_data = list(pnl_data)
@@ -923,8 +1166,6 @@ class MainWindow(QMainWindow):
                     self.table.setItem(row, col_idx, item_pnl)
                     current_values[col_idx] = num_val
 
-                    # فلش تغییر قیمت: فقط وقتی همین استراتژی در اسکن قبلی هم وجود
-                    # داشته و مقدار این ستون واقعاً (نه به‌خاطر خطای اعشاری) تغییر کرده.
                     if prev_values is not None:
                         old_val = prev_values.get(col_idx)
                         if old_val is not None and round(old_val) != round(num_val):
@@ -934,6 +1175,36 @@ class MainWindow(QMainWindow):
                     self._set_item(row, col_idx, str(val))
             else:
                 self._set_item(row, col_idx, "-")
+
+        # ── سه ستون امتیاز شخصیتی ──
+        scores = getattr(strategy, 'scores', None) or {}
+        p_start = self._personality_column_start
+
+        for idx, key in enumerate(PERSONALITY_KEYS):
+            col_idx = p_start + idx
+            score_val = scores.get(key, -1.0)
+
+            if score_val < 0:
+                item = QTableWidgetItem("—")
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setForeground(QBrush(QColor("#8c9bae")))
+            else:
+                item = NumericTableWidgetItem(f"{score_val:.2f}")
+                item.setData(Qt.ItemDataRole.UserRole, score_val)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                thresholds = PERSONALITY_THRESHOLDS.get(
+                    key, {"high": 20.0, "medium": 10.0})
+                if score_val >= thresholds["high"]:
+                    item.setForeground(QBrush(QColor("#3fb950")))
+                elif score_val >= thresholds["medium"]:
+                    item.setForeground(QBrush(QColor("#d29922")))
+                elif score_val >= 1.0:
+                    item.setForeground(QBrush(QColor("#8c9bae")))
+                else:
+                    item.setForeground(QBrush(QColor("#f85149")))
+
+            self.table.setItem(row, col_idx, item)
 
         if cell_values_out is not None:
             cell_values_out[strategy_key] = current_values
@@ -984,16 +1255,30 @@ class MainWindow(QMainWindow):
             self.lbl_stats.setText(f"📊 {total} استراتژی یافت شد")
 
     def _set_controls_enabled(self, enabled: bool):
-        self.btn_refresh.setEnabled(enabled)
-        self.chk_auto_scan.setEnabled(enabled)
-        self.spin_interval.setEnabled(
-            enabled and self.chk_auto_scan.isChecked())
-        self.btn_strategy_settings.setEnabled(enabled)
-        self.btn_symbol_filter.setEnabled(enabled)
-        self.btn_settings.setEnabled(enabled)
+        """فعال/غیرفعال کردن دکمه‌ها در زمان اسکن."""
+        for attr_name in (
+            "btn_refresh",
+            "chk_auto_scan",
+            "btn_strategy_settings",
+            "btn_symbol_filter",
+            "btn_custom_price",
+            "btn_settings",
+            "btn_vq_refresh",
+            "btn_spread_analyzer",
+            "btn_position_manager",
+        ):
+            if hasattr(self, attr_name):
+                getattr(self, attr_name).setEnabled(enabled)
+
+        if hasattr(self, "spin_interval"):
+            self.spin_interval.setEnabled(
+                enabled and self.chk_auto_scan.isChecked())
+
+    # ═══════════════════════════════════════════════════════════════
+    # Dialogs
+    # ═══════════════════════════════════════════════════════════════
 
     def open_strategy_settings_dialog(self):
-        """باز کردن پنجره یکپارچه فعال‌سازی استراتژی‌ها و تنظیم دامنه‌های سودآوری"""
         dialog = StrategySettingsDialog(self)
         dialog.strategies_updated.connect(self._on_active_strategies_updated)
         dialog.exec()
@@ -1022,12 +1307,10 @@ class MainWindow(QMainWindow):
             f"🚫 {count} نماد استثنا شد" if count else "✅ همه نمادها فعالند")
 
     def open_custom_price_dialog(self):
-        """باز کردن پنجره تنظیم قیمت دستی نمادها"""
-        # دریافت لیست نمادهای دارای قرارداد اختیار
         try:
             available_symbols = list(config.SYMBOL_INFO.keys()) if hasattr(
                 config, 'SYMBOL_INFO') else []
-        except:
+        except Exception:
             available_symbols = []
 
         dialog = CustomPriceDialog(
@@ -1036,7 +1319,6 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_custom_prices_updated(self, prices: dict):
-        """پس از به‌روزرسانی قیمت‌های دستی"""
         count = len(prices)
         self.status_update_signal.emit(
             f"💰 {count} قیمت دستی برای نمادها تنظیم شد")
@@ -1059,7 +1341,6 @@ class MainWindow(QMainWindow):
             chat_id=new_settings.get("bale_chat_id", ""),
         )
 
-        # همگام‌سازی بازه قیمت با ماژول config برای محاسبه پردازشی پس‌زمینه
         new_price_range = new_settings.get("price_range")
         if new_price_range:
             config.PRICE_RANGE_CONFIG.update(new_price_range)
@@ -1068,12 +1349,43 @@ class MainWindow(QMainWindow):
         self._apply_layout_direction(new_settings.get(
             "layout_direction", "راست‌چین (RTL)"))
 
-        # جداسازی دوباره تنظیمات بازه قیمت برای ساختار UI
         self.price_range_config = self.config.get(
             'price_range',
             config.PRICE_RANGE_CONFIG
         )
         self._rebuild_price_columns()
+
+    def _open_volatility_refresh_dialog(self):
+        """
+        باز کردن پنجره‌ی به‌روزرسانی داده نوسان تاریخی (VQ).
+        """
+        try:
+            from ui.volatility_refresh_dialog import VolatilityRefreshDialog
+        except ImportError as e:
+            QMessageBox.critical(
+                self, "خطا",
+                f"بارگذاری پنجره به‌روزرسانی VQ ناموفق بود:\n{e}"
+            )
+            logger.error(f"VolatilityRefreshDialog import failed: {e}")
+            return
+
+        try:
+            dialog = VolatilityRefreshDialog(parent=self)
+            dialog.exec()
+            logger.info("VolatilityRefreshDialog closed")
+        except Exception as e:
+            logger.error(
+                f"Failed to open VolatilityRefreshDialog: {e}",
+                exc_info=True
+            )
+            QMessageBox.critical(
+                self, "خطا",
+                f"ایجاد پنجره به‌روزرسانی VQ ناموفق بود:\n{e}"
+            )
+
+    # ═══════════════════════════════════════════════════════════════
+    # Theme
+    # ═══════════════════════════════════════════════════════════════
 
     def _apply_theme(self, theme_setting: str) -> None:
         self._theme_mode = ui_theme.resolve_theme(theme_setting)
@@ -1089,7 +1401,7 @@ class MainWindow(QMainWindow):
             self._show_empty_state()
 
     def _rebuild_price_columns(self):
-        """بازسازی ستون‌های قیمت پس از تغییر تنظیمات بازه قیمت در تنظیمات"""
+        """بازسازی ستون‌های قیمت و شخصیت پس از تغییر تنظیمات بازه قیمت"""
         self.table.setSortingEnabled(False)
         self.table.blockSignals(True)
         self.table.setRowCount(0)
@@ -1097,7 +1409,8 @@ class MainWindow(QMainWindow):
         fixed_headers = ["✓", "Rank", "Strategy", "Positions",
                          "DTE / سررسید", "Ticker", "Breakeven"]
         dynamic_headers = self._generate_price_step_columns()
-        all_headers = fixed_headers + dynamic_headers
+        personality_headers = list(PERSONALITY_HEADERS)
+        all_headers = fixed_headers + dynamic_headers + personality_headers
 
         header = self.table.horizontalHeader()
         current_col_count = self.table.columnCount()
@@ -1108,8 +1421,8 @@ class MainWindow(QMainWindow):
             if new_col_count > current_col_count:
                 for col_idx in range(current_col_count, new_col_count):
                     header.setSectionResizeMode(
-                        col_idx, QHeaderView.ResizeMode.ResizeToContents)
-                    self.table.setColumnWidth(col_idx, 85)
+                        col_idx, QHeaderView.ResizeMode.Interactive)
+                    self.table.setColumnWidth(col_idx, 90)
             else:
                 for col_idx in range(current_col_count - 1, new_col_count - 1, -1):
                     header.setSectionResizeMode(
@@ -1117,14 +1430,25 @@ class MainWindow(QMainWindow):
 
         self.table.setHorizontalHeaderLabels(all_headers)
 
-        for col_idx in range(len(fixed_headers), new_col_count):
+        # ستون‌های P&L — Interactive
+        price_start = len(fixed_headers)
+        price_end = price_start + len(dynamic_headers)
+        for col_idx in range(price_start, price_end):
             header.setSectionResizeMode(
-                col_idx, QHeaderView.ResizeMode.ResizeToContents)
+                col_idx, QHeaderView.ResizeMode.Interactive)
             self.table.setColumnWidth(col_idx, 85)
 
-        self._fixed_column_count = len(fixed_headers)
+        # ستون‌های شخصیت — Interactive
+        personality_start = price_end
+        for col_idx in range(personality_start, new_col_count):
+            header.setSectionResizeMode(
+                col_idx, QHeaderView.ResizeMode.Interactive)
+            self.table.setColumnWidth(col_idx, 95)
 
-        # تنظیم مجدد عرض ستون‌های ثابت
+        self._fixed_column_count = len(fixed_headers)
+        self._personality_column_start = personality_start
+
+        # عرض ستون‌های ثابت
         self.table.setColumnWidth(0, 35)
         self.table.setColumnWidth(1, 50)
         self.table.setColumnWidth(2, 130)
@@ -1136,8 +1460,6 @@ class MainWindow(QMainWindow):
         self.table.setSortingEnabled(True)
         self.table.blockSignals(False)
 
-        # اگر تعداد ستون‌ها تغییر کرده، نتایج قبلی منقضی شده‌اند؛
-        # پس نیازی به نگهداری آنها نیست و باید جدول و مقادیر قبلی پاک شوند
         if new_col_count != current_col_count:
             self.current_results = []
             self._prev_cell_values = {}
@@ -1152,7 +1474,6 @@ class MainWindow(QMainWindow):
     def _refresh_widget_styles(self) -> None:
         mode = self._theme_mode
 
-        # فریم‌های نوار ابزار
         if hasattr(self, "_top_toolbar"):
             self._top_toolbar.setStyleSheet(
                 ui_theme.get_toolbar_frame_style(mode))
@@ -1166,29 +1487,22 @@ class MainWindow(QMainWindow):
             self.lbl_interval_min.setStyleSheet(
                 ui_theme.get_interval_label_style(mode))
 
-        # دکمه‌های نوار بالایی
-        if hasattr(self, "btn_refresh"):
-            self.btn_refresh.setStyleSheet(
-                ui_theme.get_button_style(mode, role="success"))
-        if hasattr(self, "btn_strategy_settings"):
-            self.btn_strategy_settings.setStyleSheet(
-                ui_theme.get_button_style(mode, role="primary"))
-        if hasattr(self, "btn_symbol_filter"):
-            self.btn_symbol_filter.setStyleSheet(
-                ui_theme.get_button_style(mode, role="secondary"))
-        if hasattr(self, "btn_custom_price"):
-            self.btn_custom_price.setStyleSheet(
-                ui_theme.get_button_style(mode, role="warning"))
-        if hasattr(self, "btn_settings"):
-            self.btn_settings.setStyleSheet(
-                ui_theme.get_button_style(mode, role="secondary"))
+        # ── دکمه‌های نوار بالا: استایل یکسان سبز ──
+        uniform_style = self._get_uniform_toolbar_btn_style()
+        for attr_name in (
+            "btn_refresh",
+            "btn_strategy_settings",
+            "btn_symbol_filter",
+            "btn_custom_price",
+            "btn_settings",
+            "btn_vq_refresh",
+            "btn_spread_analyzer",
+            "btn_position_manager",
+        ):
+            if hasattr(self, attr_name):
+                getattr(self, attr_name).setStyleSheet(uniform_style)
 
-        # 🆕 دکمه تحلیلگر نقطه‌ای
-        if hasattr(self, "btn_spread_analyzer"):
-            self.btn_spread_analyzer.setStyleSheet(
-                ui_theme.get_button_style(mode, role="primary"))
-
-        # دکمه‌های نوار پایینی
+        # ── دکمه‌های نوار پایین: استایل نقش‌محور ──
         if hasattr(self, "btn_broker_connect"):
             self.btn_broker_connect.setStyleSheet(
                 ui_theme.get_button_style(mode, role="secondary"))
@@ -1204,6 +1518,10 @@ class MainWindow(QMainWindow):
         if hasattr(self, "btn_clear_results"):
             self.btn_clear_results.setStyleSheet(
                 ui_theme.get_button_style(mode, role="danger"))
+
+    # ═══════════════════════════════════════════════════════════════
+    # Status bar
+    # ═══════════════════════════════════════════════════════════════
 
     def _setup_status_bar(self):
         self.status_bar = QStatusBar()
@@ -1270,15 +1588,11 @@ class MainWindow(QMainWindow):
             self.lbl_broker_badge.setStyleSheet(
                 "color: #8c9bae; margin-left: 10px;")
 
-    def send_selected_to_broker(self):
-        """
-        ارسال استراتژی انتخاب‌شده به کارگزاری.
+    # ═══════════════════════════════════════════════════════════════
+    # Broker
+    # ═══════════════════════════════════════════════════════════════
 
-        عملیات سنگین Selenium/شبکه دیگر در Main Thread (UI Thread) اجرا
-        نمی‌شود — فقط انتخاب، اعتبارسنجی و تأیید کاربر اینجا انجام می‌شود؛
-        اجرای واقعی توسط BrokerExecutionWorker در یک QThread جدا صورت
-        می‌گیرد تا در صورت کندی مرورگر/شبکه، پنجره‌ی برنامه فریز نشود.
-        """
+    def send_selected_to_broker(self):
         checked_rows = [
             r for r in range(self.table.rowCount())
             if self.table.item(r, 0) and self.table.item(r, 0).checkState() == Qt.CheckState.Checked
@@ -1293,7 +1607,6 @@ class MainWindow(QMainWindow):
                 self, "عدم اتصال", "ابتدا با دکمه «🏦 اتصال به کارگزاری» وارد شوید.")
             return
 
-        # جلوگیری از اجرای همزمان دو عملیات کارگزاری
         if self._broker_execution_worker and self._broker_execution_worker.isRunning():
             QMessageBox.information(
                 self, "در حال اجرا",
@@ -1354,6 +1667,10 @@ class MainWindow(QMainWindow):
             worker.deleteLater()
         self._broker_execution_worker = None
 
+    # ═══════════════════════════════════════════════════════════════
+    # Bale
+    # ═══════════════════════════════════════════════════════════════
+
     def send_selected_to_bale(self):
         checked_rows = [
             r for r in range(self.table.rowCount())
@@ -1374,7 +1691,6 @@ class MainWindow(QMainWindow):
             f"📱 ارسال {len(selected_opps)} استراتژی به بله انجام شد")
 
     def _on_bale_send_success(self, opportunities, top_n):
-        """Callback موفقیت‌آمیز ارسال به بله"""
         strat_names = ", ".join(
             getattr(o, 'strategy_name', 'استراتژی') for o in opportunities[:3]
         )
@@ -1384,7 +1700,6 @@ class MainWindow(QMainWindow):
             f"✅ {len(opportunities)} استراتژی با موفقیت به بله ارسال شد: {strat_names}")
 
     def _on_bale_send_error(self, error_message):
-        """Callback خطا در ارسال به بله"""
         self.status_update_signal.emit(f"❌ خطا در ارسال به بله: {error_message}")
 
     def _send_bale_alert(self, opportunities: List) -> None:
@@ -1392,6 +1707,10 @@ class MainWindow(QMainWindow):
             return
         self._bale_notifier.send_scan_results(
             opportunities, top_n=self._bale_top_n)
+
+    # ═══════════════════════════════════════════════════════════════
+    # Auto scan
+    # ═══════════════════════════════════════════════════════════════
 
     def toggle_auto_scan(self, state: int):
         is_checked = (state == Qt.CheckState.Checked.value or state is True)
@@ -1416,6 +1735,10 @@ class MainWindow(QMainWindow):
         self._update_interval_label(value)
         if self.chk_auto_scan.isChecked():
             self.auto_scan_timer.start(value * 1000)
+
+    # ═══════════════════════════════════════════════════════════════
+    # Broker connection
+    # ═══════════════════════════════════════════════════════════════
 
     def connect_to_broker(self):
         if self._broker_connected:
@@ -1485,6 +1808,10 @@ class MainWindow(QMainWindow):
         self.btn_send_broker.setEnabled(False)
         self.status_update_signal.emit("🔌 اتصال به کارگزاری قطع شد")
 
+    # ═══════════════════════════════════════════════════════════════
+    # Clear / Export
+    # ═══════════════════════════════════════════════════════════════
+
     def clear_results(self):
         if self.table.rowCount() > 0:
             reply = QMessageBox.question(
@@ -1551,6 +1878,10 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "خطا", f"خطا در ذخیره اکسل:\n{e}")
 
+    # ═══════════════════════════════════════════════════════════════
+    # Close
+    # ═══════════════════════════════════════════════════════════════
+
     def closeEvent(self, event):
         if self.auto_scan_timer.isActive():
             self.auto_scan_timer.stop()
@@ -1576,7 +1907,6 @@ class MainWindow(QMainWindow):
             self.worker.stop()
             self.worker.wait(2000)
 
-        # 🆕 توقف DevTools Snippet Server
         try:
             if self._snippet_server and self._snippet_server.is_running:
                 self._snippet_server.stop()
@@ -1584,7 +1914,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.warning(f"Failed to stop Snippet server: {e}")
 
-        # 🆕 بستن پنجره تحلیلگر نقطه‌ای
         try:
             if self._spread_window is not None:
                 self._spread_window.close()
@@ -1592,22 +1921,27 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        try:
+            if self._position_manager_window is not None:
+                self._position_manager_window.close()
+                self._position_manager_window = None
+        except Exception:
+            pass
+
         event.accept()
         logger.info("Application terminated cleanly")
 
-    # =========================================================================
-    # منوی فیلتر متقدم سرستون‌ها
-    # =========================================================================
+    # ═══════════════════════════════════════════════════════════════
+    # Column filter context menu
+    # ═══════════════════════════════════════════════════════════════
 
     def _setup_table_context_menu(self):
-        """تنظیم منوی راست‌کلیک برای هدر جدول"""
         self.table.horizontalHeader().setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.horizontalHeader().customContextMenuRequested.connect(
             self._show_column_filter_menu)
 
     def _show_column_filter_menu(self, pos):
-        """نمایش منوی فیلتر برای سرستون"""
         header = self.table.horizontalHeader()
         column_index = header.logicalIndexAt(pos)
 
@@ -1616,39 +1950,32 @@ class MainWindow(QMainWindow):
 
         column_name = self.table.horizontalHeaderItem(column_index).text()
 
-        # ایجاد منوی راست‌کلیک
         menu = QMenu(self)
         menu.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
-        # تعیین نوع فیلتر براساس نام سرستون
         filter_type = self._determine_filter_type(column_index, column_name)
 
-        # دکمه: باز کردن فیلتر
         action_filter = menu.addAction(f"🔍 فیلتر: {column_name}")
         action_filter.triggered.connect(lambda: self._open_column_filter(
             column_index, column_name, filter_type))
 
         menu.addSeparator()
 
-        # دکمه: مرتب‌سازی صعودی
         action_asc = menu.addAction("📈 مرتب‌سازی صعودی")
         action_asc.triggered.connect(lambda: self.table.sortByColumn(
             column_index, Qt.SortOrder.AscendingOrder))
 
-        # دکمه: مرتب‌سازی نزولی
         action_desc = menu.addAction("📉 مرتب‌سازی نزولی")
         action_desc.triggered.connect(lambda: self.table.sortByColumn(
             column_index, Qt.SortOrder.DescendingOrder))
 
         menu.addSeparator()
 
-        # دکمه: حذف فیلترهای این سرستون
         if self.table_filter_manager and column_index in self.table_filter_manager.filters:
             action_clear = menu.addAction("🧹 حذف فیلتر این سرستون")
             action_clear.triggered.connect(
                 lambda: self._clear_column_filter(column_index, column_name))
 
-        # دکمه: حذف تمام فیلترها
         if self.table_filter_manager and self.table_filter_manager.filters:
             action_clear_all = menu.addAction("🧹 حذف تمام فیلترها")
             action_clear_all.triggered.connect(self._clear_all_filters)
@@ -1656,11 +1983,9 @@ class MainWindow(QMainWindow):
         menu.exec(self.table.horizontalHeader().mapToGlobal(pos))
 
     def _determine_filter_type(self, column_index: int, column_name: str) -> FilterType:
-        """تعیین نوع فیلتر براساس نام یا محتوای سرستون"""
-
-        # سرستون‌های عددی
         numeric_keywords = ["Rank", "DTE", "سررسید",
-                            "قیمت", "درصد", "%", "ریسک", "سود", "Breakeven"]
+                            "قیمت", "درصد", "%", "ریسک", "سود", "Breakeven",
+                            "محافظه‌کار", "متعادل", "پرریسک"]
 
         for keyword in numeric_keywords:
             if keyword in column_name:
@@ -1669,8 +1994,6 @@ class MainWindow(QMainWindow):
         return FilterType.TEXT
 
     def _open_column_filter(self, column_index: int, column_name: str, filter_type: FilterType):
-        """باز کردن دیالوگ فیلتر برای سرستون"""
-
         dialog = ColumnFilterDialog(
             column_name,
             filter_type,
@@ -1686,11 +2009,9 @@ class MainWindow(QMainWindow):
             logger.info(
                 f"فیلتر برای {column_name}: filter_func={filter_func is not None}, metadata={filter_metadata}")
 
-            # اگر filter_func None باشد، فیلتر حذف شود
             self.table_filter_manager.set_filter(
                 column_index, column_name, filter_func, filter_metadata)
 
-            # بروزرسانی نوار وضعیت
             active_count = self.table_filter_manager.get_active_filter_count()
             visible_count = self.table_filter_manager.get_visible_row_count()
             total_count = self.table.rowCount()
@@ -1699,11 +2020,8 @@ class MainWindow(QMainWindow):
             self.status_update_signal.emit(status_msg)
 
     def _clear_column_filter(self, column_index: int, column_name: str):
-        """حذف فیلتر یک سرستون"""
-
         self.table_filter_manager.set_filter(column_index, column_name, None)
 
-        # بروزرسانی نوار وضعیت
         active_count = self.table_filter_manager.get_active_filter_count()
         visible_count = self.table_filter_manager.get_visible_row_count()
         total_count = self.table.rowCount()
@@ -1716,26 +2034,34 @@ class MainWindow(QMainWindow):
         self.status_update_signal.emit(status_msg)
 
     def _clear_all_filters(self):
-        """حذف تمام فیلترها"""
-
         self.table_filter_manager.clear_all_filters()
         total_count = self.table.rowCount()
         self.status_update_signal.emit(
             f"تمام فیلترها حذف شدند | {total_count} ردیف نمایش داده می‌شود")
 
-    # =========================================================================
-    # 🆕 تحلیلگر نقطه‌ای
-    # =========================================================================
+    # ═══════════════════════════════════════════════════════════════
+    # Position Manager (placeholder) & Spread Analyzer
+    # ═══════════════════════════════════════════════════════════════
+
+    def _open_position_manager(self):
+        """
+        باز کردن پنجره‌ی مدیریت و ثبت موقعیت‌ها.
+        فعلاً placeholder است.
+        """
+        QMessageBox.information(
+            self, "مدیریت و ثبت موقعیت‌ها",
+            "این پنجره در نسخه‌ی بعدی پیاده‌سازی می‌شود.\n\n"
+            "قابلیت‌های پیش‌بینی‌شده:\n"
+            "• مشاهده‌ی موقعیت‌های باز\n"
+            "• ثبت سفارش‌های اجرا شده\n"
+            "• پیگیری وضعیت اجرا\n"
+            "• گزارش سود/زیان لحظه‌ای\n"
+            "• اتصال به کارگزاری"
+        )
 
     def _open_spread_analyzer(self):
         """
         باز کردن پنجره‌ی تحلیلگر نقطه‌ای.
-
-        این پنجره از همان scanner_engine موجود استفاده می‌کند و
-        شاخص‌های نقطه‌ای (R30، M30، سربه‌سر) را استخراج می‌کند.
-
-        نکته: import داخل متد به دلیل جلوگیری از circular import
-        (spread_analyzer_window ممکن است به ui وابسته باشد).
         """
         try:
             from ui.spread_analyzer_window import SpreadAnalyzerWindow
@@ -1747,12 +2073,11 @@ class MainWindow(QMainWindow):
             logger.error(f"SpreadAnalyzerWindow import failed: {e}")
             return
 
-        # ایجاد پنجره در بار اول
         if self._spread_window is None:
             try:
                 self._spread_window = SpreadAnalyzerWindow(
                     scanner_engine=self.scanner_engine,
-                    parent=None,  # پنجره‌ی مستقل
+                    parent=None,
                 )
                 logger.info("SpreadAnalyzerWindow created")
             except Exception as e:
@@ -1766,12 +2091,10 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-        # نمایش پنجره
         try:
             self._spread_window.show()
             self._spread_window.raise_()
             self._spread_window.activateWindow()
         except RuntimeError:
-            # اگر پنجره قبلاً بسته شده باشد
             self._spread_window = None
             self._open_spread_analyzer()

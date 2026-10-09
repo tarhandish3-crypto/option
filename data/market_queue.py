@@ -1,3 +1,4 @@
+# data/market_queue.py
 # -*- coding: utf-8 -*-
 """
 تشخیص نمادهای در صف خرید و فروش

@@ -46,15 +46,12 @@ class ThreeLegGenerator(BaseGenerator):
             underlying=underlying,
             strategy_rules=rules,
             contract_scores=contract_scores,
-            underlying_price=spot,
-        )
+            underlying_price=spot,)
 
         for matched_contracts in matched_sets:
-            # dedup بر اساس تیکر و نوع همه کانتراکت‌ها
             key = tuple(
                 (c.ticker, c.option_type.value, c.strike_price)
-                for c in matched_contracts if c is not None and c.option_type != OptionType.STOCK
-            )
+                for c in matched_contracts if c is not None and c.option_type != OptionType.STOCK)
             if key in seen_keys:
                 continue
             seen_keys.add(key)

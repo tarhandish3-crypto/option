@@ -1,459 +1,269 @@
 # scoring/ranker.py
 # -*- coding: utf-8 -*-
 
+"""
+موتور رتبه‌بندی و امتیازدهی چند-شخصیتی.
+
+سه شخصیت:
+    1 = محافظه‌کار (Conservative)
+    2 = متعادل (Balanced) — پیش‌فرض
+    3 = پرریسک (Aggressive)
+
+هر فرصت، ۳ امتیاز می‌گیرد. اگر فرصت در یک شخصیت رد شود، امتیاز آن -1 می‌شود.
+
+فرمول امتیازدهی (برگرفته از 0myStrategy/Bull_call_spread.py):
+    composite = (R30^w_r) × (M30^w_m)
+              × prob_survival
+              × (VQ/10)^0.3
+              × min(1, (M30/R30)^0.5)
+"""
+
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Union
+import math
+from typing import Dict, List, Any, Optional
+from scipy.stats import norm
 
-from scoring.metrics import calculate_all_metrics
-from config import RANKING_CONFIG, get_ranking_weights
-from scoring.liquidity_score import LiquidityScorer
-from core.enums import RankingProfile
-from core.models import Opportunity, ProfileScores, LegDefinition
+from core.models import Opportunity
 
-# تنظیم لوگر اختصاصی برای رنکر موازی
 logger = logging.getLogger("OptionScanner.Scoring.Ranker")
 
 
-@dataclass(slots=True)
-class RankingWeights:
-    """وزن‌های امتیازدهی بر اساس مشخصات رفتاری سرمایه‌گذار"""
-    risk_reward: float = 0.0
-    rom: float = 0.0
-    margin_efficiency: float = 0.0
-    max_profit: float = 0.0
-    max_loss: float = 0.0  # تاثیر معکوس (ریسک کمتر = امتیاز بیشتر)
+# ═══════════════════════════════════════════════════════════════
+# ضرایب ۳ شخصیت
+# ═══════════════════════════════════════════════════════════════
 
-
-# هماهنگ‌سازی ساختار پروفایل‌ها با دیتای ثابت سیستم
-PROFILES: Dict[RankingProfile, RankingWeights] = {
-    RankingProfile.CONSERVATIVE: RankingWeights(
-        risk_reward=0.10, rom=0.10, margin_efficiency=0.15, max_profit=0.05, max_loss=0.25
-    ),
-    RankingProfile.BALANCED: RankingWeights(
-        risk_reward=0.15, rom=0.20, margin_efficiency=0.15, max_profit=0.10, max_loss=0.15
-    ),
-    RankingProfile.AGGRESSIVE: RankingWeights(
-        risk_reward=0.15, rom=0.35, margin_efficiency=0.15, max_profit=0.15, max_loss=0.10
-    ),
-    RankingProfile.INCOME: RankingWeights(
-        risk_reward=0.10, rom=0.25, margin_efficiency=0.20, max_profit=0.05, max_loss=0.10
-    ),
-    RankingProfile.VOLATILITY: RankingWeights(
-        risk_reward=0.30, rom=0.15, margin_efficiency=0.05, max_profit=0.25, max_loss=0.15
-    ),
+PERSONALITY_WEIGHTS: Dict[int, Dict[str, Any]] = {
+    1: {
+        "key": "conservative",
+        "name": "محافظه‌کار",
+        "w_r": 0.25, "w_m": 0.75,
+        "min_monthly_return": 10.0,
+        "min_margin_floor": 25.0,
+        "min_m_risk": 2.5,
+        "min_rr_ratio": 0.20,
+    },
+    2: {
+        "key": "balanced",
+        "name": "متعادل",
+        "w_r": 0.40, "w_m": 0.60,
+        "min_monthly_return": 7.0,
+        "min_margin_floor": 20.0,
+        "min_m_risk": 2.0,
+        "min_rr_ratio": 0.10,
+    },
+    3: {
+        "key": "aggressive",
+        "name": "پرریسک",
+        "w_r": 0.60, "w_m": 0.40,
+        "min_monthly_return": 4.0,
+        "min_margin_floor": 12.0,
+        "min_m_risk": 1.2,
+        "min_rr_ratio": 0.0,
+    },
 }
 
+DEFAULT_PERSONALITY = 2
+PERSONALITY_ORDER = [1, 2, 3]
+
+# ثابت‌های محاسبه
+DEFAULT_SIGMA = 0.30
+VOL_QUALITY_POWER = 0.3
+IMBALANCE_POWER = 0.5
+T_DISPLAY_EPSILON = 0.02
+DAYS_IN_YEAR = 365
+
+
+# ═══════════════════════════════════════════════════════════════
+# کلاس اصلی
+# ═══════════════════════════════════════════════════════════════
 
 class OpportunityRanker:
-    """
-    موتور رتبه‌بندی و امتیازدهی موازی (Decision Support System)
-    
-    ویژگی‌های پیاده‌سازی شده:
-    ۱. حذف کامل رویکرد حذفی (No Discard Flow) جهت حفظ تمام پوزیشن‌ها برای DSS.
-    ۲. محاسبه همزمان امتیازات برای ۵ پروفایل رفتاری مختلف به صورت موازی.
-    ۳. پشتیبانی داینامیک از ورودی Dict و شیء دامنه‌ای Opportunity (ترازبندی قراردادها).
-    ۴. 🆕 ادغام امتیاز Cobb-Douglas (نقطه‌ای) با پروفایل‌های موجود.
-    """
+    """موتور رتبه‌بندی سه‌شخصیتی."""
 
-    def __init__(self, default_profile: RankingProfile = RankingProfile.BALANCED):
-        """ایجاد رنکر موازی با مشخص کردن پروفایل مبنا برای مرتب‌سازی نهایی"""
-        self.default_profile = default_profile
-        self.profile_weights: Dict[RankingProfile, RankingWeights] = {}
-        self._load_all_profile_weights()
+    __slots__ = ("default_personality",)
 
-    def _load_all_profile_weights(self) -> None:
-        """بارگذاری موازی تمام وزن‌ها از فایل کانفیگ با مکانیزم Fallback ایمن"""
-        for profile in RankingProfile:
-            try:
-                weights_dict = get_ranking_weights(profile.value)
-                self.profile_weights[profile] = RankingWeights(
-                    risk_reward=weights_dict.get("risk_reward", PROFILES[profile].risk_reward),
-                    rom=weights_dict.get("rom", PROFILES[profile].rom),
-                    margin_efficiency=weights_dict.get("margin_efficiency", PROFILES[profile].margin_efficiency),
-                    max_profit=weights_dict.get("max_profit", PROFILES[profile].max_profit),
-                    max_loss=weights_dict.get("max_loss", PROFILES[profile].max_loss),)
-            except Exception:
-                # استفاده از هاردکد ثابت در صورت عدم وجود تنظیمات بیرونی
-                self.profile_weights[profile] = PROFILES[profile]
+    def __init__(self, default_personality: int = DEFAULT_PERSONALITY):
+        self.default_personality = default_personality
 
-    def rank_opportunities(self, raw_opportunities: List[Union[Dict[str, Any], Opportunity]]) -> List[Opportunity]:
-        """پردازش، ارزیابی چندبعدی و رتبه‌بندی داینامیک فرصت‌های بازار بدون فیلترینگ صلب"""
-        if not raw_opportunities:
-            return []
-        
-        # شناسایی و ثبت وضعیت نوع ورودی برای مانیتورینگ سیستم
-        processed_opportunities: List[Opportunity] = []
+    # ═══════════════════════════════════════════════════════════
+    # Public API
+    # ═══════════════════════════════════════════════════════════
 
-        for opp_data in raw_opportunities:
-            opportunity = self._analyze_and_score_single(opp_data)
-            if opportunity is not None:
-                processed_opportunities.append(opportunity)
-
-        if not processed_opportunities:
-            return []
-
-        # استخراج پویا نام خصوصیات بر اساس مقدار رشته‌ای انوم (e.g., 'conservative')
-        profile_attr = self.default_profile.value.lower()
-
-        # ۱. مرتب‌سازی کل لایه بر اساس خصوصیات پروفایل انتخابی کاربر
-        processed_opportunities.sort(
-            key=lambda x: getattr(x.profile_scores, profile_attr, x.profile_scores.balanced), 
-            reverse=True)
-
-        # ۲. تزریق رتبه پویا (Rank) و تراز کردن فیلد نهایی نهایی سیستم (final_score)
-        for i, opp in enumerate(processed_opportunities, 1):
-            opp.rank = i
-            opp.final_score = getattr(opp.profile_scores, profile_attr, opp.profile_scores.balanced)
-
-        logger.info(f"Ranking layer processing complete. Ranked {len(processed_opportunities)} opportunities.")
-        return processed_opportunities
-
-    def _analyze_and_score_single(self, opp: Union[Dict[str, Any], Opportunity]) -> Optional[Opportunity]:
-        """تبدیل، استخراج متادیتا و غنی‌سازی چندبعدی شاخص‌های پوزیشن با ایمن‌سازی لبه‌های خطا"""
-        is_dict = isinstance(opp, dict)
-        
-        # ============================================================
-        # ۱. استخراج و نرمال‌سازی متادیتا و خصوصیات پایه
-        # ============================================================
-        if is_dict:
-            metadata = opp.get('metadata', {})
-            if not isinstance(metadata, dict) or not metadata:
-                metadata = opp
-        else:
-            metadata = getattr(opp, 'metadata', {})
-            if not isinstance(metadata, dict) or not metadata:
-                metadata = {}
-                # تبدیل فیلدهای شیء به دیکشنری بک‌آپ جهت استفاده یکپارچه در لایه‌های پایین
-                for key in ['strategy_name', 'underlying_ticker', 'max_profit', 'max_loss', 
-                            'net_premium', 'required_margin', 'risk_reward_ratio', 
-                            'expected_return_pct', 'max_profit_pct', 'max_loss_pct',
-                            'liquidity_score', 'days_to_maturity']:
-                    if hasattr(opp, key):
-                        metadata[key] = getattr(opp, key)
-        
-        # استخراج امن آرایه سود و زیان (Payoff Profile)
-        profits = self._extract_profits(opp, metadata, is_dict)
-        if not profits:
-            # اگر ورودی شیء کلاسی بود خود را پاس بده تا زنجیره قطع نشود؛ اگر دیکشنری خام بود دیتای نامعتبر است
-            return opp if not is_dict else None
-        
-        expected_return = self._extract_value(opp, metadata, 'expected_return_pct', is_dict, 0.0)
-        margin = self._extract_value(opp, metadata, 'required_margin', is_dict, 0.0)
-        days = self._extract_value(opp, metadata, 'days_to_maturity', is_dict, 0)
-        strategy_name = self._extract_value(opp, metadata, 'strategy_name', is_dict, 'unknown')
-        underlying_ticker = self._extract_value(opp, metadata, 'underlying_ticker', is_dict, 
-                             self._extract_value(opp, metadata, 'ticker', is_dict, ''))
-        
-        # ============================================================
-        # ۲. محاسبه شاخص‌های آماری پایه از لایه ریاضیات محاسباتی
-        # ============================================================
-        metrics = calculate_all_metrics(profits, expected_return, margin, days)
-
-        # ============================================================
-        # ۳. نرمالایز کردن استاندارد فاکتورها (بازه صفر تا ۱۰۰)
-        # ============================================================
-        risk_reward_norm = min(metrics.risk_reward_ratio * 20, 100.0)
-        rom_norm = min(metrics.rom * 10, 100.0)
-        margin_eff_norm = min(metrics.margin_efficiency * 1000, 100.0)
-        max_profit_norm = min(metrics.max_profit * 2, 100.0)
-        max_loss_norm = min(abs(metrics.max_loss) * 2, 100.0)
-
-        # ============================================================
-        # ۴. محاسبه موازی امتیازها برای تک‌تک پروفایل‌های سرمایه‌گذاری
-        # ============================================================
-        scores = {}
-        for profile in RankingProfile:
-            w = self.profile_weights[profile]
-            score = (
-                risk_reward_norm * w.risk_reward +
-                rom_norm * w.rom +
-                margin_eff_norm * w.margin_efficiency +
-                max_profit_norm * w.max_profit +
-                (100.0 - max_loss_norm) * w.max_loss)
-            scores[profile] = round(score, 2)
-
-        # محاسبه امتیاز نقدشوندگی
-        liquidity_score = self._calculate_liquidity_score(opp, is_dict)
-
-        # ساختاردهی به خروجی مدل امتیازات
-        profile_scores = ProfileScores(
-            conservative=scores[RankingProfile.CONSERVATIVE],
-            balanced=scores[RankingProfile.BALANCED],
-            aggressive=scores[RankingProfile.AGGRESSIVE],
-            income=scores[RankingProfile.INCOME],
-            volatility=scores[RankingProfile.VOLATILITY])
-
-        # ============================================================
-        # ۵. تزریق به شیء موجود یا قالب‌بندی دیکشنری ورودی به مدل جدید
-        # ============================================================
-        if not is_dict:
-            # اعمال مستقیم روی ارجاع شیء دامنه هسته سیستم
-            opp.profile_scores = profile_scores
-            opp.liquidity_score = round(liquidity_score, 2)
-            opp.max_profit = metrics.max_profit
-            opp.max_loss = metrics.max_loss
-            opp.risk_reward_ratio = metrics.risk_reward_ratio
-            opp.expected_return_pct = expected_return
-            opp.required_margin = margin
-            
-            # غنی‌سازی ساختار لایه دیکشنری داخلی متادیتا جهت استفاده شیت اکسل
-            if hasattr(opp, 'metadata') and isinstance(opp.metadata, dict):
-                opp.metadata['risk_reward_ratio'] = metrics.risk_reward_ratio
-                opp.metadata['rom'] = metrics.rom
-                opp.metadata['margin_efficiency'] = metrics.margin_efficiency
-            
-            return opp
-        else:
-            # کار با ساختار دیکشنری قدیمی و ساخت نمونه تازه از کلاس دامنه‌ای
-            return self._create_opportunity_from_dict(
-                opp, metadata, profile_scores, liquidity_score, metrics, 
-                strategy_name, underlying_ticker, days
-            )
-
-    def _extract_profits(self, opp: Union[Dict, Opportunity], metadata: Dict, is_dict: bool) -> List[float]:
-        """استخراج آرایه پپ‌آف از نوع داده با مدیریت ساختارهای نامتوازن"""
-        if is_dict:
-            profits = metadata.get('net_profits_closed', [])
-            if not profits: profits = opp.get('net_profits_closed', [])
-            if not profits: profits = metadata.get('profits', [])
-            if not profits: profits = opp.get('profits', [])
-            return profits
-        else:
-            # اول از metadata که payoff_calculator آنجا ذخیره کرده
-            if hasattr(opp, 'metadata') and isinstance(opp.metadata, dict):
-                profits = opp.metadata.get('net_profits_closed', [])
-                if profits:
-                    return profits
-            # fallback به attribute مستقیم
-            profits = getattr(opp, 'net_profits_closed', [])
-            if not profits:
-                profits = getattr(opp, 'profits', [])
-            return profits
-
-    def _extract_value(self, opp: Union[Dict, Opportunity], metadata: Dict, key: str, 
-                       is_dict: bool, default: Any) -> Any:
-        """استخراج مقدار کلید بر اساس معماری لایه‌ای تراز شده"""
-        if is_dict:
-            return metadata.get(key, opp.get(key, default))
-        else:
-            if hasattr(opp, key):
-                return getattr(opp, key, default)
-            if hasattr(opp, 'metadata') and isinstance(opp.metadata, dict):
-                return opp.metadata.get(key, default)
-            if hasattr(opp, 'raw_scores') and isinstance(opp.raw_scores, dict):
-                return opp.raw_scores.get(key, default)
-            return default
-
-    def _calculate_liquidity_score(self, opp: Union[Dict, Opportunity], is_dict: bool) -> float:
-        """محاسبه ماتریس نقدشوندگی بازار آپشن بر اساس حجم معاملات و آپن اینترست لگ‌ها"""
-        try:
-            legs = opp.get('legs', []) if is_dict else getattr(opp, 'legs', [])
-            metadata = opp.get('metadata', {}) if is_dict else getattr(opp, 'metadata', {})
-            
-            if not legs:
-                return 0.0
-            
-            contract_scores = metadata.get('contract_scores', {}) if isinstance(metadata, dict) else {}
-            
-            if not contract_scores:
-                for leg in legs:
-                    contract = leg.get('contract') if isinstance(leg, dict) else getattr(leg, 'contract', None)
-                    if contract:
-                        is_c_dict = isinstance(contract, dict)
-                        ticker = contract.get('ticker', '') if is_c_dict else getattr(contract, 'ticker', '')
-                        volume = contract.get('volume', 0) if is_c_dict else getattr(contract, 'volume', 0)
-                        oi = contract.get('open_interest', 0) if is_c_dict else getattr(contract, 'open_interest', 0)
-                        
-                        if ticker:
-                            score = min(volume / 100, 1.0) * 30 + min(oi / 50, 1.0) * 25
-                            contract_scores[ticker] = score
-            
-            leg_defs = []
-            for leg in legs:
-                if isinstance(leg, LegDefinition):
-                    leg_defs.append(leg)
-                elif isinstance(leg, dict):
-                    leg_defs.append(LegDefinition(
-                        contract=leg.get('contract'),
-                        side=leg.get('side'),
-                        ratio=leg.get('ratio', 1)
-                    ))
-                elif hasattr(leg, 'contract'):
-                    leg_defs.append(leg)
-            
-            return LiquidityScorer.score_strategy(leg_defs, contract_scores)
-            
-        except Exception as e:
-            logger.debug(f"Non-critical issue inside liquidity score routing: {e}")
-            return 0.0
-
-    def _create_opportunity_from_dict(self, opp: Dict, metadata: Dict, profile_scores: ProfileScores,
-                                       liquidity_score: float, metrics, strategy_name: str,
-                                       underlying_ticker: str, days: int) -> Opportunity:
-        """کارخانه شیءسازی داخلی لایه رنکر برای ورودی‌های دیکشنری خام"""
-        raw_legs = opp.get('legs', [])
-        leg_definitions: List[LegDefinition] = []
-        
-        for leg in raw_legs:
-            if isinstance(leg, LegDefinition):
-                leg_definitions.append(leg)
-            elif isinstance(leg, dict):
-                leg_definitions.append(LegDefinition(
-                    contract=leg.get('contract'),
-                    side=leg.get('side'),
-                    ratio=leg.get('ratio', 1),
-                ))
-        
-        return Opportunity(
-            strategy_name=strategy_name,
-            underlying_ticker=underlying_ticker,
-            legs=leg_definitions,
-            days_to_maturity=days,
-            net_premium=opp.get('net_premium', 0.0),
-            max_profit=metrics.max_profit,
-            max_loss=metrics.max_loss,
-            break_even_points=metadata.get('break_even_points', []),
-            required_margin=opp.get('required_margin', 0.0),
-            risk_reward_ratio=metrics.risk_reward_ratio,
-            expected_return_pct=opp.get('expected_return_pct', 0.0),
-            max_profit_pct=opp.get('max_profit_pct', 0.0),
-            max_loss_pct=opp.get('max_loss_pct', 0.0),
-            liquidity_score=round(liquidity_score, 2),
-            profile_scores=profile_scores,
-            metadata=metadata
-        )
-
-    def _calculate_liquidity_score_for_opportunity(self, opp: Dict[str, Any]) -> float:
-        """متد موروثی و سازگار نگهداری شده برای کدهای قدیمی لایه‌های بالا"""
-        return self._calculate_liquidity_score(opp, True)
-
-    # ═════════════════════════════════════════════════════════════
-    # 🆕 متد جدید: ادغام امتیاز نقطه‌ای (Cobb-Douglas)
-    # ═════════════════════════════════════════════════════════════
-
-    def add_point_scores(
-        self,
-        opportunities: List[Opportunity],
-        w_r: float = 0.4,
-        w_m: float = 0.6,
-    ) -> List[Opportunity]:
-        """
-        افزودن شاخص‌های نقطه‌ای (R30، M30، سربه‌سر) و امتیاز Cobb-Douglas
-        به Opportunity های از قبل رتبه‌بندی‌شده.
-
-        این متد profile_scores را دست نمی‌زند - فقط metadata را غنی می‌کند.
-
-        Args:
-            opportunities: لیست Opportunity (باید قبلاً rank شده باشند)
-            w_r: وزن R30 در Cobb-Douglas
-            w_m: وزن M30 در Cobb-Douglas
-
-        Returns:
-            همان لیست (به‌روزرسانی‌شده)
-        """
+    def rank_opportunities(self, opportunities: List[Opportunity]) -> List[Opportunity]:
         if not opportunities:
             return []
 
-        try:
-            from scoring.point_analyzer import enrich_opportunity
-        except ImportError as e:
-            logger.warning("Cannot import point_analyzer: %s", e)
-            return opportunities
-
-        count = 0
+        scored = []
         for opp in opportunities:
-            try:
-                enrich_opportunity(opp, w_r=w_r, w_m=w_m)
-                count += 1
-            except Exception as e:
-                logger.warning(
-                    "add_point_scores failed for %s: %s",
-                    getattr(opp, 'strategy_name', '?'),
-                    e,
-                )
+            result = self._score_opportunity(opp)
+            if result is not None:
+                scored.append(result)
 
-        logger.info(
-            "Point scores added to %d/%d opportunities",
-            count, len(opportunities)
-        )
-        return opportunities
-
-    # ═════════════════════════════════════════════════════════════
-    # 🆕 متد کمکی: دریافت Opportunity ها بر اساس composite_score
-    # ═════════════════════════════════════════════════════════════
-
-    def sort_by_composite_score(
-        self,
-        opportunities: List[Opportunity],
-        descending: bool = True,
-    ) -> List[Opportunity]:
-        """
-        مرتب‌سازی Opportunity ها بر اساس composite_score (Cobb-Douglas).
-
-        Args:
-            opportunities: لیست Opportunity (باید enrich شده باشند)
-            descending: اگر True، نزولی (بیشترین امتیاز اول)
-
-        Returns:
-            لیست مرتب‌شده
-        """
-        if not opportunities:
+        if not scored:
             return []
 
-        try:
-            opportunities.sort(
-                key=lambda o: float(
-                    getattr(o, 'metadata', {}).get(
-                        'composite_score', 0.0) or 0.0
-                ),
-                reverse=descending,
-            )
-        except Exception as e:
-            logger.warning("sort_by_composite_score failed: %s", e)
+        # مرتب‌سازی بر اساس شخصیت پیش‌فرض
+        default_key = PERSONALITY_WEIGHTS[self.default_personality]["key"]
+        scored.sort(
+            key=lambda o: o.scores.get(default_key, -1.0),
+            reverse=True,
+        )
 
-        return opportunities
+        # تعیین rank و final_score
+        for i, opp in enumerate(scored, 1):
+            opp.rank = i
+            opp.final_score = opp.scores.get(default_key, 0.0)
 
-    # ═════════════════════════════════════════════════════════════
-    # متدهای موجود (دست‌نخورده)
-    # ═════════════════════════════════════════════════════════════
+        logger.info(f"Ranked {len(scored)} opportunities (3 personalities)")
+        return scored
 
-    def get_top_n(self, ranked_opportunities: List[Opportunity], n: int = 100) -> List[Opportunity]:
-        """انتخاب سطرهای برتر جهت مانیتورینگ اولیه یا کنترل موضعی فلو"""
-        return ranked_opportunities[:n]
+    def get_top_n(self, ranked: List[Opportunity], n: int = 100) -> List[Opportunity]:
+        return ranked[:n]
 
-    def get_summary(self, ranked_opportunities: List[Opportunity]) -> Dict[str, Any]:
-        """تولید گزارش متمرکز و آماری از کل فرصت‌های رتبه‌بندی شده نهایی بازار"""
-        if not ranked_opportunities:
-            return {
-                "total": 0, "avg_score": 0, "max_score": 0, "min_score": 0, 
-                "avg_liquidity": 0, "strategies": {}
+    def get_summary(self, ranked: List[Opportunity]) -> Dict[str, Any]:
+        if not ranked:
+            return {"total": 0, "by_personality": {}}
+
+        by_p = {}
+        for p in PERSONALITY_ORDER:
+            key = PERSONALITY_WEIGHTS[p]["key"]
+            valid = [o for o in ranked if o.scores.get(key, -1.0) > 0]
+            by_p[key] = {
+                "count": len(valid),
+                "avg_score": round(
+                    sum(o.scores[key] for o in valid) / len(valid), 2
+                ) if valid else 0.0,
             }
+        return {"total": len(ranked), "by_personality": by_p}
 
-        scores = [opp.final_score for opp in ranked_opportunities]
-        liquidity_scores = [opp.liquidity_score for opp in ranked_opportunities]
+    # ═══════════════════════════════════════════════════════════
+    # Scoring
+    # ═══════════════════════════════════════════════════════════
 
-        strategy_stats = {}
-        for opp in ranked_opportunities:
-            name = opp.strategy_name
-            if name not in strategy_stats:
-                strategy_stats[name] = {"count": 0, "avg_score": 0, "total_score": 0}
-            strategy_stats[name]["count"] += 1
-            strategy_stats[name]["total_score"] += opp.final_score
+    def _score_opportunity(self, opp: Opportunity) -> Optional[Opportunity]:
+        metadata = opp.metadata or {}
 
-        for name in strategy_stats:
-            strategy_stats[name]["avg_score"] = round(
-                strategy_stats[name]["total_score"] / strategy_stats[name]["count"], 2
+        R30 = float(metadata.get("R30", 0.0))
+        M30 = float(metadata.get("M30", 0.0))
+        raw_margin = float(metadata.get("raw_margin_percent", 0.0))
+        HV_60 = metadata.get("HV_60", None)
+        VQ = metadata.get("VQ", None)
+        rr_ratio = float(
+            metadata.get("risk_reward_ratio", 0.0)
+            or opp.risk_reward_ratio
+            or 0.0
+        )
+        days = int(opp.days_to_maturity or 30)
+
+        # محاسبات مشترک
+        M_risk = self._calculate_m_risk(raw_margin, days, HV_60)
+        prob_survival = float(norm.cdf(M_risk))
+
+        metadata["M_risk"] = round(M_risk, 4)
+        metadata["prob_survival"] = round(prob_survival, 4)
+
+        # امتیازدهی برای هر شخصیت
+        scores: Dict[str, float] = {}
+        for p in PERSONALITY_ORDER:
+            w = PERSONALITY_WEIGHTS[p]
+            if not self._passes_hard_filters(R30, M30, M_risk, rr_ratio, w):
+                scores[w["key"]] = -1.0
+                continue
+            scores[w["key"]] = self._calculate_composite(
+                R30=R30,
+                M30=M30,
+                prob_survival=prob_survival,
+                VQ=VQ,
+                w_r=w["w_r"],
+                w_m=w["w_m"],
             )
-            del strategy_stats[name]["total_score"]
 
-        return {
-            "total": len(ranked_opportunities),
-            "avg_score": round(sum(scores) / len(scores), 2),
-            "max_score": round(max(scores), 2),
-            "min_score": round(min(scores), 2),
-            "avg_liquidity": round(sum(liquidity_scores) / len(liquidity_scores), 2),
-            "strategies": strategy_stats
-        }
+        # اگر همه رد شدند
+        if all(s == -1.0 for s in scores.values()):
+            return None
+
+        opp.scores = scores
+        opp.metadata = metadata
+        return opp
+
+    @staticmethod
+    def _calculate_m_risk(raw_margin_percent, days, HV_60) -> float:
+        """
+        محاسبه‌ی M_risk (Z-Score).
+        
+        فرمول:
+            M_risk = (raw_margin / 100) / (sigma × sqrt(T/365))
+        """
+        sigma = float(HV_60) if HV_60 and HV_60 > 0 else DEFAULT_SIGMA
+        sigma = max(0.05, min(sigma, 2.0))
+        days_safe = max(float(days), T_DISPLAY_EPSILON)
+        raw_fraction = raw_margin_percent / 100.0
+        denom = sigma * math.sqrt(days_safe / DAYS_IN_YEAR)
+        return raw_fraction / denom if denom > 0 else 0.0
+
+    @staticmethod
+    def _calculate_composite(
+        R30: float,
+        M30: float,
+        prob_survival: float,
+        VQ: Optional[float],
+        w_r: float,
+        w_m: float,
+    ) -> float:
+        """
+        محاسبه‌ی امتیاز نهایی (فرمول کامل 0myStrategy).
+
+        فرمول:
+            composite = (R30^w_r) × (M30^w_m)
+                      × prob_survival
+                      × (VQ/10)^0.3
+                      × min(1, (M30/R30)^0.5)
+
+        اجزا:
+            - Cobb-Douglas: (R30^w_r) × (M30^w_m)
+            - prob_survival: احتمال بقا از توزیع نرمال
+            - vol_factor: ضریب کیفیت نوسان از VQ
+            - imbalance_factor: نسبت عدم‌تعادل M30/R30
+        """
+        # ─── ۱. مقادیر ایمن ────────────────────────────
+        R30_safe = max(float(R30), 0.1)
+        M30_safe = max(float(M30), 0.1)
+
+        # ─── ۲. Cobb-Douglas ────────────────────────────
+        score_cd = (R30_safe ** w_r) * (M30_safe ** w_m)
+
+        # ─── ۳. ضریب VQ ─────────────────────────────────
+        vq_val = float(VQ) if VQ is not None else 5.0
+        vq_val = max(0.0, min(vq_val, 10.0))
+        vol_factor = (vq_val / 10.0) ** VOL_QUALITY_POWER
+
+        # ─── ۴. ضریب عدم‌تعادل (imbalance) ───────────────
+        # هرچه M30/R30 بیشتر باشد، تعادل بهتر است.
+        # ولی اگر M30/R30 بزرگ باشد، یعنی حاشیه امنیت خیلی بیشتر از سود است
+        # که ممکن است نشانه‌ی فرصت خیلی محافظه‌کارانه باشد.
+        ratio = M30_safe / R30_safe
+        imbalance = min(1.0, ratio ** IMBALANCE_POWER)
+
+        # ─── ۵. امتیاز نهایی ─────────────────────────────
+        composite = score_cd * prob_survival * vol_factor * imbalance
+
+        return round(composite, 4)
+
+    @staticmethod
+    def _passes_hard_filters(R30, M30, M_risk, rr_ratio, w) -> bool:
+        """
+        بررسی عبور از فیلترهای سخت.
+
+        هر شخصیت، فیلترهای خودش را دارد.
+        """
+        if R30 < w["min_monthly_return"]:
+            return False
+        if M30 < w["min_margin_floor"]:
+            return False
+        if M_risk < w["min_m_risk"]:
+            return False
+        if rr_ratio < w["min_rr_ratio"]:
+            return False
+        return True

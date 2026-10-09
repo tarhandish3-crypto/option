@@ -50,7 +50,7 @@ from api_server import run_api_server_threaded
 # تنظیمات
 # ═══════════════════════════════════════════════════════════════
 
-API_URL = "http://127.0.0.1:8000"
+API_URL = "http://127.0.0.1:8001"
 DEFAULT_REFRESH_SEC = 3          # ⏱ سریع‌تر (چون فقط یک استراتژی محاسبه می‌شود)
 DEFAULT_STRATEGY = 'bull_call_spread'
 

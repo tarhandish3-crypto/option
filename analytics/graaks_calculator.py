@@ -719,11 +719,6 @@ def calculate_implied_volatility_vectorized(df: pd.DataFrame, r_f: float) -> pd.
     iv_values = np.clip(iv_values, 0.01, 5.0)
     df['ImpliedVolatility'] = iv_values
 
-    if 'Volatility' in df.columns:
-        hv_safe = np.where(df['Volatility'] <= 0, 0.01, df['Volatility'])
-        df['IV_HV_Ratio'] = np.clip(
-            df['ImpliedVolatility'] / hv_safe, 0.1, 100.0)
-
     logger.debug(
         f"IV calculated for {valid_count} contracts using Brent's method")
     return df

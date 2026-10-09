@@ -291,7 +291,7 @@ class DevToolsSnippetServer:
         def get_pending_order():
             """Snippet این را poll می‌کند."""
             with self._lock:
-                return {"order": self._pending}
+                return {"pending_order": self._pending}
 
         # ─── ۴. /ack-order ───
         @app.post("/ack-order")

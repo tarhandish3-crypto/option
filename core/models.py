@@ -70,7 +70,7 @@ class OptionContract:
     last_price: float = 0.0                   # آخرین قیمت معامله شده
     close_price: float = 0.0                  # قیمت پایانی جلسه قبل
     underlying_price: float = 0.0             # قیمت لحظه‌ای دارایی پایه
-    underlying_ClosingPrice: float = 0.0       # قیمت پابانی دارایی پایه
+    underlying_ClosingPrice: float = 0.0       # قیمت پایانی دارایی پایه
     yesterday_price: float = 0.0              # قیمت دیروز قرارداد
 
     # ===== حجم و ارزش =====
@@ -89,12 +89,10 @@ class OptionContract:
     vega: Optional[float] = None
     rho: Optional[float] = None
     implied_volatility: Optional[float] = None
-    iv_hv_ratio: float = 1.0
 
     # ===== کدهای داخلی سازمان بورس =====
-    # کد ابزار (شناسه یکتای سجام/بورس)
     instrument_code: str = ""
-    instrument_code_ua: str = ""              # کد ابزار دارایی پایه
+    instrument_code_ua: str = ""
 
     def __post_init__(self):
         if self.days_to_maturity < 0:
@@ -130,12 +128,16 @@ class OptionContract:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            'ticker': self.ticker, 'name': self.name, 'underlying_ticker': self.underlying_ticker,
+            'ticker': self.ticker, 'name': self.name,
+            'underlying_ticker': self.underlying_ticker,
             'option_type': self.option_type.value if isinstance(self.option_type, Enum) else self.option_type,
             'strike_price': self.strike_price, 'contract_size': self.contract_size,
             'days_to_maturity': self.days_to_maturity, 'bid': self.bid, 'ask': self.ask,
-            'last_price': self.last_price, 'underlying_price': self.underlying_price, 'underlying_ClosingPrice': self.underlying_ClosingPrice, 'volume': self.volume,
-            'open_interest': self.open_interest, 'iv': self.iv, 'delta': self.delta, 'instrument_code': self.instrument_code
+            'last_price': self.last_price, 'underlying_price': self.underlying_price,
+            'underlying_ClosingPrice': self.underlying_ClosingPrice,
+            'volume': self.volume,
+            'open_interest': self.open_interest, 'iv': self.iv,
+            'delta': self.delta, 'instrument_code': self.instrument_code
         }
 
 
@@ -155,14 +157,12 @@ class LegDefinition:
 
     @property
     def option_type(self) -> Optional[OptionType]:
-        """دریافت نوع اختیار از قرارداد متصل"""
         if self.contract is None:
             return None
         return self.contract.option_type
 
     @property
     def is_stock_leg(self) -> bool:
-        """تشخیص خودکار سهم پایه بدون نیاز به فلگ صلب فیلدها"""
         if self.contract is None:
             return False
         return self.contract.option_type == OptionType.STOCK
@@ -178,84 +178,22 @@ class LegDefinition:
             'is_stock_leg': self.is_stock_leg,
             'option_type': self.option_type.value if self.option_type else None,
             'contract': self.contract.to_dict() if self.contract else None,
-            'entry_price': self.entry_price}
+            'entry_price': self.entry_price
+        }
 
 
 # =====================================================
-# ساختارهای داده‌ای آنالیز واسط خط لوله (Pipeline Intermediate Results)
+# ساختارهای داده‌ای آنالیز واسط (Pipeline Intermediate Results)
 # =====================================================
 
 @dataclass(slots=True)
 class PayoffAnalysis:
-    """حامل مستقل نتایج محاسبات ماتریسی بازدهی و نقاط سربی‌سر (خروجی PayoffCalculator)"""
+    """حامل مستقل نتایج محاسبات ماتریسی بازدهی و نقاط سربه‌سر (خروجی PayoffCalculator)"""
     returns_pct: np.ndarray = field(compare=False, repr=False)
     net_premium: float = 0.0
     max_profit: float = 0.0
     max_loss: float = 0.0
     break_even_points: List[float] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class EvaluationMetrics:
-    """حامل داده‌ای امتیازات ریسک، مارجین و نقدشوندگی استخراج‌شده در خط لوله جریانی"""
-    required_margin: float = 0.0
-    liquidity_score: float = 0.0
-    risk_reward_ratio: float = 0.0
-    expected_return_pct: float = 0.0
-
-
-@dataclass(slots=True)
-class ProfileScores:
-    """ساختار متمرکز امتیازدهی موازی متناسب با الگوهای مختلف رفتاری معامله‌گران"""
-    conservative: float = 0.0
-    balanced: float = 0.0
-    aggressive: float = 0.0
-    income: float = 0.0
-    volatility: float = 0.0
-
-    def to_dict(self) -> Dict[str, float]:
-        return {'conservative': self.conservative, 'balanced': self.balanced, 'aggressive': self.aggressive, 'income': self.income, 'volatility': self.volatility}
-
-    def get_active_score(self, profile: str = 'balanced') -> float:
-        """دریافت امتیاز پروفایل فعال (پیش‌فرض: balanced)"""
-        return getattr(self, profile, 0.0)
-
-
-# =====================================================
-# کاندیدای سبک استراتژی (Opportunity Candidate)
-# =====================================================
-
-@dataclass(slots=True)
-class OpportunityCandidate:
-    """
-    کاندیدای سبک و خالص استراتژی برای خط لوله جریانی (Streaming Pipeline).
-    کاملاً بیونیک، فاقد محاسبات تو در تو و بهینه‌سازی شده برای فیلترهای لایه اول.
-    """
-    strategy_name: str
-    underlying_ticker: str
-    underlying: UnderlyingAsset
-    legs: tuple[LegDefinition, ...]
-    reference_dte: int  # رفع ایراد چهارم: تعیین DTE مرجع بر اساس منطق اختصاصی ژنراتور استراتژی
-
-    # رفع ایراد اول و هفتم: کپسوله‌سازی نتایج آنالیزها به جای پهن کردن فیلدها در سطح کاندیدا
-    analysis: Optional[PayoffAnalysis] = field(
-        default=None, compare=False, repr=False)
-    metrics: Optional[EvaluationMetrics] = field(
-        default=None, compare=False, repr=False)
-
-    @property
-    def strategy_key(self) -> tuple:
-        """
-        رفع ایراد سوم: تولید کلید یکتای کاملاً امن برای استراتژی‌های پیچیده چند سررسیدی (Calendar Spreads)
-        با ترکیب نماد، قیمت اعمال، روز تا سررسید، موقعیت و ضریب هر لگ.
-        """
-        return (
-            self.strategy_name,
-            self.underlying_ticker,
-            tuple(
-                (leg.contract.ticker, leg.contract.strike_price,
-                 leg.contract.days_to_maturity, leg.side, leg.ratio)
-                for leg in self.legs if leg.contract))
 
 
 # =====================================================
@@ -264,7 +202,16 @@ class OpportunityCandidate:
 
 @dataclass(slots=True)
 class Opportunity:
-    """مدل جامع یک موقعیت معاملاتی کشف، ارزیابی و رتبه‌بندی شده نهایی برای کلاینت"""
+    """
+    مدل جامع یک موقعیت معاملاتی کشف، ارزیابی و رتبه‌بندی شده نهایی.
+
+    امتیازدهی سه‌شخصیتی:
+        scores = {
+            'conservative': امتیاز شخص محافظه‌کار (یا -1.0 اگر رد شده),
+            'balanced':     امتیاز شخص متعادل,
+            'aggressive':   امتیاز شخص پرریسک,
+        }
+    """
     strategy_name: str
     underlying_ticker: str
     legs: List[LegDefinition]
@@ -277,7 +224,9 @@ class Opportunity:
     max_loss: float = 0.0
     break_even_points: List[float] = field(default_factory=list)
     returns_monthly_pct: np.ndarray = field(
-        default_factory=lambda: np.array([], dtype=float), compare=False, repr=False)
+        default_factory=lambda: np.array([], dtype=float),
+        compare=False, repr=False
+    )
 
     # ===== معیارهای سرمایه و نقدشوندگی =====
     required_margin: float = 0.0
@@ -287,9 +236,13 @@ class Opportunity:
     liquidity_score: float = 0.0
     execution_score: float = 0.0
 
-    # ===== امتیازدهی هوشمند (DSS) =====
-    profile_scores: ProfileScores = field(default_factory=ProfileScores)
-    final_score: float = 0.0
+    # ===== امتیازدهی سه‌شخصیتی =====
+    # مقادیر کلیدها: 'conservative', 'balanced', 'aggressive'
+    # مقدار -1.0 به معنی رد شدن در آن شخصیت است
+    scores: Dict[str, float] = field(default_factory=dict)
+
+    # ===== رتبه‌بندی و متادیتا =====
+    final_score: float = 0.0   # = scores['balanced']
     rank: int = 0
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -308,47 +261,12 @@ class Opportunity:
             "risk_reward_ratio": self.risk_reward_ratio,
             "expected_return_pct": self.expected_return_pct,
             "liquidity_score": self.liquidity_score,
-            "profile_scores": self.profile_scores.to_dict(),
+            "scores": dict(self.scores),
             "final_score": self.final_score,
             "rank": self.rank,
             "timestamp": self.timestamp.isoformat(),
             "legs": [leg.to_dict() for leg in self.legs],
         }
-
-    @classmethod
-    def from_candidate(cls, candidate: OpportunityCandidate, contract_size: Optional[int] = None) -> Opportunity:
-        """
-        رفع ایراد پنجم و ششم: تبدیل خالص کارخانه‌ای (Factory Method) بدون محاسبات سنگین داخلی.
-        محاسبه پرمیوم کل بر اساس اندازه قرارداد معتبر انجام می‌شود تا از وابستگی به مقادیر ثابت هاردکد رها شویم.
-        """
-        analysis = candidate.analysis if candidate.analysis is not None else PayoffAnalysis(
-            np.array([]))
-        metrics = candidate.metrics if candidate.metrics is not None else EvaluationMetrics()
-
-        # استخراج هوشمند ضریب قرارداد از اولین لگ معتبر آپشن در صورت عدم پاس شدن ورودی
-        if contract_size is None:
-            option_legs = [
-                leg for leg in candidate.legs if leg.contract and leg.contract.option_type != OptionType.STOCK]
-            contract_size = option_legs[0].contract.contract_size if option_legs else 1000
-
-        return cls(
-            strategy_name=candidate.strategy_name,
-            underlying_ticker=candidate.underlying_ticker,
-            legs=list(candidate.legs),
-            S0_stock=candidate.underlying.last_price,
-            days_to_maturity=candidate.reference_dte,
-            net_premium=analysis.net_premium,
-            max_profit=analysis.max_profit,
-            max_loss=analysis.max_loss,
-            break_even_points=analysis.break_even_points,
-            returns_monthly_pct=analysis.returns_pct,
-            required_margin=metrics.required_margin,
-            total_premium=analysis.net_premium * contract_size,
-            risk_reward_ratio=metrics.risk_reward_ratio,
-            expected_return_pct=metrics.expected_return_pct,
-            liquidity_score=metrics.liquidity_score,
-            timestamp=datetime.now()
-        )
 
 
 @dataclass(slots=True)
@@ -358,7 +276,6 @@ class ScanResult:
     total_strategies_scanned: int = 0
     total_combinations_generated: int = 0
     total_combinations_filtered: int = 0
-    candidates: List[OpportunityCandidate] = field(default_factory=list)
     opportunities: List[Opportunity] = field(default_factory=list)
     execution_time_ms: float = 0.0
 
@@ -368,11 +285,11 @@ class ScanResult:
 
         records = []
         for opp in self.opportunities:
+            scores = opp.scores or {}
             record = {
                 "Strategy": opp.strategy_name,
                 "Ticker": opp.underlying_ticker,
                 "DaysToMaturity": opp.days_to_maturity,
-                "RiskLevel": opp.classification.risk_level,
                 "NetPremium": round(opp.net_premium, 2),
                 "MaxProfit": round(opp.max_profit, 2),
                 "MaxLoss": round(opp.max_loss, 2),
@@ -380,6 +297,10 @@ class ScanResult:
                 "ExpectedReturn": round(opp.expected_return_pct, 2),
                 "Margin": round(opp.required_margin, 2),
                 "LiquidityScore": round(opp.liquidity_score, 2),
+                # ── سه‌شخصیتی ──
+                "Score_Conservative": round(scores.get("conservative", -1.0), 2),
+                "Score_Balanced": round(scores.get("balanced", -1.0), 2),
+                "Score_Aggressive": round(scores.get("aggressive", -1.0), 2),
                 "FinalScore": round(opp.final_score, 2),
                 "Rank": opp.rank,
                 "Timestamp": opp.timestamp,
@@ -387,8 +308,9 @@ class ScanResult:
             for i, leg in enumerate(opp.legs, 1):
                 if leg.contract:
                     record[f'Leg{i}_Symbol'] = leg.contract.ticker
-                    record[f'Leg{i}_Side'] = leg.side.value if isinstance(
-                        leg.side, Enum) else leg.side
+                    record[f'Leg{i}_Side'] = (
+                        leg.side.value if isinstance(leg.side, Enum) else leg.side
+                    )
                     record[f'Leg{i}_Ratio'] = leg.ratio
             records.append(record)
 
@@ -415,7 +337,7 @@ class MarketSnapshot:
         default_factory=dict, repr=False)
     _indices_built: bool = field(default=False, repr=False)
 
-    # آرایه‌های متمرکز و واحد سطوح قیمت بدون تکرار فیلدها
+    # آرایه‌های متمرکز و واحد سطوح قیمت
     price_levels: Optional[np.ndarray] = None
     pct_steps: Optional[np.ndarray] = None
 
@@ -423,8 +345,7 @@ class MarketSnapshot:
         self.sync_underlying_prices()
         self.build_indices()
         if self.price_levels is None:
-            self.price_levels = get_price_levels(
-                10000.0)  # مبنای محاسبات اولیه پیش‌فرض
+            self.price_levels = get_price_levels(10000.0)
             self.pct_steps = get_price_steps()
 
     @classmethod
@@ -446,7 +367,11 @@ class MarketSnapshot:
                 logger.debug(f"خطا در پارس سطر دیتا: {e}")
                 continue
 
-        return cls(timestamp=datetime.now(), underlying_assets=underlying_assets, option_contracts=option_contracts)
+        return cls(
+            timestamp=datetime.now(),
+            underlying_assets=underlying_assets,
+            option_contracts=option_contracts,
+        )
 
     @classmethod
     def _extract_underlyings(cls, df: pd.DataFrame) -> Dict[str, UnderlyingAsset]:
@@ -455,10 +380,10 @@ class MarketSnapshot:
             if pd.isna(ticker) or ticker == '':
                 continue
             ticker_str = str(ticker)
-            underlying_price = cls._clean_float(
-                group['UnderlyingPrice'].iloc[0])
+            underlying_price = cls._clean_float(group['UnderlyingPrice'].iloc[0])
             underlying_ClosingPrice = cls._clean_float(
-                group['UnderlyingClosingPrice'].iloc[0])
+                group['UnderlyingClosingPrice'].iloc[0]
+            )
             name = str(group['Name'].iloc[0])
 
             market = ExchangeType.TSE
@@ -467,19 +392,25 @@ class MarketSnapshot:
                     market = ExchangeType.IFB
 
             asset_type = AssetType.STOCK
-            if 'IsETF' in group.columns and pd.notna(group['IsETF'].iloc[0]) and bool(group['IsETF'].iloc[0]):
+            if ('IsETF' in group.columns
+                    and pd.notna(group['IsETF'].iloc[0])
+                    and bool(group['IsETF'].iloc[0])):
                 asset_type = AssetType.ETF_STOCK
 
             underlyings[ticker_str] = UnderlyingAsset(
                 ticker=ticker_str, name=name, last_price=underlying_price,
-                close_price=underlying_ClosingPrice, market=market, asset_type=asset_type, yesterday_price=underlying_price)
+                close_price=underlying_ClosingPrice, market=market,
+                asset_type=asset_type, yesterday_price=underlying_price,
+            )
         return underlyings
 
     @classmethod
     def _row_to_option_contract_from_dict(cls, row: dict) -> OptionContract:
         return OptionContract(
-            ticker=str(row.get('Ticker', '')), name=str(row.get('Name', '')),
-            underlying_ticker=str(row.get('UnderlyingTicker', '')), option_type=row['Type'],
+            ticker=str(row.get('Ticker', '')),
+            name=str(row.get('Name', '')),
+            underlying_ticker=str(row.get('UnderlyingTicker', '')),
+            option_type=row['Type'],
             strike_price=cls._clean_float(row.get('StrikePrice')),
             contract_size=int(row.get('ContractSize', 1000)) if pd.notna(
                 row.get('ContractSize')) else 1000,
@@ -487,16 +418,22 @@ class MarketSnapshot:
                 row.get('MaturityDate')) else None,
             days_to_maturity=int(row.get('DaysToMaturity', 0)) if pd.notna(
                 row.get('DaysToMaturity')) else 0,
-            bid=cls._clean_float(row.get('BidPrice')), ask=cls._clean_float(row.get('AskPrice')),
-            last_price=cls._clean_float(row.get('LastPrice')), close_price=cls._clean_float(row.get('ClosePrice')),
-            underlying_price=cls._clean_float(row.get('UnderlyingPrice')), underlying_ClosingPrice=cls._clean_float(row.get('UnderlyingClosingPrice')),
+            bid=cls._clean_float(row.get('BidPrice')),
+            ask=cls._clean_float(row.get('AskPrice')),
+            last_price=cls._clean_float(row.get('LastPrice')),
+            close_price=cls._clean_float(row.get('ClosePrice')),
+            underlying_price=cls._clean_float(row.get('UnderlyingPrice')),
+            underlying_ClosingPrice=cls._clean_float(
+                row.get('UnderlyingClosingPrice')),
             yesterday_price=cls._clean_float(row.get('ClosePrice')),
             volume=int(row.get('Volume', 0)) if pd.notna(
                 row.get('Volume')) else 0,
             open_interest=int(row.get('OpenPositions', 0)) if pd.notna(
                 row.get('OpenPositions')) else 0,
-            value=cls._clean_float(row.get('Value')), instrument_code=str(row.get('InstrumentCode', '')),
-            instrument_code_ua=str(row.get('InstrumentCode-UA', '')))
+            value=cls._clean_float(row.get('Value')),
+            instrument_code=str(row.get('InstrumentCode', '')),
+            instrument_code_ua=str(row.get('InstrumentCode-UA', '')),
+        )
 
     @staticmethod
     def _clean_float(val) -> float:

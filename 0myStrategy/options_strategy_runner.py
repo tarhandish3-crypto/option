@@ -212,12 +212,10 @@ def load_and_filter_data():
 
     is_call_mask = df_final['Type'].apply(
         lambda x: x.name == 'CALL' if hasattr(x, 'name')
-        else str(x).upper() == 'CALL'
-    )
+        else str(x).upper() == 'CALL')
 
-    filter_option = df_final[
-        (df_final['DaysToMaturity'] >= 0.0) & is_call_mask
-    ].copy()
+    filter_option = df_final[(
+        df_final['DaysToMaturity'] >= 0.0) & is_call_mask].copy()
 
     print(f"  CALL options: {len(filter_option)}")
 
@@ -226,12 +224,10 @@ def load_and_filter_data():
     print(f"  Unique underlyings: {len(option_symbols)}")
 
     buy_queue_symbols = filter_buy_queue_with_symbols(
-        buy_queue, option_symbols
-    )
+        buy_queue, option_symbols)
 
     filter_option = remove_buy_queue_underlyings(
-        filter_option, buy_queue_symbols
-    )
+        filter_option, buy_queue_symbols)
 
     return filter_option
 

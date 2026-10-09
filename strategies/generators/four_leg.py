@@ -57,7 +57,6 @@ class FourLegGenerator(BaseGenerator):
             if not self._validate_strike_gaps(matched_contracts, rules):
                 continue
 
-            # dedup با کلید یکتا
             key = tuple(sorted(
                 (c.ticker, c.option_type.value, c.strike_price)
                 for c in matched_contracts

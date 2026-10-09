@@ -22,7 +22,14 @@ logger = logging.getLogger("OptionScanner.Reports.ExcelExporter")
 
 class ExcelExporter:
     """
-    صادرکننده پیشرفته گزارش‌های نهایی سیستم تصمیم‌یار (DSS) به همراه فیلترینگ و استایل‌دهی هوشمند
+    صادرکننده پیشرفته گزارش‌های نهایی سیستم تصمیم‌یار (DSS) به همراه فیلترینگ و استایل‌دهی هوشمند.
+
+    معماری امتیازدهی سه‌شخصیتی:
+        - Conservative Score : امتیاز شخص محافظه‌کار
+        - Balanced Score     : امتیاز شخص متعادل
+        - Aggressive Score   : امتیاز شخص پرریسک
+
+        مقدار -1.0 به معنی رد شدن فرصت در آن شخصیت است.
     """
 
     def __init__(self, output_dir: str = "output"):
@@ -75,16 +82,19 @@ class ExcelExporter:
 
         for opp in opportunities:
             metadata = opp.metadata if opp.metadata else {}
-            
-            # استخراج قیمت مرجع بر اساس استاندارد چندلایه بورس ایران
-            S0_stock = getattr(opp, 'S0_stock')
-        
-            # واکشی بردارهای بازدهی ماتریس سود و زیان (P&L Array Mapping)
+
+            # استخراج قیمت مرجع
+            S0_stock = getattr(opp, 'S0_stock', 0.0)
+
+            # 🆕 استخراج ایمن امتیازهای سه‌شخصیتی از dict جدید
+            scores = getattr(opp, 'scores', None) or {}
+
+            # واکشی بردارهای بازدهی
             pnl_data = metadata.get('returns_monthly_pct', [])
             if not pnl_data:
                 pnl_data = metadata.get('net_returns_closed', [])
-            
-            # بازسازی لایه گام‌های قیمت بر مبنای هماهنگی با Payoff Core
+
+            # بازسازی لایه گام‌های قیمت
             price_levels = np.array(metadata.get('price_levels', []))
 
             # یکپارچه‌سازی توصیف پوزیشن لگ‌ها
@@ -94,21 +104,21 @@ class ExcelExporter:
                 side = leg.side.value
                 ratio = leg.ratio
                 positions_parts.append(f"{ticker} ({ratio}x{side})")
-            
+
             positions_desc = " | ".join(positions_parts)
 
+            # 🆕 ساخت base_info با سه‌شخصیتی
             base_info = {
-                "Rank": getattr(opp, 'rank'),
+                "Rank": getattr(opp, 'rank', 0),
                 "Strategy": opp.strategy_name,
                 "Positions": positions_desc,
-                "DTE": getattr(opp, 'days_to_maturity'),
+                "DTE": getattr(opp, 'days_to_maturity', 0),
                 "Ticker": opp.underlying_ticker,
 
-                "Conservative Score": opp.profile_scores.conservative if opp.profile_scores else 0.0,
-                "Balanced Score": opp.profile_scores.balanced if opp.profile_scores else 0.0,
-                "Aggressive Score": opp.profile_scores.aggressive if opp.profile_scores else 0.0,
-                "Income Score": opp.profile_scores.income if opp.profile_scores else 0.0,
-                "Volatility Score": opp.profile_scores.volatility if opp.profile_scores else 0.0,
+                # ─── امتیازهای سه‌شخصیتی ───
+                "Conservative Score": scores.get('conservative', -1.0),
+                "Balanced Score": scores.get('balanced', -1.0),
+                "Aggressive Score": scores.get('aggressive', -1.0),
 
                 "Expected Value": metadata.get('expected_value', 0.0),
                 "Area Ratio": metadata.get('area_ratio', 0.0),
@@ -121,14 +131,15 @@ class ExcelExporter:
                 "Gross Max Loss": getattr(opp, 'max_loss', 0.0),
                 "Breakeven": self._format_breakeven(metadata.get('break_even_points', [])),
                 "Liquidity": getattr(opp, 'liquidity_score', 0.0),
-                "Score": getattr(opp, 'final_score', 0.0)}
+                "Score": getattr(opp, 'final_score', 0.0),
+            }
 
-            # بازنویسی مکانیسم نگاشت P&L جهت هماهنگی کامل با گام‌های ثابت محاسباتی (V4)
-            if len(price_levels) > 1 and len(pnl_data) == len(price_levels):
-                # تبدیل سطوح قیمت مطلق به درصدهای انحراف واقعی جهت تطبیق با گام‌های پیکربندی
+            # بازنویسی مکانیسم نگاشت P&L جهت هماهنگی کامل با گام‌های ثابت محاسباتی
+            if len(price_levels) > 1 and len(pnl_data) == len(price_levels) and S0_stock > 0:
+                # تبدیل سطوح قیمت مطلق به درصدهای انحراف واقعی
                 actual_pcts = ((np.array(price_levels) / S0_stock) - 1) * 100
                 for idx, pct in enumerate(self.pct_steps):
-                    # درون‌یابی ایمن بر اساس نوسانات درصدی واقعی
+                    # درون‌یابی ایمن
                     val_interp = np.interp(pct, actual_pcts, pnl_data)
                     base_info[f"{pct}%"] = float(round(val_interp, 4))
             else:
@@ -143,13 +154,14 @@ class ExcelExporter:
 
         df = pd.DataFrame(rows_data)
 
-        # چینش ستون‌های اصلی طبق استانداردهای حسابداری اوراق مشتقه
+        # چینش ستون‌های اصلی
         main_cols = [
-            "Rank", "Strategy", "Positions", "DTE", "Ticker", "Investor Profile", "Risk Level",
-            "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
-            "Expected Value", "Area Ratio", "Delta", "Gamma", "Theta", "Vega", "Sharpe", "VaR 95%",
+            "Rank", "Strategy", "Positions", "DTE", "Ticker",
+            "Conservative Score", "Balanced Score", "Aggressive Score",
+            "Expected Value", "Area Ratio", "Delta", "Gamma", "Theta", "Vega",
+            "Sharpe",
             "Gross Max Profit", "Gross Max Loss",
-            "Breakeven", "Liquidity", "Score"
+            "Breakeven", "Liquidity", "Score",
         ]
 
         main_cols = [col for col in main_cols if col in df.columns]
@@ -157,7 +169,6 @@ class ExcelExporter:
         df = df[main_cols + pct_cols]
 
         self._write_to_styled_excel(df, file_path)
-
 
     def _format_breakeven(self, breakeven_points: List[float]) -> str:
         if not breakeven_points:
@@ -181,15 +192,15 @@ class ExcelExporter:
 
             numeric_cols = [
                 "Rank", "DTE",
-                "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score",
+                "Conservative Score", "Balanced Score", "Aggressive Score",
                 "Expected Value", "Area Ratio", "Delta", "Gamma", "Theta", "Vega",
-                "Sharpe", "VaR 95%", "Gross Max Profit", "Gross Max Loss",
-                "Liquidity", "Score"
+                "Sharpe", "Gross Max Profit", "Gross Max Loss",
+                "Liquidity", "Score",
             ]
             pct_cols = [f"{pct}%" for pct in self.pct_steps if f"{pct}%" in df.columns]
             columns_list = df.columns.tolist()
 
-            # تزریق هوشمند استایل بدنه کدهای مالی
+            # تزریق هوشمند استایل بدنه
             for row_idx, row in enumerate(df.itertuples(index=False), start=2):
                 for col_idx, col_name in enumerate(columns_list, start=1):
                     cell = worksheet.cell(row=row_idx, column=col_idx)
@@ -213,13 +224,13 @@ class ExcelExporter:
 
                     cell.font = self.body_font
 
-            # اعمال قواعد شرطی گرافیکی و فعال‌سازی ابزار فیلتر اکسل
+            # اعمال قواعد شرطی و فیلتر
             self._apply_conditional_formatting(worksheet, df)
             self._enable_autofilter(worksheet, df)
-            
+
             worksheet.freeze_panes = 'A2'
 
-            # تنظیم خودکار و دقیق عرض ستون‌ها بر اساس طول کاراکترهای فارسی و انگلیسی
+            # تنظیم خودکار عرض ستون‌ها
             for col in worksheet.columns:
                 max_len = 0
                 for cell in col:
@@ -230,7 +241,7 @@ class ExcelExporter:
                 col_letter = get_column_letter(col[0].column)
                 worksheet.column_dimensions[col_letter].width = min(max(max_len + 4, 13), 50)
 
-            # تولید و الحاق ایمن شیت‌های تصمیم‌یار فرعی مپ‌شده با openpyxl
+            # شیت‌های فرعی
             self._add_summary_sheet(workbook, df)
             self._add_scores_sheet(workbook, df)
 
@@ -260,7 +271,34 @@ class ExcelExporter:
             rule_rank = CellIsRule(operator='equal', formula=['1'], stopIfTrue=True)
             rule_rank.font = self.gold_font
             rule_rank.fill = self.gold_fill
-            worksheet.conditional_formatting.add(f"{col_letter}2:{col_letter}{len(df) + 1}", rule_rank)
+            worksheet.conditional_formatting.add(
+                f"{col_letter}2:{col_letter}{len(df) + 1}", rule_rank)
+
+        # 🆕 Conditional formatting برای سه ستون امتیاز
+        score_cols_map = {
+            "Conservative Score": ("greaterThan", ['15.0']),   # سبز
+            "Balanced Score":     ("greaterThan", ['20.0']),   # سبز
+            "Aggressive Score":   ("greaterThan", ['25.0']),   # سبز
+        }
+
+        for col_name, (op, formula) in score_cols_map.items():
+            if col_name not in df.columns:
+                continue
+            col_idx = df.columns.get_loc(col_name) + 1
+            col_letter = get_column_letter(col_idx)
+            range_str = f"{col_letter}2:{col_letter}{len(df) + 1}"
+
+            # مقدار مثبت (سبز)
+            rule_pos = CellIsRule(operator=op, formula=formula, stopIfTrue=False)
+            rule_pos.fill = self.green_fill
+            rule_pos.font = self.green_font
+            worksheet.conditional_formatting.add(range_str, rule_pos)
+
+            # مقدار منفی -1 یعنی رد شده (خاکستری)
+            rule_rejected = CellIsRule(operator='equal', formula=['-1'], stopIfTrue=False)
+            rule_rejected.fill = PatternFill(start_color='E0E0E0', end_color='E0E0E0', fill_type='solid')
+            rule_rejected.font = self.gray_font
+            worksheet.conditional_formatting.add(range_str, rule_rejected)
 
     def _enable_autofilter(self, worksheet, df: pd.DataFrame):
         if len(df) > 0:
@@ -275,83 +313,145 @@ class ExcelExporter:
         summary_ws.append(['شاخص یا سناریوی تحلیلی بازار اوراق اختیار', 'مقدار محاسباتی / فراوانی توزیع سیستم'])
         summary_ws.append(['کل موقعیت‌های معاملاتی تحلیل‌شده', len(df)])
 
+        # 🆕 آمار سه‌شخصیتی
+        summary_ws.append(['', ''])
+        summary_ws.append(['📊 آمار تفکیکی سه‌شخصیتی', ''])
+        summary_ws.append(['─' * 40, '─' * 25])
+
+        score_cols = [
+            ("Conservative Score", "تعداد فرصت‌های پذیرفته‌شده در شخص محافظه‌کار"),
+            ("Balanced Score", "تعداد فرصت‌های پذیرفته‌شده در شخص متعادل"),
+            ("Aggressive Score", "تعداد فرصت‌های پذیرفته‌شده در شخص پرریسک"),
+        ]
+
+        for col_name, fa_label in score_cols:
+            if col_name in df.columns:
+                accepted = int((df[col_name] > 0).sum())
+                rejected = int((df[col_name] == -1.0).sum())
+                summary_ws.append([fa_label, accepted])
+                summary_ws.append([f"   └─ رد شده (مقدار -1)", rejected])
+
+        # آمار عددی
+        summary_ws.append(['', ''])
         numeric_cols = [
             ("Expected Value", "میانگین ارزش مورد انتظار (EV)"),
             ("Sharpe", "میانگین نسبت شارپ سبد فرصت‌ها"),
+            ("Liquidity", "میانگین نقدشوندگی"),
+            ("Score", "میانگین امتیاز نهایی (متعادل)"),
         ]
 
         for col_name, fa_label in numeric_cols:
             if col_name in df.columns:
-                # کپی امن و پاکسازی داده جهت جلوگیری از خطای آماری پانداس
+                # کپی امن و پاکسازی داده
                 col_series = df[col_name].copy().replace('-', np.nan)
                 col_df = pd.to_numeric(col_series, errors='coerce')
+                col_df = col_df[col_df != -1.0]  # حذف مقادیر رد شده
                 if not col_df.empty and col_df.notna().any():
                     summary_ws.append([fa_label, round(float(col_df.mean()), 2)])
-
-        summary_ws.append(['', ''])
-        summary_ws.append(['تفکیک و توزیع موقعیت‌ها بر اساس وضعیت روند بازار', 'تعداد پوزیشن'])
 
         # استایل‌دهی شیت خلاصه
         for row in summary_ws.iter_rows(min_row=1, max_row=summary_ws.max_row, min_col=1, max_col=2):
             for cell in row:
                 cell.font = self.body_font
-                if cell.row in [1, 2 + len(numeric_cols) + 2]:
+                if cell.row == 1:
                     cell.font = self.header_font
                     cell.fill = self.header_fill
                     cell.alignment = self.header_alignment
+                elif cell.row == 4:
+                    cell.font = Font(name='Segoe UI', size=10, bold=True, color='1F4E78')
+                    cell.alignment = self.header_alignment
                 else:
-                    cell.alignment = self.body_alignment_right if cell.column == 2 else self.body_alignment_center
+                    cell.alignment = (self.body_alignment_right
+                                      if cell.column == 2
+                                      else self.body_alignment_center)
 
-        summary_ws.column_dimensions['A'].width = 45
-        summary_ws.column_dimensions['B'].width = 35
+        summary_ws.column_dimensions['A'].width = 50
+        summary_ws.column_dimensions['B'].width = 25
 
     def _add_scores_sheet(self, workbook: Workbook, df: pd.DataFrame):
-        """ساخت شیت ماتریسی امتیازدهی چندگانه پروفایل ریسک"""
+        """ساخت شیت ماتریسی امتیازدهی سه‌شخصیتی"""
         if df.empty:
             return
 
-        scores_ws = workbook.create_sheet(title='Profile_Scores')
+        scores_ws = workbook.create_sheet(title='Personality_Scores')
         score_cols = [
             "Rank", "Strategy", "Positions", "Ticker",
-            "Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score"
+            "Conservative Score", "Balanced Score", "Aggressive Score",
         ]
         score_cols = [col for col in score_cols if col in df.columns]
         sub_df = df[score_cols]
 
-        # ایجاد هدر شیت امتیازها به صورت کاملاً هماهنگ با openpyxl
+        # ایجاد هدر شیت امتیازها
         for c_idx, col_name in enumerate(score_cols, start=1):
             cell = scores_ws.cell(row=1, column=c_idx, value=col_name)
             cell.font = self.header_font
             cell.fill = self.header_fill
             cell.alignment = self.header_alignment
-        
-        # سطر اول و ستون اول ثابت می‌مانند
+
         scores_ws.freeze_panes = 'A2'
 
         # بارگذاری ردیف‌ها
+        personality_cols = [
+            "Conservative Score", "Balanced Score", "Aggressive Score"
+        ]
         for r_idx, row in enumerate(sub_df.values, start=2):
             for c_idx, value in enumerate(row, start=1):
                 cell = scores_ws.cell(row=r_idx, column=c_idx, value=value)
                 cell.font = self.body_font
 
                 col_name = score_cols[c_idx - 1]
-                if col_name in ["Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score"]:
+                if col_name in personality_cols:
                     cell.alignment = self.body_alignment_right
                 else:
                     cell.alignment = self.body_alignment_center
 
-        score_fields = ["Conservative Score", "Balanced Score", "Aggressive Score", "Income Score", "Volatility Score"]
-        for field in score_fields:
-            if field in score_cols:
-                c_idx = score_cols.index(field) + 1
-                c_letter = get_column_letter(c_idx)
-                range_str = f"{c_letter}2:{c_letter}{len(df) + 1}"
+        # 🆕 Conditional formatting سه‌شخصیتی
+        thresholds = {
+            "Conservative Score": 15.0,
+            "Balanced Score": 20.0,
+            "Aggressive Score": 25.0,
+        }
 
-                rule_high = CellIsRule(operator='greaterThan', formula=['70.0'], stopIfTrue=False)
-                rule_high.fill = self.green_fill
-                rule_high.font = self.green_font
-                scores_ws.conditional_formatting.add(range_str, rule_high)
+        for field, threshold in thresholds.items():
+            if field not in score_cols:
+                continue
+            c_idx = score_cols.index(field) + 1
+            c_letter = get_column_letter(c_idx)
+            range_str = f"{c_letter}2:{c_letter}{len(df) + 1}"
 
+            # امتیاز بالا (سبز)
+            rule_high = CellIsRule(
+                operator='greaterThan',
+                formula=[str(threshold)],
+                stopIfTrue=False,
+            )
+            rule_high.fill = self.green_fill
+            rule_high.font = self.green_font
+            scores_ws.conditional_formatting.add(range_str, rule_high)
+
+            # امتیاز پایین (زرد)
+            rule_medium = CellIsRule(
+                operator='between',
+                formula=[str(threshold * 0.5), str(threshold)],
+                stopIfTrue=False,
+            )
+            rule_medium.fill = self.gold_fill
+            rule_medium.font = self.gold_font
+            scores_ws.conditional_formatting.add(range_str, rule_medium)
+
+            # رد شده (خاکستری)
+            rule_rejected = CellIsRule(
+                operator='equal',
+                formula=['-1'],
+                stopIfTrue=False,
+            )
+            rule_rejected.fill = PatternFill(
+                start_color='E0E0E0', end_color='E0E0E0', fill_type='solid'
+            )
+            rule_rejected.font = self.gray_font
+            scores_ws.conditional_formatting.add(range_str, rule_rejected)
+
+        # تنظیم عرض ستون‌ها
         for col in scores_ws.columns:
             max_len = 0
             for cell in col:

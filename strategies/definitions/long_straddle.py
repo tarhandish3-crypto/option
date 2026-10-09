@@ -30,9 +30,8 @@ DEFINITION = StrategyDefinition(
     ),
 
     rules={
-        "strike_order": "any",           # strikeها باید برابر باشند
         "maturity_order": "same",
-        "strike_equal": True,            # تأکید بر برابری strikeها
+        "strike_equal": True,            # هر دو لگ باید همان strike را داشته باشند
         "strike_equal_tolerance_pct": 0.001,  # تحمل بسیار کم
     },
 )

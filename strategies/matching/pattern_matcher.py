@@ -43,8 +43,7 @@ class PatternMatcher:
         strategy_rules: Optional[Dict[str, Any]] = None,
         min_liquidity_score: float = 30.0,
         contract_scores: Optional[Dict[str, float]] = None,
-        underlying_price: Optional[float] = None,
-        dedup: bool = False,) -> Iterator[List[OptionContract]]:
+        underlying_price: Optional[float] = None,) -> Iterator[List[OptionContract]]:
         """
         تطبیق جریانی patterns با کانتراکت‌های بازار
         """
@@ -198,8 +197,7 @@ class PatternMatcher:
                     for combo in PatternMatcher._process_window(
                         [bucket], option_patterns,
                         strategy_rules, min_liquidity_score,
-                        contract_scores, underlying_price,
-                    ):
+                        contract_scores, underlying_price,):
                         yield PatternMatcher._merge_stock_option(
                             combo, stock_contract, stock_indices,
                             option_indices, total_patterns,
@@ -267,17 +265,14 @@ class PatternMatcher:
         strategy_rules: Dict[str, Any],
         min_liquidity_score: float,
         contract_scores: Dict[str, float],
-        underlying_price: float,
-    ) -> Iterator[List[OptionContract]]:
+        underlying_price: float,) -> Iterator[List[OptionContract]]:
         """تطبیق استراتژی‌هایی که لگ‌ها در سررسیدهای متفاوت قرار دارند."""
         for combo in PatternMatcher._match_calendar_spreads(
             index, option_patterns, strategy_rules,
-            min_liquidity_score, contract_scores, underlying_price,
-        ):
+            min_liquidity_score, contract_scores, underlying_price,):
             yield PatternMatcher._merge_stock_option(
                 combo, stock_contract, stock_indices,
-                option_indices, total_patterns,
-            )
+                option_indices, total_patterns,)
 
     # =========================================================================
     # MERGE STOCK + OPTION
@@ -359,8 +354,7 @@ class PatternMatcher:
                 window = [bucket_i, bucket_j]
                 yield from PatternMatcher._process_window(
                     window, option_patterns, rules,
-                    min_liquidity_score, scores, underlying_price,
-                )
+                    min_liquidity_score, scores, underlying_price,)
 
     # =========================================================================
     # WINDOW PROCESSING
@@ -373,8 +367,7 @@ class PatternMatcher:
         rules: Dict[str, Any],
         min_liquidity_score: float,
         scores: Optional[Dict[str, float]],
-        underlying_price: Optional[float] = None,
-    ) -> Iterator[List[OptionContract]]:
+        underlying_price: Optional[float] = None,) -> Iterator[List[OptionContract]]:
         """
         ضرب دکارتی تنبل روی کانتراکت‌های نقدشونده در پنجره.
 
@@ -409,8 +402,7 @@ class PatternMatcher:
 
         for combo in product(*candidate_lists):
             if not PatternMatcher._validate_combo(
-                combo, option_patterns, rules, underlying_price
-            ):
+                combo, option_patterns, rules, underlying_price):
                 continue
             yield list(combo)
 
@@ -498,8 +490,7 @@ class PatternMatcher:
         rules: Dict[str, Any],
         min_liquidity_score: float,
         scores: Optional[Dict[str, float]],
-        underlying_price: Optional[float] = None,
-    ) -> Iterator[List[OptionContract]]:
+        underlying_price: Optional[float] = None,) -> Iterator[List[OptionContract]]:
         """تطبیق Calendar و Diagonal Spreads (سررسیدهای متفاوت)."""
         scores = scores or {}
 
@@ -659,79 +650,3 @@ class PatternMatcher:
                     window, option_patterns, rules,
                     min_liquidity_score, scores, underlying_price,
                 )
-
-    # =========================================================================
-    # BATCH VECTORS (For Numba)
-    # =========================================================================
-
-    @staticmethod
-    def extract_batch_vectors(
-            valid_matches: Iterable[List[LegDefinition]],
-            max_legs: int = 4,) -> Dict[str, np.ndarray]:
-        """
-        تبدیل جریان LegDefinition‌ها به ماتریس‌های NumPy برای Numba.
-
-        """
-        weights_list, strikes_list, entry_prices_list = [], [], []
-        option_types_list, sides_list, contract_sizes_list = [], [], []
-
-        for legs in valid_matches:
-            w = np.zeros(max_legs, dtype=np.float64)
-            s = np.zeros(max_legs, dtype=np.float64)
-            ep = np.zeros(max_legs, dtype=np.float64)
-            ot = np.zeros(max_legs, dtype=np.int32)
-            sd = np.zeros(max_legs, dtype=np.int32)
-            cs = np.zeros(max_legs, dtype=np.int32)
-
-            for j, leg in enumerate(legs):
-                if j >= max_legs:
-                    break
-
-                # وزن با علامت از سمت لگ
-                w[j] = float(leg.ratio)
-                sd[j] = 1 if leg.side == Side.BUY else -1
-
-                contract = leg.contract
-                if contract is not None:
-                    s[j] = contract.strike_price
-                    ep[j] = leg.entry_price
-                    o_type = contract.option_type
-                    ot[j] = (
-                        0 if o_type == OptionType.STOCK
-                        else (1 if o_type == OptionType.CALL else 2)
-                    )
-                    cs[j] = contract.contract_size
-                else:
-                    ot[j] = 0
-                    cs[j] = 1
-
-            weights_list.append(w)
-            strikes_list.append(s)
-            entry_prices_list.append(ep)
-            option_types_list.append(ot)
-            sides_list.append(sd)
-            contract_sizes_list.append(cs)
-
-        # ── حالت خالی ─────────────────────────────────────────────
-        if not weights_list:
-            def empty(dt):
-                return np.empty((0, max_legs), dtype=dt)
-
-            return {
-                "weights": empty(np.float64),
-                "strikes": empty(np.float64),
-                "entry_prices": empty(np.float64),
-                "option_types": empty(np.int32),
-                "sides": empty(np.int32),
-                "contract_sizes": empty(np.int32),
-            }
-
-        # ── حالت عادی ─────────────────────────────────────────────
-        return {
-            "weights": np.vstack(weights_list),
-            "strikes": np.vstack(strikes_list),
-            "entry_prices": np.vstack(entry_prices_list),
-            "option_types": np.vstack(option_types_list),
-            "sides": np.vstack(sides_list),
-            "contract_sizes": np.vstack(contract_sizes_list),
-        }

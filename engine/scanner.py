@@ -15,6 +15,7 @@ from core.models import MarketSnapshot, Opportunity, OptionContract
 from strategies.core import get_all_strategies
 from strategies.generators import get_generator
 from strategies.matching.contract_index import ContractIndex
+from scoring.liquidity_score import LiquidityScorer
 
 logger = logging.getLogger("OptionScanner.Engine.TickerScanner")
 
@@ -39,6 +40,7 @@ class Scanner:
         """ساخت ContractIndex با کش"""
         if self._contract_index is None:
             self._contract_index = ContractIndex(contracts)
+            self._contract_scores = LiquidityScorer.pre_score_contracts(contracts)
         return self._contract_index
 
     # ============================================================
