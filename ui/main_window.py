@@ -368,15 +368,15 @@ class MainWindow(QMainWindow):
         mode = self._theme_mode
 
         if mode == "dark":
-            bg = "#238636"
-            bg_hover = "#2ea043"
+            bg = "#1f6feb"
+            bg_hover = "#388bfd"
             bg_pressed = "#1a7f37"
             bg_checked = "#1a7f37"
             text = "#ffffff"
             text_hover = "#ffffff"
             text_checked = "#ffffff"
             text_disabled = "#8b949e"
-            border = "#238636"
+            border = "#290214"
             border_hover = "#3fb950"
         else:
             bg = "#1f883d"

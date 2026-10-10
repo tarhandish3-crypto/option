@@ -16,6 +16,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import config
+from ui.theme import THEME_DARK
 
 logger = logging.getLogger("OptionScanner.UI.SettingsManager")
 
@@ -28,7 +29,7 @@ _DEFAULT_PROFILE_NAME = "default"
 # =========================================================================
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
-    "theme": "dark",
+    "theme": THEME_DARK,
     "layout_direction": "راست‌چین (RTL)",
     "auto_scan_enabled": True,
     "auto_scan_interval": 60,

@@ -1,0 +1,12 @@
+{
+  "long_box_spread|وبملت|1400.0|1800.0|32": {
+    "sent_at": "2026-10-10T23:04:43.370711",
+    "strategy": "long_box_spread",
+    "underlying": "وبملت",
+    "strike_low": 1400.0,
+    "strike_high": 1800.0,
+    "days_to_maturity": 32,
+    "maturity_date": "1405-08-20",
+    "monthly_return": -0.524
+  }
+}

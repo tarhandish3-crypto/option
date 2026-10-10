@@ -231,3 +231,5 @@ def filter_by_option_symbols(queue_symbols: List[Dict[str, Any]], option_symbols
     filtered = [s for s in queue_symbols if s['symbol'].replace('ي', 'ی').replace('ك', 'ک') in option_set_normalized]
     logger.info(f"Filtered {len(filtered)} option symbols from {len(queue_symbols)} queue symbols")
     return filtered
+
+get_sell_queue_symbols()

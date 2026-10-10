@@ -2,20 +2,30 @@
 # -*- coding: utf-8 -*-
 
 """
-مدیریت پوسته (روشن/تاریک/سیستم)، استایل‌های پیشرفته UI، کارت‌های KPI و فرمت‌بندی بومی بازار سرمایه.
+مدیریت پوسته (روشن/تاریک/سیستم) — نسخه‌ی بازطراحی‌شده.
+
+ایده‌ی اصلی:
+  ۱. همه‌ی رنگ‌ها فقط یک‌جا تعریف می‌شوند: tokens(mode)
+  ۲. یک QSS سراسری از روی همین توکن‌ها ساخته می‌شود (get_global_stylesheet)
+     و ویجت‌ها با objectName / property انتخاب می‌شوند، نه با setStyleSheet پراکنده:
+        QFrame#card            کارت‌های نوار ابزار و پنل‌ها
+        QPushButton[role=...]  primary | success | danger | warning
+        QPushButton[chip=true] چیپ‌های فیلتر (+ [active=true])
+        QLabel[pill=...]       ok | err | warn | idle  (نشانگرهای نوار وضعیت)
+  ۳. تمام توابع قدیمی (get_button_style و ...) باقی مانده‌اند و حالا رنگ‌های
+     جدید را برمی‌گردانند؛ پس دیالوگ‌های قدیمی بدون تغییر هم هم‌رنگ می‌شوند.
 """
 
 from __future__ import annotations
 
-import datetime
 import logging
-from typing import Literal, Union, Optional
+from pathlib import Path
+from string import Template
+from typing import Dict, Literal, Union
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QPalette, QColor, QFont, QFontDatabase
-from PySide6.QtWidgets import QApplication
-
-import jdatetime
+from PySide6.QtWidgets import QApplication, QWidget
 
 logger = logging.getLogger("OptionScanner.UI.Theme")
 
@@ -28,24 +38,131 @@ THEME_SYSTEM = "سیستم (System)"
 LAYOUT_RTL = "rtl"
 LAYOUT_LTR = "ltr"
 
-# ثابت‌های رنگی تریدینگ
-COLOR_PROFIT_DARK = "#3fb950"
-COLOR_PROFIT_LIGHT = "#2e7d32"
-COLOR_LOSS_DARK = "#f85149"
-COLOR_LOSS_LIGHT = "#c62828"
-COLOR_WARNING = "#d29922"
-COLOR_INFO = "#388bfd"
-COLOR_NEUTRAL = "#8c9bae"
-COLOR_ACCENT = "#8a2be2"
+
+# =========================================================================
+# ۰. توکن‌های رنگی — تنها منبع حقیقت برای همه‌ی رنگ‌ها
+# =========================================================================
+
+_BASE_TOKENS: Dict[str, Dict[str, str]] = {
+    "dark": {
+        "bg": "#0A0F1E",
+        "sf": "#111833",
+        "sf2": "#172042",
+        "bd": "#252F55",
+        "bd2": "#3A4670",
+        "tx": "#E8ECF8",
+        "mu": "#93A0C4",
+        "mu_dis": "#5E6A91",
+        "pr": "#3865EC",
+        "pr_h": "#4D77F5",
+        "prt": "#8FB0FF",
+        "ok": "#3DDC97",
+        "er": "#FF7A8A",
+        "wn": "#FFC857",
+        "ok_btn": "#0B8A5C", "ok_btn_h": "#0FA06B",
+        "er_btn": "#D12F46", "er_btn_h": "#E5435A",
+        "wn_btn": "#B7791F", "wn_btn_h": "#CC8A2B",
+        "hover": "#1D2756",
+        "sel": "#1B2650",
+        "input_bg": "#0A0F1E",
+        "scroll": "#2E3A63", "scroll_h": "#46568C",
+        "shadow": "#000000",
+    },
+    "light": {
+        "bg": "#EEF1F8",
+        "sf": "#FFFFFF",
+        "sf2": "#F4F6FC",
+        "bd": "#DCE2F0",
+        "bd2": "#B7C0D9",
+        "tx": "#12182B",
+        "mu": "#566280",
+        "mu_dis": "#9AA5C0",
+        "pr": "#2F5BE0",
+        "pr_h": "#4A72EE",
+        "prt": "#2F5BE0",
+        "ok": "#0B8A5C",
+        "er": "#CF3149",
+        "wn": "#A86A0C",
+        "ok_btn": "#0B8A5C", "ok_btn_h": "#0E9D69",
+        "er_btn": "#D12F46", "er_btn_h": "#E04258",
+        "wn_btn": "#C07A13", "wn_btn_h": "#D58A1F",
+        "hover": "#EBEFFA",
+        "sel": "#E7EDFD",
+        "input_bg": "#FFFFFF",
+        "scroll": "#C9D1E6", "scroll_h": "#A9B4D2",
+        "shadow": "#1E2A5A",
+    },
+}
+
+
+def _rgba(hex_color: str, alpha: int) -> str:
+    """رنگ hex → رشته‌ی rgba(r,g,b,a) سازگار با QSS (alpha بین ۰ تا ۲۵۵)."""
+    c = QColor(hex_color)
+    return f"rgba({c.red()},{c.green()},{c.blue()},{alpha})"
+
+
+def _norm_mode(mode: str | None) -> ThemeMode:
+    return "dark" if mode == "dark" else "light"
+
+
+def tokens(mode: str | None = None) -> Dict[str, str]:
+    """
+    دیکشنری رنگ‌های پوسته (همراه با نسخه‌های نیمه‌شفاف *_soft و *_line).
+    اگر mode داده نشود، پوسته‌ی فعلی برنامه استفاده می‌شود.
+    """
+    m = _norm_mode(mode if mode is not None else current_mode())
+    t = dict(_BASE_TOKENS[m])
+    t["pr_soft"] = _rgba(t["pr"], 46)
+    t["ok_soft"] = _rgba(t["ok"], 38)
+    t["er_soft"] = _rgba(t["er"], 38)
+    t["wn_soft"] = _rgba(t["wn"], 38)
+    t["ok_line"] = _rgba(t["ok"], 90)
+    t["er_line"] = _rgba(t["er"], 90)
+    t["wn_line"] = _rgba(t["wn"], 90)
+    t["hover_row"] = _rgba(t["pr"], 18)
+    return t
+
+
+def repolish(widget: QWidget) -> None:
+    """بعد از تغییر setProperty(...) باید صدا زده شود تا QSS دوباره اعمال شود."""
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
+
+
+def mpl_colors(mode: str | None = None) -> Dict[str, str]:
+    """رنگ‌های هماهنگ برای نمودارهای matplotlib (Payoff و ماتریس ریسک-بازده)."""
+    t = tokens(mode)
+    return {
+        "bg": t["sf"], "fg": t["tx"], "muted": t["mu"], "grid": t["bd"],
+        "line": t["prt"], "profit": t["ok"], "loss": t["er"],
+        "spot": t["wn"], "strike": "#8B7BFF", "zero": t["mu"],
+    }
+
+
+# ثابت‌های قدیمی (برای سازگاری با کدهای موجود)
+COLOR_PROFIT_DARK = _BASE_TOKENS["dark"]["ok"]
+COLOR_PROFIT_LIGHT = _BASE_TOKENS["light"]["ok"]
+COLOR_LOSS_DARK = _BASE_TOKENS["dark"]["er"]
+COLOR_LOSS_LIGHT = _BASE_TOKENS["light"]["er"]
+COLOR_WARNING = _BASE_TOKENS["dark"]["wn"]
+COLOR_INFO = _BASE_TOKENS["dark"]["prt"]
+COLOR_NEUTRAL = _BASE_TOKENS["dark"]["mu"]
+COLOR_ACCENT = "#8B7BFF"
 
 
 # =========================================================================
-# ۱. مدیریت تم و جهت چیدمان (Theme & Layout Management)
+# ۱. مدیریت تم و جهت چیدمان
 # =========================================================================
 
 def resolve_theme(theme_setting: str) -> ThemeMode:
-    if theme_setting == THEME_DARK:
+    # علاوه بر برچسب‌های فارسی، مقادیر "dark"/"light" هم پذیرفته می‌شوند
+    # (DEFAULT_SETTINGS["theme"] ممکن است برابر "dark" باشد).
+    if theme_setting in (THEME_DARK, "dark"):
         return "dark"
+    if theme_setting in (THEME_LIGHT, "light"):
+        return "light"
     if theme_setting == THEME_SYSTEM:
         return "dark" if _detect_system_dark() else "light"
     return "light"
@@ -56,7 +173,6 @@ def is_dark(theme_setting: str) -> bool:
 
 
 def apply_layout_direction(app: QApplication, layout_dir: str = LAYOUT_RTL) -> None:
-    """تنظیم جهت چیدمان کل برنامه (راست‌به‌چپ یا چپ‌به‌راست)"""
     if layout_dir == LAYOUT_LTR:
         app.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
     else:
@@ -64,13 +180,27 @@ def apply_layout_direction(app: QApplication, layout_dir: str = LAYOUT_RTL) -> N
 
 
 def apply_app_layout(app: QApplication) -> None:
-    """اعمال RTL سراسری برای کل برنامه (رفع خطای AttributeError)"""
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
 
 
+def load_bundled_fonts() -> int:
+    """
+    اگر فایل‌های فونت در ui/assets/fonts/*.ttf|otf باشند بارگذاری می‌شوند
+    (پیشنهاد: Vazirmatn-Regular / Medium / SemiBold / Bold).
+    """
+    fonts_dir = Path(__file__).resolve().parent / "assets" / "fonts"
+    loaded = 0
+    if fonts_dir.is_dir():
+        for p in sorted(fonts_dir.iterdir()):
+            if p.suffix.lower() in (".ttf", ".otf"):
+                if QFontDatabase.addApplicationFont(str(p)) >= 0:
+                    loaded += 1
+    return loaded
+
+
 def setup_persian_font(app: QApplication, preferred_font: str = "Vazirmatn", base_size: int = 10) -> None:
-    font_candidates = [preferred_font, "Vazirmatn",
-                       "Shabnam", "Sahel", "Segoe UI", "Tahoma"]
+    load_bundled_fonts()
+    font_candidates = [preferred_font, "Vazirmatn", "Shabnam", "Sahel", "Segoe UI", "Tahoma"]
     installed_fonts = QFontDatabase.families()
 
     chosen_family = "Segoe UI"
@@ -103,14 +233,8 @@ def current_mode(app: QApplication | None = None) -> ThemeMode:
     return mode if mode in ("light", "dark") else "light"
 
 
-def get_global_stylesheet(mode: ThemeMode) -> str:
-    if mode == "dark":
-        return _DARK_GLOBAL_STYLE
-    return _LIGHT_GLOBAL_STYLE
-
-
 # =========================================================================
-# ۲. توابع فرمت‌بندی بومی بازار ایران (Rial, DTE, Percent, Greeks)
+# ۲. فرمت‌بندی بومی بازار ایران (بدون تغییر)
 # =========================================================================
 
 def format_rial(value: Union[int, float, None], unit: str = "", show_sign: bool = False) -> str:
@@ -148,22 +272,22 @@ def format_greek(value: Union[int, float, None], decimals: int = 3) -> str:
 
 
 # =========================================================================
-# ۳. توابع رنگی سود/زیان و پویانمایی
+# ۳. رنگ‌های سود/زیان
 # =========================================================================
 
 def get_pnl_colors(mode: ThemeMode) -> tuple[QColor, QColor]:
-    if mode == "dark":
-        return QColor(COLOR_PROFIT_DARK), QColor(COLOR_LOSS_DARK)
-    return QColor(COLOR_PROFIT_LIGHT), QColor(COLOR_LOSS_LIGHT)
+    t = tokens(mode)
+    return QColor(t["ok"]), QColor(t["er"])
 
 
 def get_pnl_qcolor(value: Union[int, float, None], mode: ThemeMode = "dark", alpha: int = 255) -> QColor:
+    t = tokens(mode)
     if value is None or value == 0:
-        c = QColor(COLOR_NEUTRAL)
+        c = QColor(t["mu"])
     elif value > 0:
-        c = QColor(COLOR_PROFIT_DARK if mode == "dark" else COLOR_PROFIT_LIGHT)
+        c = QColor(t["ok"])
     else:
-        c = QColor(COLOR_LOSS_DARK if mode == "dark" else COLOR_LOSS_LIGHT)
+        c = QColor(t["er"])
     c.setAlpha(alpha)
     return c
 
@@ -177,253 +301,332 @@ def get_flash_qcolor(direction: str, alpha: int = 180) -> QColor:
 
 
 def get_empty_state_color(mode: ThemeMode) -> QColor:
-    return QColor(138, 146, 156) if mode == "dark" else QColor(150, 150, 150)
+    return QColor(tokens(mode)["mu"])
 
 
 # =========================================================================
-# ۴. استایل‌های المان‌های پیشرفته و کارت‌های KPI و فیلترها
+# ۴. استایل‌های inline قدیمی (سازگار با کدهای موجود، با رنگ‌های جدید)
+#    ⚠️ در فاز بعد به‌جای این‌ها از objectName/property استفاده می‌شود.
 # =========================================================================
 
-def get_kpi_card_style(mode: ThemeMode, accent_color: str = "#388bfd") -> str:
-    bg = "#161b22" if mode == "dark" else "#ffffff"
-    border = "#30363d" if mode == "dark" else "#e1e4e8"
+def get_kpi_card_style(mode: ThemeMode, accent_color: str = "") -> str:
+    t = tokens(mode)
+    accent = accent_color or t["pr"]
     return f"""
-        QFrame {{
-            background-color: {bg};
-            border: 1px solid {border};
-            border-top: 3px solid {accent_color};
-            border-radius: 8px;
+        .QFrame {{
+            background-color: {t['sf']};
+            border: 1px solid {t['bd']};
+            border-top: 3px solid {accent};
+            border-radius: 12px;
             padding: 8px 10px;
         }}
     """
 
 
 def get_filter_chip_style(active: bool, mode: str) -> str:
-    """استایل یکپارچه چیپ‌های فیلتر سریع"""
-    is_dark = (mode == "dark")
+    t = tokens(mode)
     if active:
-        bg = "#1f6feb" if is_dark else "#0969da"
-        color = "#ffffff"
-        border = "1px solid #388bfd" if is_dark else "1px solid #0969da"
+        bg, color, border = t["pr_soft"], t["prt"], f"1px solid {t['pr']}"
     else:
-        bg = "#21262d" if is_dark else "#f6f8fa"
-        color = "#cdd9e5" if is_dark else "#57606a"
-        border = "1px solid #30363d" if is_dark else "1px solid #d0d7de"
-
+        bg, color, border = t["sf2"], t["tx"], f"1px solid {t['bd']}"
     return f"""
         QPushButton {{
-            background-color: {bg};
-            color: {color};
-            border: {border};
-            border-radius: 14px;
-            padding: 4px 12px;
-            font-size: 11px;
+            background-color: {bg}; color: {color}; border: {border};
+            border-radius: 18px; padding: 4px 14px; font-size: 12px; font-weight: 500;
         }}
-        QPushButton:hover {{
-            border-color: {"#58a6ff" if is_dark else "#0969da"};
-        }}
+        QPushButton:hover {{ border-color: {t['prt']}; }}
     """
 
 
 def get_toolbar_frame_style(mode: ThemeMode) -> str:
-    bg = "#161b22" if mode == "dark" else "#ffffff"
-    border = "#30363d" if mode == "dark" else "#e1e4e8"
+    # ".QFrame" فقط خودِ QFrame را هدف می‌گیرد، نه زیرکلاس‌هایی مثل QSplitter
+    t = tokens(mode)
     return f"""
-        QFrame {{
-            background-color: {bg};
-            border: 1px solid {border};
-            border-radius: 8px;
-            padding: 6px 10px;
+        .QFrame {{
+            background-color: {t['sf']};
+            border: 1px solid {t['bd']};
+            border-radius: 14px;
         }}
     """
 
 
 def get_separator_style(mode: ThemeMode) -> str:
-    color = "#30363d" if mode == "dark" else "#d0d7de"
-    return f"background-color: {color};"
+    return f"background-color: {tokens(mode)['bd']}; border: none;"
 
 
 def get_interval_label_style(mode: ThemeMode) -> str:
-    color = "#8b949e" if mode == "dark" else "#666"
-    return f"color: {color}; font-size: 11px;"
+    return f"color: {tokens(mode)['mu']}; font-size: 12px;"
 
 
 def get_inspector_frame_style(mode: ThemeMode) -> str:
-    bg = "#0d1117" if mode == "dark" else "#ffffff"
-    border = "#30363d" if mode == "dark" else "#e2e8f0"
-    return f"background-color: {bg}; border: 1px solid {border}; border-radius: 8px;"
+    t = tokens(mode)
+    return f"background-color: {t['sf']}; border: 1px solid {t['bd']}; border-radius: 16px;"
 
 
 def get_symbol_filter_info_style(mode: ThemeMode) -> str:
-    color = "#8b949e" if mode == "dark" else "#2c3e50"
-    return f"font-weight: bold; color: {color};"
+    return f"font-weight: bold; color: {tokens(mode)['mu']};"
 
 
 def get_info_banner_style(mode: ThemeMode) -> str:
-    bg = "#161b22" if mode == "dark" else "#f0f2f5"
-    border = "#30363d" if mode == "dark" else "#d0d7de"
-    color = "#8b949e" if mode == "dark" else "#2c3e50"
-    return f"background-color: {bg}; border: 1px solid {border}; border-radius: 4px; padding: 8px; color: {color};"
+    t = tokens(mode)
+    return (f"background-color: {t['sf2']}; border: 1px solid {t['bd']}; "
+            f"border-radius: 10px; padding: 10px; color: {t['mu']};")
 
 
 def get_sub_panel_style(mode: ThemeMode) -> str:
-    bg = "#161b22" if mode == "dark" else "#f0f2f5"
-    border = "#30363d" if mode == "dark" else "#d0d7de"
-    return f"background-color: {bg}; border: 1px dashed {border}; border-radius: 4px; padding: 2px;"
+    t = tokens(mode)
+    return f"background-color: {t['sf2']}; border: 1px dashed {t['bd2']}; border-radius: 10px; padding: 2px;"
 
 
 def get_disabled_table_style(mode: ThemeMode) -> str:
-    bg = "#2b2b2b" if mode == "dark" else "#f0f2f5"
-    fg = "#777" if mode == "dark" else "#666"
-    return f"QTableWidget {{ background-color: {bg}; color: {fg}; }}"
+    t = tokens(mode)
+    return f"QTableWidget {{ background-color: {t['sf2']}; color: {t['mu_dis']}; }}"
 
 
 def get_greek_label_style(mode: ThemeMode) -> str:
-    bg = "rgba(255,255,255,0.04)" if mode == "dark" else "rgba(0,0,0,0.04)"
-    return f"font-weight: bold; background-color: {bg}; border-radius: 4px; padding: 4px;"
+    t = tokens(mode)
+    return (f"font-weight: bold; background-color: {t['sf2']}; border: 1px solid {t['bd']}; "
+            f"border-radius: 10px; padding: 6px;")
 
 
 def get_preset_button_style(mode: ThemeMode) -> str:
-    bg = "#21262d" if mode == "dark" else "#f0f2f5"
-    fg = "#8b949e" if mode == "dark" else "#57606a"
-    border = "#30363d" if mode == "dark" else "#d0d7de"
-    hover_bg = "#30363d" if mode == "dark" else "#e1e4e8"
-    hover_fg = "#58a6ff"
-    hover_border = "#58a6ff"
+    t = tokens(mode)
     return f"""
         QPushButton {{
-            background-color: {bg};
-            color: {fg};
-            border: 1px solid {border};
-            border-radius: 4px;
-            padding: 2px 7px;
-            font-size: 11px;
-            font-weight: bold;
+            background-color: {t['sf2']}; color: {t['mu']}; border: 1px solid {t['bd']};
+            border-radius: 8px; padding: 3px 9px; font-size: 11px; font-weight: bold; min-height: 20px;
         }}
-        QPushButton:hover {{
-            background-color: {hover_bg};
-            color: {hover_fg};
-            border-color: {hover_border};
-        }}
+        QPushButton:hover {{ background-color: {t['hover']}; color: {t['prt']}; border-color: {t['prt']}; }}
     """
 
 
 def get_symbol_filter_stats_style(mode: ThemeMode) -> str:
-    if mode == "dark":
-        return (
-            "color: #8b949e; font-size: 9pt; padding: 6px; "
-            "background-color: #161b22; border-radius: 4px;"
-        )
-    return (
-        "color: #34495e; font-size: 9pt; padding: 6px; "
-        "background-color: #ecf0f1; border-radius: 4px;"
-    )
+    t = tokens(mode)
+    return f"color: {t['mu']}; font-size: 9pt; padding: 8px; background-color: {t['sf2']}; border-radius: 8px;"
 
 
 def get_dialog_profile_frame_style(mode: ThemeMode) -> str:
-    if mode == "dark":
-        return "QFrame { background:#21262d; border-radius:8px; padding:6px; }"
-    return "QFrame { background:#f0f2f5; border-radius:8px; padding:6px; }"
+    t = tokens(mode)
+    return f".QFrame {{ background: {t['sf2']}; border: 1px solid {t['bd']}; border-radius: 12px; padding: 6px; }}"
+
+
+def _role_colors(t: Dict[str, str], role: str) -> Dict[str, str]:
+    if role == "primary":
+        return dict(bg=t["pr"], hover=t["pr_h"], text="#FFFFFF", border="none")
+    if role == "success":
+        return dict(bg=t["ok_btn"], hover=t["ok_btn_h"], text="#FFFFFF", border="none")
+    if role == "danger":
+        return dict(bg=t["er_btn"], hover=t["er_btn_h"], text="#FFFFFF", border="none")
+    if role == "warning":
+        return dict(bg=t["wn_btn"], hover=t["wn_btn_h"], text="#FFFFFF", border="none")
+    return dict(bg=t["sf2"], hover=t["hover"], text=t["tx"], border=f"1px solid {t['bd']}")
 
 
 def get_button_style(mode: str, role: str = "primary") -> str:
-    """تولید استایل یکپارچه برای تمام دکمه‌های برنامه"""
-    is_dark = (mode == "dark")
-
-    styles = {
-        "primary": {
-            "bg": "#1f6feb" if is_dark else "#0969da",
-            "hover": "#388bfd" if is_dark else "#1f883d",
-            "text": "#ffffff",
-            "border": "none"
-        },
-        "secondary": {
-            "bg": "#21262d" if is_dark else "#f6f8fa",
-            "hover": "#30363d" if is_dark else "#eef1f5",
-            "text": "#cdd9e5" if is_dark else "#24292f",
-            "border": "1px solid #30363d" if is_dark else "1px solid #d0d7de"
-        },
-        "success": {
-            "bg": "#238636" if is_dark else "#1f883d",
-            "hover": "#2ea043" if is_dark else "#1a7f37",
-            "text": "#ffffff",
-            "border": "none"
-        },
-        "danger": {
-            "bg": "#da3633" if is_dark else "#cf222e",
-            "hover": "#f85149" if is_dark else "#a40e26",
-            "text": "#ffffff",
-            "border": "none"
-        },
-        "warning": {
-            "bg": "#9e6a03" if is_dark else "#d97706",
-            "hover": "#b07804" if is_dark else "#b45309",
-            "text": "#ffffff",
-            "border": "none"
-        }
-    }
-
-    style = styles.get(role, styles["primary"])
-
+    """استایل inline یکپارچه (نسخه‌ی قدیمی API). در فاز بعد: btn.setProperty('role', role)."""
+    t = tokens(mode)
+    c = _role_colors(t, role)
     return f"""
         QPushButton {{
-            background-color: {style['bg']};
-            color: {style['text']};
-            border: {style['border']};
-            border-radius: 6px;
-            padding: 6px 12px;
-            font-weight: bold;
+            background-color: {c['bg']}; color: {c['text']}; border: {c['border']};
+            border-radius: 10px; padding: 7px 14px; font-weight: 600; min-height: 22px;
         }}
-        QPushButton:hover {{
-            background-color: {style['hover']};
-        }}
+        QPushButton:hover {{ background-color: {c['hover']}; }}
         QPushButton:disabled {{
-            background-color: {"#161b22" if is_dark else "#eef1f5"};
-            color: {"#484f58" if is_dark else "#8c959f"};
-            border: {"1px solid #30363d" if is_dark else "1px solid #d0d7de"};
+            background-color: {t['sf']}; color: {t['mu_dis']}; border: 1px solid {t['bd']};
         }}
     """
 
 
-def get_accent_button_style(mode: ThemeMode, accent: str = "#8a2be2", hover: str = "#a855f7") -> str:
-    if mode == "light":
-        bg = "#7b1fa2"
-        hover_bg = "#9c27b0"
-    else:
-        bg = accent
-        hover_bg = hover
+def get_accent_button_style(mode: ThemeMode, accent: str = "#8B7BFF", hover: str = "#A294FF") -> str:
     return f"""
         QPushButton {{
-            background-color: {bg};
-            color: white;
-            border: none;
-            border-radius: 5px;
-            padding: 8px 15px;
-            font-weight: bold;
+            background-color: {accent}; color: white; border: none;
+            border-radius: 10px; padding: 8px 15px; font-weight: bold;
         }}
-        QPushButton:hover {{ background-color: {hover_bg}; }}
+        QPushButton:hover {{ background-color: {hover}; }}
     """
 
 
 def get_dialog_tab_style(mode: ThemeMode) -> str:
-    if mode == "dark":
-        return """
-            QTabWidget::pane { border:1px solid #30363d; border-radius:6px; padding:10px; background:#161b22; }
-            QTabBar::tab { padding:8px 16px; margin-right:4px; border-radius:4px; color:#8b949e; }
-            QTabBar::tab:selected { background:#1f6feb; color:white; }
-        """
-    return """
-        QTabWidget::pane { border:1px solid #d0d7de; border-radius:6px; padding:10px; }
-        QTabBar::tab { padding:8px 16px; margin-right:4px; border-radius:4px; }
-        QTabBar::tab:selected { background:#4a6fa5; color:white; }
+    """استایل تب دیالوگ‌ها؛ با توکن‌ها تا با QSS سراسری هم‌رنگ بماند."""
+    t = tokens(mode)
+    return f"""
+        QTabWidget::pane {{
+            border: 1px solid {t['bd']}; border-radius: 12px;
+            background-color: {t['sf']}; top: -1px; padding: 8px;
+        }}
+        QTabBar::tab {{
+            background: transparent; color: {t['mu']};
+            padding: 8px 16px; margin: 0 2px; border-radius: 8px; font-weight: 600;
+        }}
+        QTabBar::tab:hover {{ color: {t['tx']}; background-color: {t['sf2']}; }}
+        QTabBar::tab:selected {{ background-color: {t['pr_soft']}; color: {t['prt']}; }}
     """
 
 
 def get_dialog_warning_banner_style(mode: ThemeMode) -> str:
-    if mode == "dark":
-        return "background:#3d2e00; border:1px solid #d29922; border-radius:6px; padding:10px; color:#e3b341;"
-    return "background:#fff3cd; border:1px solid #ffc107; border-radius:6px; padding:10px; color:#856404;"
+    t = tokens(mode)
+    return (f"background: {t['wn_soft']}; border: 1px solid {t['wn_line']}; "
+            f"border-radius: 10px; padding: 10px; color: {t['wn']};")
 
+
+# =========================================================================
+# ۵. QSS سراسری
+# =========================================================================
+
+_QSS = Template(r"""
+QToolTip { color:$tx; background-color:$sf2; border:1px solid $bd; padding:5px 9px; border-radius:8px; font-size:11px; }
+QMainWindow, QDialog { background-color:$bg; }
+QWidget { color:$tx; font-family:'Vazirmatn','Shabnam','Segoe UI',Tahoma,sans-serif; }
+QMessageBox { background-color:$sf; }
+QLabel { background:transparent; }
+
+/* ───────── کارت‌ها و اجزای ساختاری ───────── */
+QFrame#card { background-color:$sf; border:1px solid $bd; border-radius:16px; }
+QFrame#chipGroup { background-color:$sf2; border:1px solid $bd; border-radius:12px; }
+QFrame#brandMark { background-color:$pr; border:none; border-radius:12px; }
+QFrame#statTile { background-color:$sf2; border:1px solid $bd; border-radius:12px; }
+QFrame#vsep { background-color:$bd; border:none; min-width:1px; max-width:1px; }
+QFrame#hsep { background-color:$bd; border:none; min-height:1px; max-height:1px; }
+
+QLabel#brandTitle { font-size:16px; font-weight:700; }
+QLabel#brandSub { font-size:12px; color:$mu; }
+QLabel#cardTitle { font-size:14px; font-weight:700; }
+QLabel#cardCaption { font-size:12px; font-weight:600; color:$mu; }
+QLabel#tileCaption { font-size:12px; color:$mu; }
+QLabel#tileValue { font-size:15px; font-weight:700; }
+QLabel#tileValue[tone="ok"] { color:$ok; }
+QLabel#tileValue[tone="er"] { color:$er; }
+QLabel#tileValue[tone="wn"] { color:$wn; }
+QLabel#tileValue[tone="pr"] { color:$prt; }
+QLabel[role="muted"] { color:$mu; font-size:12px; }
+QLabel[role="selectedChip"] { padding:3px 10px; border-radius:11px; background-color:$pr_soft; color:$prt; font-weight:600; font-size:12px; }
+
+QLabel[pill="idle"], QLabel[pill="ok"], QLabel[pill="err"], QLabel[pill="warn"] {
+    padding:3px 10px; border-radius:11px; font-size:11px; font-weight:600;
+    background-color:$sf2; border:1px solid $bd; color:$mu;
+}
+QLabel[pill="ok"]   { color:$ok; background-color:$ok_soft; border-color:$ok_line; }
+QLabel[pill="err"]  { color:$er; background-color:$er_soft; border-color:$er_line; }
+QLabel[pill="warn"] { color:$wn; background-color:$wn_soft; border-color:$wn_line; }
+
+/* ───────── دکمه‌ها ───────── */
+QPushButton { background-color:$sf2; color:$tx; border:1px solid $bd; border-radius:10px; padding:6px 14px; font-weight:600; min-height:24px; }
+QPushButton:hover { background-color:$hover; border-color:$prt; }
+QPushButton:pressed { background-color:$bd; }
+QPushButton:checked { background-color:$pr_soft; border-color:$pr; color:$prt; }
+QPushButton:disabled { color:$mu_dis; background-color:$sf; border-color:$bd; }
+
+QPushButton[role="primary"] { background-color:$pr; color:#FFFFFF; border:1px solid $pr; }
+QPushButton[role="primary"]:hover { background-color:$pr_h; border-color:$pr_h; }
+QPushButton[role="primary"]:disabled { background-color:$pr_soft; color:$mu_dis; border-color:$pr_soft; }
+QPushButton[role="success"] { background-color:$ok_btn; color:#FFFFFF; border:1px solid $ok_btn; }
+QPushButton[role="success"]:hover { background-color:$ok_btn_h; border-color:$ok_btn_h; }
+QPushButton[role="danger"] { background-color:$er_btn; color:#FFFFFF; border:1px solid $er_btn; }
+QPushButton[role="danger"]:hover { background-color:$er_btn_h; border-color:$er_btn_h; }
+QPushButton[role="warning"] { background-color:$wn_btn; color:#FFFFFF; border:1px solid $wn_btn; }
+QPushButton[role="warning"]:hover { background-color:$wn_btn_h; border-color:$wn_btn_h; }
+QPushButton[role="success"]:disabled, QPushButton[role="danger"]:disabled, QPushButton[role="warning"]:disabled {
+    background-color:$sf; color:$mu_dis; border-color:$bd;
+}
+
+QPushButton[chip="true"] { border-radius:20px; padding:4px 14px; font-weight:500; min-height:30px; }
+QPushButton[chip="true"][active="true"] { background-color:$pr_soft; border:1px solid $pr; color:$prt; }
+QPushButton#iconButton { padding:0; min-width:44px; max-width:44px; min-height:44px; max-height:44px; border-radius:12px; }
+
+/* ───────── ورودی‌ها ───────── */
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit, QPlainTextEdit {
+    background-color:$input_bg; color:$tx; border:1px solid $bd; border-radius:10px;
+    padding:6px 10px; selection-background-color:$pr; selection-color:#FFFFFF;
+}
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus { border-color:$pr; }
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled { color:$mu_dis; background-color:$sf; }
+QComboBox::drop-down { border:none; width:24px; }
+QComboBox QAbstractItemView { background-color:$sf; color:$tx; border:1px solid $bd; border-radius:8px; selection-background-color:$pr_soft; selection-color:$tx; outline:0; }
+
+QCheckBox, QRadioButton { spacing:8px; background:transparent; }
+QCheckBox::indicator { width:18px; height:18px; border-radius:5px; border:1.5px solid $bd2; background-color:$input_bg; }
+QCheckBox::indicator:hover { border-color:$pr; }
+QCheckBox::indicator:checked { background-color:$pr; border-color:$pr; image:url('$check'); }
+QRadioButton::indicator { width:16px; height:16px; border-radius:9px; border:1.5px solid $bd2; background-color:$input_bg; }
+QRadioButton::indicator:checked { background-color:$pr; border-color:$pr; }
+
+QSlider::groove:horizontal { height:5px; background:$bd; border-radius:2px; }
+QSlider::sub-page:horizontal { background:$pr; border-radius:2px; }
+QSlider::handle:horizontal { background:#FFFFFF; border:2px solid $pr; width:14px; margin:-6px 0; border-radius:8px; }
+
+/* ───────── جدول‌ها ───────── */
+QTableView, QTableWidget { background-color:$sf; alternate-background-color:$sf; gridline-color:transparent; border:none; outline:0; selection-background-color:$sel; selection-color:$tx; }
+QTableView::item { padding:0 8px; border:none; border-bottom:1px solid $bd; }
+QTableView::item:hover { background-color:$hover_row; }
+QTableView::item:selected { background-color:$sel; color:$tx; }
+QTableView::indicator { width:16px; height:16px; border-radius:4px; border:1.5px solid $bd2; background-color:$input_bg; }
+QTableView::indicator:checked { background-color:$pr; border-color:$pr; image:url('$check'); }
+QHeaderView { background-color:$sf2; border:none; }
+QHeaderView::section { background-color:$sf2; color:$mu; padding:10px 8px; border:none; border-bottom:1px solid $bd; font-weight:600; font-size:12px; }
+QHeaderView::section:hover { color:$tx; }
+QTableCornerButton::section { background-color:$sf2; border:none; }
+
+QListView, QListWidget { background-color:$sf; alternate-background-color:$sf2; border:1px solid $bd; border-radius:10px; outline:0; }
+QListView::item { padding:6px 8px; border-radius:6px; }
+QListView::item:hover { background-color:$hover; }
+QListView::item:selected { background-color:$pr_soft; color:$tx; }
+
+/* ───────── کانتینرها ───────── */
+QGroupBox { font-weight:700; border:1px solid $bd; border-radius:12px; margin-top:14px; padding:14px 12px 10px 12px; background-color:$sf; }
+QGroupBox::title { subcontrol-origin:margin; subcontrol-position:top right; padding:0 8px; color:$prt; }
+QTabWidget::pane { border:1px solid $bd; border-radius:12px; background-color:$sf; top:-1px; }
+QTabBar::tab { background:transparent; color:$mu; padding:8px 16px; margin:0 2px; border-radius:8px; font-weight:600; }
+QTabBar::tab:hover { color:$tx; background-color:$sf2; }
+QTabBar::tab:selected { background-color:$pr_soft; color:$prt; }
+QSplitter::handle { background:transparent; }
+QSplitter::handle:hover { background-color:$bd; }
+
+QMenu { background-color:$sf; color:$tx; border:1px solid $bd; border-radius:10px; padding:6px; }
+QMenu::item { padding:8px 22px 8px 16px; border-radius:6px; }
+QMenu::item:selected { background-color:$pr_soft; color:$prt; }
+QMenu::separator { height:1px; background:$bd; margin:4px 8px; }
+
+QProgressBar { background-color:$sf2; border:1px solid $bd; border-radius:7px; text-align:center; color:$tx; font-size:11px; min-height:14px; }
+QProgressBar::chunk { background-color:$pr; border-radius:6px; }
+QStatusBar { background-color:$sf; border-top:1px solid $bd; color:$mu; }
+QStatusBar::item { border:none; }
+
+/* ───────── اسکرول‌بار ───────── */
+QAbstractScrollArea::corner { background:transparent; }
+QScrollBar:vertical { background:transparent; width:12px; margin:2px; }
+QScrollBar::handle:vertical { background:$scroll; min-height:32px; border-radius:4px; margin:0 2px; }
+QScrollBar::handle:vertical:hover { background:$scroll_h; }
+QScrollBar::handle:vertical:pressed { background:$prt; }
+QScrollBar:horizontal { background:transparent; height:12px; margin:2px; }
+QScrollBar::handle:horizontal { background:$scroll; min-width:32px; border-radius:4px; margin:2px 0; }
+QScrollBar::handle:horizontal:hover { background:$scroll_h; }
+QScrollBar::handle:horizontal:pressed { background:$prt; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; height:0; background:none; border:none; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical, QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background:transparent; }
+""")
+
+
+def _check_icon_path() -> str:
+    """آیکون تیکِ سفید برای چک‌باکس‌ها (فایل PNG موقت؛ QSS فقط با فایل می‌تواند image بگیرد)."""
+    try:
+        from ui import icons
+        return icons.write_png("check", "#FFFFFF", 14, "check_white.png")
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"check icon not generated: {e}")
+        return ""
+
+
+def get_global_stylesheet(mode: ThemeMode) -> str:
+    t = tokens(mode)
+    t["check"] = _check_icon_path()
+    return _QSS.safe_substitute(t)
+
+
+# =========================================================================
+# ۶. Palette و تشخیص تم سیستم
+# =========================================================================
 
 def _detect_system_dark() -> bool:
     try:
@@ -435,205 +638,19 @@ def _detect_system_dark() -> bool:
 
 
 def _apply_palette(app: QApplication, mode: ThemeMode) -> None:
-    palette = QPalette()
-    if mode == "dark":
-        palette.setColor(QPalette.ColorRole.Window, QColor(13, 17, 23))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(205, 217, 229))
-        palette.setColor(QPalette.ColorRole.Base, QColor(22, 27, 34))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(13, 17, 23))
-        palette.setColor(QPalette.ColorRole.Text, QColor(205, 217, 229))
-        palette.setColor(QPalette.ColorRole.Button, QColor(33, 38, 45))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(205, 217, 229))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(56, 139, 253))
-        palette.setColor(QPalette.ColorRole.HighlightedText,
-                         QColor(255, 255, 255))
-
-        # تنظیم رنگ ToolTip در Palette سیستم (جهت پشتیبانی کامل‌تر)
-        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(33, 38, 45))
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(201, 209, 217))
-    else:
-        palette = app.style().standardPalette()
-        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(255, 255, 255))
-        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(36, 41, 47))
-    app.setPalette(palette)
-
-
-_LIGHT_GLOBAL_STYLE = """
-QToolTip {
-    color: #24292f;
-    background-color: #ffffff;
-    border: 1px solid #d0d7de;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-family: 'Vazirmatn', 'Shabnam', 'Segoe UI', Tahoma, sans-serif;
-}
-QMainWindow, QDialog { background-color: #f6f8fa; }
-QWidget { color: #24292e; font-family: 'Vazirmatn', 'Shabnam', 'Segoe UI', Tahoma, sans-serif; }
-QTableView, QTableWidget {
-    background-color: white;
-    alternate-background-color: #f6f8fa;
-    gridline-color: #e1e4e8;
-    selection-background-color: #cfe2ff;
-    selection-color: #000000;
-    color: #24292e;
-    border: 1px solid #d0d7de;
-    border-radius: 6px;
-}
-QHeaderView::section {
-    background-color: #f6f8fa;
-    color: #24292e;
-    padding: 6px;
-    border: 1px solid #d0d7de;
-    font-weight: bold;
-    font-size: 11px;
-}
-QPushButton {
-    background-color: #f6f8fa;
-    color: #24292f;
-    border: 1px solid #d0d7de;
-    padding: 6px 14px;
-    border-radius: 6px;
-    font-weight: bold;
-}
-QPushButton:hover {
-    background-color: #f3f4f6;
-    border-color: #0969da;
-    color: #0969da;
-}
-QMenu { background-color: white; color: #24292e; border: 1px solid #d0d7de; border-radius: 6px; padding: 4px 0; }
-QMenu::item { padding: 8px 24px 8px 16px; }
-QMenu::item:selected { background-color: #e8f0fe; color: #1a73e8; }
-QGroupBox { font-weight: bold; border: 1px solid #d0d7de; border-radius: 6px; margin-top: 10px; padding: 10px; background-color: #ffffff; }
-QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top right; padding: 0 6px; color: #1f6feb; }
-QProgressBar { border: 1px solid #d0d7de; border-radius: 4px; text-align: center; color: #24292e; }
-QProgressBar::chunk { background-color: #2ea043; border-radius: 4px; }
-QStatusBar { background-color: #ffffff; border-top: 1px solid #d0d7de; color: #57606a; }
-"""
-
-_DARK_GLOBAL_STYLE = """
-QToolTip {
-    color: #c9d1d9;
-    background-color: #21262d;
-    border: 1px solid #30363d;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-family: 'Vazirmatn', 'Shabnam', 'Segoe UI', Tahoma, sans-serif;
-}
-QMainWindow, QDialog { background-color: #0d1117; }
-QWidget { color: #cdd9e5; font-family: 'Vazirmatn', 'Shabnam', 'Segoe UI', Tahoma, sans-serif; }
-QTableView, QTableWidget {
-    background-color: #161b22;
-    alternate-background-color: #0d1117;
-    gridline-color: #30363d;
-    selection-background-color: #1f3a5f;
-    selection-color: #ffffff;
-    color: #cdd9e5;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-}
-QHeaderView::section {
-    background-color: #161b22;
-    color: #8b949e;
-    padding: 6px;
-    border: 1px solid #30363d;
-    font-weight: bold;
-    font-size: 11px;
-}
-QPushButton {
-    background-color: #21262d;
-    color: #cdd9e5;
-    border: 1px solid #30363d;
-    padding: 6px 14px;
-    border-radius: 6px;
-    font-weight: bold;
-}
-QPushButton:hover {
-    background-color: #30363d;
-    border-color: #58a6ff;
-    color: #58a6ff;
-}
-QMenu { background-color: #161b22; color: #cdd9e5; border: 1px solid #30363d; border-radius: 6px; padding: 4px 0; }
-QMenu::item { padding: 8px 24px 8px 16px; }
-QMenu::item:selected { background-color: #1f3a5f; color: #58a6ff; }
-QGroupBox { font-weight: bold; border: 1px solid #30363d; border-radius: 6px; margin-top: 10px; padding: 10px; background-color: #161b22; }
-QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top right; padding: 0 6px; color: #58a6ff; }
-QProgressBar { border: 1px solid #30363d; border-radius: 4px; text-align: center; color: #cdd9e5; background-color: #161b22; }
-QProgressBar::chunk { background-color: #238636; border-radius: 4px; }
-QStatusBar { background-color: #161b22; border-top: 1px solid #30363d; color: #8b949e; }
-
-/* ═══ اسکرول‌بار (تم تاریک) — روشن‌تر برای دید بهتر ═══ */
-QScrollBar:vertical {
-    background: #1c2128;
-    width: 14px;
-    margin: 0;
-    border: none;
-    border-radius: 0;
-}
-QScrollBar::handle:vertical {
-    background: #4d5560;
-    min-height: 30px;
-    border-radius: 6px;
-    margin: 2px;
-}
-QScrollBar::handle:vertical:hover {
-    background: #6e7681;
-}
-QScrollBar::handle:vertical:pressed {
-    background: #8b949e;
-}
-QScrollBar::add-line:vertical,
-QScrollBar::sub-line:vertical {
-    height: 0;
-    background: none;
-    border: none;
-}
-QScrollBar::add-page:vertical,
-QScrollBar::sub-page:vertical {
-    background: transparent;
-}
-QScrollBar::up-arrow:vertical,
-QScrollBar::down-arrow:vertical {
-    background: none;
-    width: 0;
-    height: 0;
-}
-
-QScrollBar:horizontal {
-    background: #1c2128;
-    height: 14px;
-    margin: 0;
-    border: none;
-    border-radius: 0;
-}
-QScrollBar::handle:horizontal {
-    background: #4d5560;
-    min-width: 30px;
-    border-radius: 6px;
-    margin: 2px;
-}
-QScrollBar::handle:horizontal:hover {
-    background: #6e7681;
-}
-QScrollBar::handle:horizontal:pressed {
-    background: #8b949e;
-}
-QScrollBar::add-line:horizontal,
-QScrollBar::sub-line:horizontal {
-    width: 0;
-    background: none;
-    border: none;
-}
-QScrollBar::add-page:horizontal,
-QScrollBar::sub-page:horizontal {
-    background: transparent;
-}
-QScrollBar::left-arrow:horizontal,
-QScrollBar::right-arrow:horizontal {
-    background: none;
-    width: 0;
-    height: 0;
-}
-
-"""
+    t = tokens(mode)
+    p = QPalette()
+    p.setColor(QPalette.ColorRole.Window, QColor(t["bg"]))
+    p.setColor(QPalette.ColorRole.WindowText, QColor(t["tx"]))
+    p.setColor(QPalette.ColorRole.Base, QColor(t["sf"]))
+    p.setColor(QPalette.ColorRole.AlternateBase, QColor(t["sf2"]))
+    p.setColor(QPalette.ColorRole.Text, QColor(t["tx"]))
+    p.setColor(QPalette.ColorRole.Button, QColor(t["sf2"]))
+    p.setColor(QPalette.ColorRole.ButtonText, QColor(t["tx"]))
+    p.setColor(QPalette.ColorRole.Highlight, QColor(t["pr"]))
+    p.setColor(QPalette.ColorRole.HighlightedText, QColor("#FFFFFF"))
+    p.setColor(QPalette.ColorRole.PlaceholderText, QColor(t["mu"]))
+    p.setColor(QPalette.ColorRole.Link, QColor(t["prt"]))
+    p.setColor(QPalette.ColorRole.ToolTipBase, QColor(t["sf2"]))
+    p.setColor(QPalette.ColorRole.ToolTipText, QColor(t["tx"]))
+    app.setPalette(p)

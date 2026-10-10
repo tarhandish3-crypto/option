@@ -1,4 +1,4 @@
-# 0myStrategy/bull_call_spread.py
+# 0myStrategy/Bull_call_spread.py
 # -*- coding: utf-8 -*-
 
 import sys

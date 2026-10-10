@@ -1,0 +1,1077 @@
+# 0myStrategy/Bear_put_spread.py
+# -*- coding: utf-8 -*-
+
+import sys
+from pathlib import Path
+
+current_file_path = Path(__file__).resolve()
+current_dir = current_file_path.parent
+root_dir = current_dir.parent
+sys.path.append(str(root_dir))
+
+import json
+import math
+import warnings
+import logging
+
+import numpy as np
+import pandas as pd
+import requests
+from scipy.stats import norm
+
+from config import (
+    EXERCISE_TAX_RATE,
+    get_commission_rate,
+    get_exercise_fee_rate,
+    get_symbol_kind,
+    get_symbol_market,
+)
+from data.cleaner import DataCleaner
+from data.downloader import MarketDownloader
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+
+warnings.filterwarnings('ignore')
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# 🎯 بارگذاری پیکربندی Bale از user_settings.json
+# ============================================================
+
+def load_bale_config():
+
+    settings_file = root_dir / "user_settings.json"
+
+    try:
+        with open(settings_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        active_profile = data.get('active_profile', '')
+        profiles = data.get('profiles')
+
+        if active_profile and active_profile in profiles:
+            profile_data = profiles[active_profile]
+            bale_config = profile_data.get('bale')
+
+            return {
+                "enabled": bool(bale_config.get('enabled', False)),
+                "bot_token": str(bale_config.get('bot_token')),
+                "chat_id": str(bale_config.get('chat_id')),
+                "top_n": int(bale_config.get('top_n', 1)),
+            }
+
+    except json.JSONDecodeError as e:
+        print(f"[BALE-CONFIG] ERROR: Invalid JSON: {e}")
+        return {}
+    except Exception as e:
+        print(f"[BALE-CONFIG] ERROR: {e}")
+        return {}
+
+
+# ============================================================
+# بارگذاری پیکربندی در زمان import
+# ============================================================
+
+_BALE_CONFIG = load_bale_config()
+
+BALE_ENABLED = _BALE_CONFIG.get('enabled', False)
+BALE_BOT_TOKEN = _BALE_CONFIG.get('bot_token', '')
+BALE_CHAT_ID = _BALE_CONFIG.get('chat_id', '')
+BALE_TOP_N = _BALE_CONFIG.get('top_n', 1)
+
+BALE_PARSE_MODE = "Markdown"
+BALE_TIMEOUT = 10
+
+BALE_DEDUP_ENABLED = True
+BALE_SENT_HISTORY_FILE = current_dir / "sent_positions_bear_put.json"
+
+
+# ============================================================
+# ثابت‌های Sentinel
+# ============================================================
+RISK_FREE_BREAK_EVEN_SENTINEL = -999.0
+RISK_FREE_RETURN_SENTINEL = 999999.0
+RISK_FREE_SCORE_SENTINEL = 999999.0
+NEAR_EXPIRY_SCORE_BASE = RISK_FREE_SCORE_SENTINEL - 111111.0
+NEAR_EXPIRY_PROB_SURVIVAL = 0.95
+
+
+# ============================================================
+# پارامترهای پیش‌فرض
+# ============================================================
+
+DEFAULT_MIN_MONTHLY_RETURN = 7.0
+DEFAULT_MIN_MARGIN_FLOOR = 20.0
+DEFAULT_MARGIN_PERCENTILE = 60
+DEFAULT_MIN_RR_RATIO = 0.1
+DEFAULT_W_R = 0.4
+DEFAULT_W_M = 0.6
+DEFAULT_SIGMA_FALLBACK = 0.30
+DEFAULT_MIN_M_RISK = 2.0
+DEFAULT_DECISION_THRESHOLD = 3.0
+
+DEFAULT_VOL_QUALITY_POWER = 0.3
+DEFAULT_IMBALANCE_POWER = 0.5
+
+NEAR_EXPIRY_THRESHOLD_DAYS = 1.0
+NEAR_EXPIRY_MIN_RETURN = 1.5
+NEAR_EXPIRY_MIN_MARGIN = 2.0
+NEAR_EXPIRY_W_R = 0.6
+NEAR_EXPIRY_W_M = 0.4
+T_DISPLAY_EPSILON = 0.02
+
+VOLATILITY_FILE_NAME = "Historical_Volatility.xlsx"
+
+
+# ==========================================================================================
+# بخش ۰: Bale Notifier (داخلی)
+# ==========================================================================================
+
+def send_message_to_bale(message_text, bot_token=None, chat_id=None,
+                          parse_mode=None, timeout=None):
+    """ارسال پیام متنی به پیام‌رسان بله."""
+    if not BALE_ENABLED:
+        return None
+
+    token = bot_token or BALE_BOT_TOKEN
+    c_id = chat_id or BALE_CHAT_ID
+    mode = parse_mode if parse_mode is not None else BALE_PARSE_MODE
+    t_out = timeout or BALE_TIMEOUT
+
+    if not token:
+        print("[BALE] Bot token is not configured.")
+        return None
+
+    if not c_id:
+        print("[BALE] Chat ID is not configured.")
+        return None
+
+    url = f'https://tapi.bale.ai/bot{token}/sendMessage'
+    payload = {"chat_id": c_id, "text": message_text}
+    if mode:
+        payload["parse_mode"] = mode
+
+    headers = {"Content-Type": "application/json"}
+
+    try:
+        response = requests.post(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+            headers=headers,
+            timeout=t_out
+        )
+        if response.status_code == 200:
+            print(f"[BALE] Message sent successfully.")
+            return response.json()
+        else:
+            print(f"[BALE] Failed: HTTP {response.status_code} - {response.text[:200]}")
+            return None
+    except requests.exceptions.Timeout:
+        print("[BALE] Timeout occurred.")
+        return None
+    except Exception as e:
+        print(f"[BALE] Error: {e}")
+        return None
+
+
+def _format_number(value, decimals=0):
+    """فرمت عدد با کاما."""
+    if value is None or pd.isna(value):
+        return "N/A"
+    try:
+        if decimals > 0:
+            return f"{float(value):,.{decimals}f}"
+        return f"{int(round(float(value))):,}"
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def build_bear_put_spread_message(row):
+    """ساخت پیام Bear Put Spread برای ارسال به بله."""
+    underlying = row.get('underlying', 'N/A')
+    long_sym = row.get('long_option_symbol', 'N/A')
+    long_strike = row.get('long_strike', 0)
+    long_premium = row.get('long_ask_premium', 0)
+    short_sym = row.get('short_option_symbol', 'N/A')
+    short_strike = row.get('short_strike', 0)
+    short_premium = row.get('short_bid_premium', 0)
+    stock_price = row.get('stock_price', 0)
+    break_even = row.get('break_even_price', 0)
+    capital = row.get('capital_at_risk', 0)
+    monthly_return = row.get('monthly_return_%', 0)
+    score = row.get('composite_score', 0)
+    days = row.get('days_to_maturity', 0)
+    margin30 = row.get('margin30', 0)
+    raw_margin = row.get('raw_margin_percent', 0)
+    maturity_date = row.get('maturity_date', 'N/A')
+
+    message = (
+        "🤖 *فرصت جدید استراتژی Bear Put Spread*" + "\n"
+        + "------------------------------------" + "\n"
+        + f"📌 *نماد پایه:* `{underlying}`" + "\n"
+        + f"🟢 *ساق خرید (Put با اعمال بالاتر):* `{long_sym}` "
+          f"(اعمال: {_format_number(long_strike)} | پریمیوم: {_format_number(long_premium)})" + "\n"
+        + f"🔴 *ساق فروش (Put با اعمال پایین‌تر):* `{short_sym}` "
+          f"(اعمال: {_format_number(short_strike)} | پریمیوم: {_format_number(short_premium)})" + "\n"
+        + "------------------------------------" + "\n"
+        + f"📊 *قیمت سهم پایه:* `{_format_number(stock_price)}` ریال" + "\n"
+        + f"🎯 *قیمت سربه‌سر:* `{_format_number(break_even)}` ریال" + "\n"
+        + f"🛡 *حاشیه امنیت واقعی (افت مجاز):* `%{_format_number(raw_margin, 2)}`" + "\n"
+        + f"📐 *حاشیه امنیت ماهانه:* `%{_format_number(margin30, 2)}`" + "\n"
+        + f"💰 *سرمایه درگیر:* `{_format_number(capital)}` ریال" + "\n"
+        + f"📈 *سود ماهانه:* `%{_format_number(monthly_return, 1)}`" + "\n"
+        + f"🏆 *امتیازبندی:* `{_format_number(score, 1)}`" + "\n"
+        + f"⏱ *روز تا سررسید:* `{days}` روز" + "\n"
+        + f"📅 *تاریخ اعمال:* `{maturity_date}`"
+    )
+
+    return message
+
+
+# ==========================================================================================
+# بخش ۰.۵: مدیریت تاریخچه ارسال به بله (جلوگیری از تکرار)
+# ==========================================================================================
+
+def _load_sent_history():
+    """بارگذاری تاریخچه ارسال‌شده از فایل JSON."""
+    if not BALE_DEDUP_ENABLED:
+        return {}
+
+    if not BALE_SENT_HISTORY_FILE.exists():
+        return {}
+
+    try:
+        with open(BALE_SENT_HISTORY_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except Exception as e:
+        print(f"[BALE-DEDUP] Error loading history: {e}")
+        return {}
+
+
+def _save_sent_history(history):
+    """ذخیره تاریخچه در فایل JSON."""
+    if not BALE_DEDUP_ENABLED:
+        return
+
+    try:
+        with open(BALE_SENT_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[BALE-DEDUP] Error saving history: {e}")
+
+
+def _build_fingerprint(underlying, long_sym, short_sym, days, strategy):
+    """ساخت اثر انگشت یکتا برای یک موقعیت."""
+    s = str(strategy).strip()
+    u = str(underlying).strip()
+    l = str(long_sym).strip()
+    sh = str(short_sym).strip()
+    d = str(int(days))
+    return f"{s}|{u}|{l}|{sh}|{d}"
+
+
+def _is_already_sent(fingerprint, history):
+    """آیا این موقعیت قبلاً ارسال شده است؟"""
+    return fingerprint in history
+
+
+def _mark_as_sent(fingerprint, history, row, strategy_type="bear_put_spread"):
+    """ثبت موقعیت به‌عنوان ارسال‌شده."""
+    raw_score = row.get('composite_score', 0)
+
+    if isinstance(raw_score, str):
+        score_value = (
+            RISK_FREE_SCORE_SENTINEL if raw_score.strip() == 'Risk Free'
+            else 0.0
+        )
+    else:
+        try:
+            score_value = float(raw_score) if pd.notna(raw_score) else 0.0
+        except (ValueError, TypeError):
+            score_value = 0.0
+
+    history[fingerprint] = {
+        'sent_at': pd.Timestamp.now().isoformat(),
+        'strategy': strategy_type,
+        'underlying': str(row.get('underlying', '')),
+        'long_option_symbol': str(row.get('long_option_symbol', '')),
+        'short_option_symbol': str(row.get('short_option_symbol', '')),
+        'days_to_maturity': int(row.get('days_to_maturity', 0)),
+        'maturity_date': str(row.get('maturity_date', '')),
+        'composite_score': score_value,
+    }
+
+
+def send_best_position_to_bale(result_df):
+
+    if not BALE_ENABLED:
+        print("\n[SKIP] Bale notification is disabled.")
+        return
+
+    if not BALE_BOT_TOKEN or not BALE_CHAT_ID:
+        print("\n[SKIP] Bale bot_token or chat_id is not configured.")
+        return
+
+    if result_df is None or result_df.empty:
+        print("\n[BALE] No results to send.")
+        return
+
+    enter_df = result_df[result_df['decision'] == 'ENTER']
+    if enter_df.empty:
+        print("\n[BALE] No ENTER positions.")
+        return
+
+    history = _load_sent_history()
+    print(f"\n[BALE-DEDUP] History: {len(history)} records.")
+
+    pool_size = max(BALE_TOP_N * 10, 20)
+    candidate_pool = enter_df.head(min(len(enter_df), pool_size))
+    print(f"[BALE-DEDUP] Candidate pool: {len(candidate_pool)} positions "
+          f"(looking for up to {BALE_TOP_N} new).")
+
+    sent_count = 0
+    skipped_count = 0
+
+    for _, row in candidate_pool.iterrows():
+        if sent_count >= BALE_TOP_N:
+            break
+
+        fingerprint = _build_fingerprint(
+            underlying=row.get('underlying', ''),
+            long_sym=row.get('long_option_symbol', ''),
+            short_sym=row.get('short_option_symbol', ''),
+            days=row.get('days_to_maturity', 0),
+            strategy="bear_put_spread",
+        )
+
+        if _is_already_sent(fingerprint, history):
+            print(f"[BALE-DEDUP] SKIP duplicate: {fingerprint}")
+            skipped_count += 1
+            continue
+
+        msg = build_bear_put_spread_message(row)
+        result = send_message_to_bale(msg)
+
+        if result is not None:
+            _mark_as_sent(
+                fingerprint, history, row,
+                strategy_type="bear_put_spread"
+            )
+            sent_count += 1
+            print(f"[BALE-DEDUP] SENT new: {fingerprint}")
+
+    _save_sent_history(history)
+    print(f"[BALE-DEDUP] Sent: {sent_count}, Skipped: {skipped_count}")
+
+    if sent_count == 0:
+        print(f"[BALE-DEDUP] WARNING: No new positions to send "
+              f"(all {len(candidate_pool)} candidates were duplicates).")
+
+
+# ============================================================
+# لایه ۱: محاسبه پارامترهای هر اسپرد (Bear Put)
+# ============================================================
+def bear_put_spread_analysis(
+    stock_price,
+    long_strike,
+    long_ask_premium,
+    short_strike,
+    short_bid_premium,
+    contract_size,
+    opt_buy_commission,
+    opt_sell_commission,
+    exercise_fee_rate,
+    exercise_tax_rate,
+    days,):
+    """
+    محاسبه پارامترهای استراتژی Bear Put Spread با کارمزد و مالیات.
+    """
+    # ===== پریمیوم‌ها =====
+    long_premium_total = round(long_ask_premium * contract_size, 0)
+    long_entry_fee = round(long_premium_total * opt_buy_commission, 0)
+
+    short_premium_total = round(short_bid_premium * contract_size, 0)
+    short_entry_fee = -round(short_premium_total * opt_sell_commission, 0)
+
+    # ===== بدهی خالص (Net Debit) =====
+    # ما پول می‌دهیم چون Long Put گران‌تر از Short Put است
+    net_debit = (long_premium_total + long_entry_fee) - (
+        short_premium_total + short_entry_fee)
+
+    # ===== هزینه‌های اعمال در سررسید =====
+    # هر دو ساق Put در سررسید در سود قرار می‌گیرند (اگر قیمت سهم زیر K_short باشد)
+    # و اعمال می‌شوند. لذا هزینه اعمال برای هر دو ساق محاسبه می‌شود.
+    long_exercise_fee = round((long_strike * contract_size) * exercise_fee_rate, 0)
+    short_exercise_fee = round((short_strike * contract_size) * exercise_fee_rate, 0)
+    # مالیات نقل و انتقال روی ساق فروش (که متعهد خرید است) لحاظ می‌شود
+    short_transfer_tax = round((short_strike * contract_size) * exercise_tax_rate, 0)
+
+    short_total_exercise_cost = short_exercise_fee + short_transfer_tax
+    total_exercise_costs = long_exercise_fee + short_total_exercise_cost
+
+    # ===== حداکثر سود/زیان =====
+    min_profit_or_loss = -net_debit
+    max_payoff = (long_strike - short_strike) * contract_size
+    max_net_profit = max_payoff - net_debit - total_exercise_costs
+
+    if max_net_profit <= 0 or net_debit <= 0:
+        return {'status': 'DISCARD'}
+
+    capital_at_risk = max(1.0, net_debit)
+    days_raw = float(days)
+    is_near_expiry = days_raw <= NEAR_EXPIRY_THRESHOLD_DAYS
+
+    # ===== حالت آربیتراژ =====
+    if min_profit_or_loss >= 0:
+        return {
+            'status': 'RISK_FREE',
+            'is_near_expiry': False,
+            'capital_at_risk': 0,
+            'max_net_profit': max_net_profit,
+            'max_profit_percent': 'Arbitrage',
+            'monthly_return': RISK_FREE_RETURN_SENTINEL,
+            'break_even_price': 'Risk Free',
+            'break_even_percent': RISK_FREE_BREAK_EVEN_SENTINEL,
+            'break_even_percent_scale': RISK_FREE_BREAK_EVEN_SENTINEL,
+            'risk_reward_ratio': 'Infinite',
+            'raw_return_percent': None,
+            'raw_margin_percent': None,
+        }
+
+    # ===== سربه‌سر =====
+    # در Put Spread سربه‌سر پایین‌تر از K_long است
+    # Break Even = K_long − (NetDebit + LongExerciseFee) / ContractSize
+    break_even_price = long_strike - ((net_debit + long_exercise_fee) / contract_size)
+
+    # ===== محاسبه حاشیه امنیت =====
+    # در Bear Put: حاشیه امنیت = درصد افت مجاز قیمت سهم تا سربه‌سر
+    # Margin% = ((StockPrice − BreakEven) / StockPrice) × 100
+    # اگر قیمت فعلی بالاتر از سربه‌سر باشد، حاشیه مثبت است.
+    if stock_price > 0:
+        margin_percent = round(
+            ((stock_price - break_even_price) / stock_price) * 100, 2)
+    else:
+        margin_percent = 0.0
+
+    # در Bull Call از -break_even_percent استفاده می‌شد.
+    # در Bear Put، break_even_percent منفی است (سربه‌سر پایین‌تر از قیمت فعلی)
+    # و raw_margin_percent = -break_even_percent مثبت می‌شود.
+    break_even_percent = round(
+        ((break_even_price - stock_price) / stock_price) * 100, 2) if stock_price > 0 else 0.0
+    raw_margin_percent = -break_even_percent
+
+    max_profit_percent = round((max_net_profit / capital_at_risk) * 100, 2)
+    raw_return_percent = max_profit_percent
+    risk_reward_ratio = round(max_net_profit / capital_at_risk, 2)
+
+    days_safe_for_display = max(T_DISPLAY_EPSILON, days_raw)
+    time_factor = math.sqrt(days_safe_for_display / 30.0)
+
+    break_even_percent_scale = round(break_even_percent / time_factor, 2)
+    monthly_return = round(max_profit_percent * (30 / days_safe_for_display), 2)
+
+    return {
+        'status': 'VALID',
+        'is_near_expiry': is_near_expiry,
+        'capital_at_risk': capital_at_risk,
+        'max_net_profit': max_net_profit,
+        'max_profit_percent': max_profit_percent,
+        'monthly_return': monthly_return,
+        'break_even_price': round(break_even_price, 0),
+        'break_even_percent': break_even_percent,
+        'break_even_percent_scale': break_even_percent_scale,
+        'risk_reward_ratio': risk_reward_ratio,
+        'raw_return_percent': raw_return_percent,
+        'raw_margin_percent': raw_margin_percent,
+    }
+
+
+# ============================================================
+# لایه ۰.۵: بارگذاری پروفایل نوسان
+# ============================================================
+def load_volatility_profile():
+    """بارگذاری پروفایل نوسان از Historical_Volatility.xlsx."""
+    filepath = current_dir / VOLATILITY_FILE_NAME
+
+    if not filepath.exists():
+        print(f"WARNING: Volatility file not found: {filepath}")
+        return pd.DataFrame()
+
+    try:
+        df_vol = pd.read_excel(filepath)
+        required_cols = ['UnderlyingTicker', 'HV_60']
+        missing = [c for c in required_cols if c not in df_vol.columns]
+        if missing:
+            print(f"WARNING: Missing columns: {missing}")
+            return pd.DataFrame()
+
+        df_vol = df_vol.rename(columns={'UnderlyingTicker': 'underlying'})
+
+        keep_cols = ['underlying', 'HV_60']
+        if 'VolatilityQualityScore' in df_vol.columns:
+            keep_cols.append('VolatilityQualityScore')
+
+        return df_vol[keep_cols].copy()
+
+    except Exception as e:
+        print(f"ERROR loading volatility file: {e}")
+        return pd.DataFrame()
+
+
+# ============================================================
+# لایه ۱ (تکمیلی): افزودن M_30 و M_risk
+# ============================================================
+def add_margin30_column(df):
+    """استخراج M_30 از break_even_percent_scale."""
+    df = df.copy()
+    risk_free_mask = df['break_even_percent_scale'] == RISK_FREE_BREAK_EVEN_SENTINEL
+    # margin30 = -break_even_percent_scale
+    df['margin30'] = -df['break_even_percent_scale'].astype(float)
+    df.loc[risk_free_mask, 'margin30'] = np.inf
+    df['is_risk_free'] = risk_free_mask
+    return df
+
+
+def add_margin_risk_column(df):
+    """محاسبه M_risk و Z_score با استفاده از HV_60 واقعی."""
+    df = df.copy()
+    if 'margin30' not in df.columns:
+        df = add_margin30_column(df)
+
+    risk_free_mask = df['is_risk_free']
+    raw_margin_fraction = df['raw_margin_percent'].astype(float) / 100.0
+
+    if 'HV_60' in df.columns:
+        sigma = df['HV_60'].fillna(DEFAULT_SIGMA_FALLBACK).clip(
+            lower=0.05, upper=2.0)
+    else:
+        sigma = pd.Series(DEFAULT_SIGMA_FALLBACK, index=df.index)
+
+    T = df['days_to_maturity'].astype(float).clip(lower=T_DISPLAY_EPSILON)
+    df['M_risk'] = raw_margin_fraction / (sigma * np.sqrt(T / 365.0))
+    df.loc[risk_free_mask, 'M_risk'] = np.inf
+    df['Z_score'] = df['M_risk']
+
+    return df
+
+
+# ============================================================
+# لایه ۲: فیلتر سخت‌گیرانه
+# ============================================================
+def apply_hard_constraints(
+    df,
+    min_monthly_return,
+    min_margin_floor,
+    margin_percentile,
+    min_m_risk,
+    near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
+    near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,):
+    """فیلتر سخت‌گیرانه."""
+    if df.empty:
+        return df
+
+    df = add_margin30_column(df)
+
+    risk_free_mask = df['is_risk_free']
+    near_expiry_mask = df['is_near_expiry'].fillna(False) & (~risk_free_mask)
+    normal_mask = ~(risk_free_mask | near_expiry_mask)
+
+    df_rf = df[risk_free_mask].copy()
+    df_near = df[near_expiry_mask].copy()
+    df_normal = df[normal_mask].copy()
+
+    if not df_near.empty:
+        df_near = df_near[
+            (df_near['raw_return_percent'] >= near_expiry_min_return)
+            & (df_near['raw_margin_percent'] >= near_expiry_min_margin)].copy()
+
+    if not df_normal.empty:
+        df_normal = df_normal[
+            df_normal['monthly_return_%'] >= min_monthly_return].copy()
+
+        if not df_normal.empty:
+            dynamic_threshold = np.percentile(
+                df_normal['margin30'], margin_percentile)
+            effective_margin_min = max(min_margin_floor, dynamic_threshold)
+
+            df_normal = df_normal[
+                df_normal['margin30'] >= effective_margin_min].copy()
+
+        if not df_normal.empty:
+            df_normal = add_margin_risk_column(df_normal)
+            df_normal = df_normal[df_normal['M_risk'] >= min_m_risk].copy()
+
+    return pd.concat([df_rf, df_near, df_normal])
+
+
+# ============================================================
+# لایه ۳: امتیازدهی
+# ============================================================
+def calculate_composite_score(
+    df,
+    w_r=DEFAULT_W_R,
+    w_m=DEFAULT_W_M,
+    vol_quality_power=DEFAULT_VOL_QUALITY_POWER,
+    imbalance_power=DEFAULT_IMBALANCE_POWER,):
+    """امتیازدهی نهایی با ضرایب ترکیبی."""
+    if df.empty:
+        return df
+
+    df = df.copy()
+    if 'margin30' not in df.columns:
+        df = add_margin30_column(df)
+
+    risk_free_mask = df['is_risk_free']
+    near_expiry_mask = df['is_near_expiry'].fillna(False) & (~risk_free_mask)
+    normal_mask = ~(risk_free_mask | near_expiry_mask)
+
+    df_rf = df[risk_free_mask].copy()
+    df_near = df[near_expiry_mask].copy()
+    df_normal = df[normal_mask].copy()
+
+    if not df_rf.empty:
+        df_rf['prob_survival'] = 1.0
+        df_rf['M_risk'] = np.inf
+        df_rf['score_cobb_douglas'] = RISK_FREE_SCORE_SENTINEL
+        df_rf['score_crra'] = RISK_FREE_SCORE_SENTINEL
+        df_rf['vol_quality_factor'] = 1.0
+        df_rf['imbalance_factor'] = 1.0
+        df_rf['composite_score'] = RISK_FREE_SCORE_SENTINEL
+
+    if not df_near.empty:
+        raw_R = df_near['raw_return_percent'].astype(float)
+        raw_M = df_near['raw_margin_percent'].astype(float)
+
+        base_near = (
+            NEAR_EXPIRY_SCORE_BASE
+            + NEAR_EXPIRY_W_R * raw_R
+            + NEAR_EXPIRY_W_M * raw_M).round(4)
+
+        df_near['prob_survival'] = NEAR_EXPIRY_PROB_SURVIVAL
+        df_near['M_risk'] = np.inf
+        df_near['score_cobb_douglas'] = base_near
+        df_near['score_crra'] = base_near
+        df_near['vol_quality_factor'] = 1.0
+        df_near['imbalance_factor'] = 1.0
+        df_near['composite_score'] = base_near
+
+    if not df_normal.empty:
+        if 'M_risk' not in df_normal.columns:
+            df_normal = add_margin_risk_column(df_normal)
+
+        R30 = df_normal['monthly_return_%'].astype(float).clip(lower=0.0)
+        M30 = df_normal['margin30'].astype(float).clip(lower=0.0)
+        M_risk = df_normal['M_risk'].astype(float)
+
+        prob_survival = norm.cdf(M_risk)
+        df_normal['prob_survival'] = np.round(prob_survival, 4)
+
+        score_cd = (R30 ** w_r) * (M30 ** w_m)
+        df_normal['score_cobb_douglas'] = (score_cd * prob_survival).round(4)
+
+        score_crra = np.sqrt(R30 * M30) * prob_survival
+        df_normal['score_crra'] = score_crra.round(4)
+
+        if 'VolatilityQualityScore' in df_normal.columns:
+            vq = df_normal['VolatilityQualityScore'].fillna(5.0).clip(lower=0.0, upper=10.0)
+            vol_factor = (vq / 10.0) ** vol_quality_power
+        else:
+            vol_factor = pd.Series(1.0, index=df_normal.index)
+        df_normal['vol_quality_factor'] = np.round(vol_factor, 4)
+
+        ratio = (M30 / R30.replace(0, np.nan)).replace(
+            [np.inf, -np.inf], np.nan).fillna(1.0)
+        imbalance_factor = np.minimum(1.0, ratio ** imbalance_power)
+        df_normal['imbalance_factor'] = np.round(imbalance_factor, 4)
+
+        df_normal['composite_score'] = (
+            score_cd * prob_survival
+            * vol_factor
+            * imbalance_factor).round(4)
+
+    return pd.concat([df_rf, df_near, df_normal])
+
+
+# ============================================================
+# لایه ۴ و ۵: اجرای کامل استراتژی
+# ============================================================
+def run_bear_put_spread_strategy(
+    df_options,
+    df_vol=None,
+    min_monthly_return=DEFAULT_MIN_MONTHLY_RETURN,
+    min_margin_floor=DEFAULT_MIN_MARGIN_FLOOR,
+    margin_percentile=DEFAULT_MARGIN_PERCENTILE,
+    min_rr_ratio=DEFAULT_MIN_RR_RATIO,
+    w_r=DEFAULT_W_R,
+    w_m=DEFAULT_W_M,
+    vol_quality_power=DEFAULT_VOL_QUALITY_POWER,
+    imbalance_power=DEFAULT_IMBALANCE_POWER,
+    min_m_risk=DEFAULT_MIN_M_RISK,
+    decision_threshold=DEFAULT_DECISION_THRESHOLD,
+    near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
+    near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,):
+    """
+    اجرای کامل استراتژی Bear Put Spread.
+    """
+    results_fee = []
+
+    for underlying_symbol, group in df_options.groupby('UnderlyingTicker'):
+        market = get_symbol_market(underlying_symbol)
+        kind = get_symbol_kind(underlying_symbol)
+
+        opt_buy_commission = get_commission_rate(market, 'option', True)
+        opt_sell_commission = get_commission_rate(market, 'option', False)
+        exercise_fee_rate = get_exercise_fee_rate(market, kind)
+
+        for days, sub_group in group.groupby('DaysToMaturity'):
+            # ===== سورت نزولی: Strike بالاتر ابتدا =====
+            sub_group_sorted = sub_group.sort_values('StrikePrice', ascending=False)
+            options_list = sub_group_sorted.to_dict('records')
+            n = len(options_list)
+
+            for i in range(n):
+                for j in range(i + 1, n):
+                    long_leg = options_list[i]    # Strike بالاتر → خرید Put
+                    short_leg = options_list[j]   # Strike پایین‌تر → فروش Put
+
+                    # ===== محافظ: هر دو ساق باید PUT باشند =====
+                    long_type = (
+                        long_leg['Type'].name
+                        if hasattr(long_leg['Type'], 'name')
+                        else str(long_leg['Type']).upper())
+                    short_type = (
+                        short_leg['Type'].name
+                        if hasattr(short_leg['Type'], 'name')
+                        else str(short_leg['Type']).upper())
+
+                    if long_type != 'PUT' or short_type != 'PUT':
+                        continue
+
+                    stock_price = long_leg['UnderlyingPrice']
+                    contract_size = long_leg['ContractSize']
+
+                    long_ask = long_leg.get('AskPrice', 0)
+                    short_bid = short_leg.get('BidPrice', 0)
+
+                    if (
+                        pd.isna(long_ask)
+                        or long_ask <= 0
+                        or pd.isna(short_bid)
+                        or short_bid <= 0):
+                        continue
+
+                    res = bear_put_spread_analysis(
+                        stock_price=stock_price,
+                        long_strike=long_leg['StrikePrice'],
+                        long_ask_premium=long_ask,
+                        short_strike=short_leg['StrikePrice'],
+                        short_bid_premium=short_bid,
+                        contract_size=contract_size,
+                        opt_buy_commission=opt_buy_commission,
+                        opt_sell_commission=opt_sell_commission,
+                        exercise_fee_rate=exercise_fee_rate,
+                        exercise_tax_rate=EXERCISE_TAX_RATE,
+                        days=days,)
+
+                    if res['status'] == 'DISCARD':
+                        continue
+
+                    if (
+                        res['status'] != 'RISK_FREE'
+                        and res['risk_reward_ratio'] < min_rr_ratio):
+                        continue
+
+                    results_fee.append({
+                        'underlying': underlying_symbol,
+                        'is_near_expiry': res['is_near_expiry'],
+                        'stock_price': round(stock_price, 0),
+                        'long_option_symbol': long_leg['Ticker'],
+                        'long_strike': long_leg['StrikePrice'],
+                        'long_ask_premium': round(long_ask, 0),
+                        'short_option_symbol': short_leg['Ticker'],
+                        'short_strike': short_leg['StrikePrice'],
+                        'short_bid_premium': round(short_bid, 0),
+                        'capital_at_risk': res['capital_at_risk'],
+                        'max_net_profit': res['max_net_profit'],
+                        'max_profit_percent': res['max_profit_percent'],
+                        'monthly_return_%': res['monthly_return'],
+                        'raw_return_percent': res['raw_return_percent'],
+                        'raw_margin_percent': res['raw_margin_percent'],
+                        'break_even_price': res['break_even_price'],
+                        'break_even_percent': res['break_even_percent'],
+                        'break_even_percent_scale': res['break_even_percent_scale'],
+                        'risk_reward_ratio': res['risk_reward_ratio'],
+                        'days_to_maturity': days,
+                        'long_volume': int(long_leg.get('Volume', 0)),
+                        'short_volume': int(short_leg.get('Volume', 0)),
+                        'maturity_date': str(long_leg.get('MaturityDate', '')),})
+
+    if not results_fee:
+        return pd.DataFrame()
+
+    result_df = pd.DataFrame(results_fee)
+
+    # Merge با نوسان
+    if df_vol is not None and not df_vol.empty:
+        result_df = pd.merge(result_df, df_vol, on='underlying', how='left')
+    else:
+        result_df['HV_60'] = np.nan
+        result_df['VolatilityQualityScore'] = np.nan
+
+    # لایه ۲: فیلترینگ سخت
+    result_df_filtered = apply_hard_constraints(
+        result_df,
+        min_monthly_return=min_monthly_return,
+        min_margin_floor=min_margin_floor,
+        margin_percentile=margin_percentile,
+        min_m_risk=min_m_risk,
+        near_expiry_min_return=near_expiry_min_return,
+        near_expiry_min_margin=near_expiry_min_margin,)
+
+    if result_df_filtered.empty:
+        return result_df_filtered
+
+    # لایه ۳: امتیازدهی
+    result_df_filtered = calculate_composite_score(
+        result_df_filtered,
+        w_r=w_r,
+        w_m=w_m,
+        vol_quality_power=vol_quality_power,
+        imbalance_power=imbalance_power,)
+
+    # لایه ۴: رتبه‌بندی
+    result_df_filtered = result_df_filtered.sort_values(
+        by='composite_score', ascending=False).reset_index(drop=True)
+
+    # لایه ۵: تصمیم
+    always_enter_mask = (
+        (result_df_filtered['composite_score'] == RISK_FREE_SCORE_SENTINEL)
+        | (result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE))
+    result_df_filtered['decision'] = np.where(
+        always_enter_mask,
+        'ENTER',
+        np.where(
+            result_df_filtered['composite_score'] > decision_threshold,
+            'ENTER',
+            'SKIP',
+        ),)
+
+    result_df_filtered['regime'] = np.select(
+        [
+            result_df_filtered['composite_score'] == RISK_FREE_SCORE_SENTINEL,
+            result_df_filtered['composite_score'] >= NEAR_EXPIRY_SCORE_BASE,
+        ],
+        ['RISK_FREE', 'NEAR_EXPIRY'],
+        default='NORMAL',)
+
+    # چیدمان ستون‌ها
+    column_order = [
+        'underlying', 'regime', 'decision',
+        'composite_score', 'score_cobb_douglas', 'score_crra',
+        'prob_survival', 'M_risk', 'Z_score',
+        'HV_60', 'VolatilityQualityScore',
+        'vol_quality_factor', 'imbalance_factor',
+        'stock_price', 'long_option_symbol', 'long_strike',
+        'long_ask_premium', 'short_option_symbol', 'short_strike',
+        'short_bid_premium', 'capital_at_risk', 'max_net_profit',
+        'max_profit_percent', 'monthly_return_%', 'margin30',
+        'raw_return_percent', 'raw_margin_percent',
+        'break_even_price', 'break_even_percent',
+        'break_even_percent_scale', 'risk_reward_ratio',
+        'days_to_maturity', 'long_volume', 'short_volume',
+        'maturity_date',
+    ]
+    column_order = [c for c in column_order if c in result_df_filtered.columns]
+    result_df_filtered = result_df_filtered[column_order]
+
+    # جایگزینی Sentinelها
+    result_df_filtered['break_even_percent'] = result_df_filtered[
+        'break_even_percent'].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+    result_df_filtered['break_even_percent_scale'] = result_df_filtered[
+        'break_even_percent_scale'].replace(RISK_FREE_BREAK_EVEN_SENTINEL, 'Risk Free')
+    result_df_filtered['monthly_return_%'] = result_df_filtered[
+        'monthly_return_%'].replace(RISK_FREE_RETURN_SENTINEL, 'Infinite')
+    result_df_filtered['margin30'] = result_df_filtered['margin30'].apply(
+        lambda v: 'Risk Free' if v == np.inf else round(v, 2))
+    result_df_filtered['M_risk'] = result_df_filtered['M_risk'].apply(
+        lambda v: 'N/A' if (pd.isna(v) or v == np.inf) else round(v, 2))
+    result_df_filtered['composite_score'] = result_df_filtered[
+        'composite_score'].replace(RISK_FREE_SCORE_SENTINEL, 'Risk Free')
+
+    return result_df_filtered
+
+# ============================================================
+# ذخیره خروجی در اکسل
+# ============================================================
+def save_results_to_excel(result_df, filename="result_bear_put_spread.xlsx"):
+    """ذخیره نتایج خروجی در فایل اکسل."""
+    header_font = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
+    header_fill = PatternFill(
+        start_color='7B2D26', end_color='7B2D26', fill_type='solid')
+    alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    body_font = Font(name='Segoe UI', size=10)
+    gray_font = Font(color='808080', italic=True, name='Segoe UI', size=10)
+
+    rename_dict = {
+        'underlying': 'نماد پایه',
+        'regime': 'رژیم',
+        'decision': 'تصمیم',
+        'composite_score': 'امتیاز نهایی',
+        'score_cobb_douglas': 'امتیاز Cobb-Douglas',
+        'score_crra': 'امتیاز CRRA',
+        'prob_survival': 'احتمال بقا',
+        'M_risk': 'M_risk',
+        'Z_score': 'Z-Score',
+        'HV_60': 'نوسان ۶۰ روزه',
+        'VolatilityQualityScore': 'کیفیت نوسان',
+        'vol_quality_factor': 'ضریب کیفیت نوسان',
+        'imbalance_factor': 'ضریب عدم‌تعادل',
+        'stock_price': 'قیمت سهم',
+        'long_option_symbol': 'نماد خرید (Put)',
+        'long_strike': 'قیمت اعمال خرید',
+        'long_ask_premium': 'پریمیوم خرید',
+        'short_option_symbol': 'نماد فروش (Put)',
+        'short_strike': 'قیمت اعمال فروش',
+        'short_bid_premium': 'پریمیوم فروش',
+        'capital_at_risk': 'سرمایه درگیر',
+        'max_net_profit': 'حداکثر سود خالص',
+        'max_profit_percent': 'درصد بازدهی',
+        'monthly_return_%': 'سود ماهانه (R30)',
+        'margin30': 'حاشیه ماهانه (M30)',
+        'raw_return_percent': 'سود خام',
+        'raw_margin_percent': 'حاشیه خام',
+        'break_even_price': 'قیمت سربه‌سر',
+        'break_even_percent': 'درصد افت تا سربه‌سر',
+        'break_even_percent_scale': 'مقیاس سربه‌سر',
+        'risk_reward_ratio': 'R/R',
+        'days_to_maturity': 'روز تا سررسید',
+        'long_volume': 'حجم خرید',
+        'short_volume': 'حجم فروش',
+        'maturity_date': 'تاریخ اعمال',
+    }
+
+    result_df_renamed = result_df.rename(columns=rename_dict)
+    filepath = current_dir / filename
+
+    with pd.ExcelWriter(filepath, engine='openpyxl') as writer:
+        result_df_renamed.to_excel(
+            writer, sheet_name='bear_put_spread', index=False)
+        worksheet = writer.sheets['bear_put_spread']
+
+        for col_idx in range(1, len(result_df_renamed.columns) + 1):
+            cell = worksheet.cell(row=1, column=col_idx)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = alignment
+
+        for row_idx in range(2, len(result_df_renamed) + 2):
+            for col_idx in range(1, len(result_df_renamed.columns) + 1):
+                cell = worksheet.cell(row=row_idx, column=col_idx)
+                val = cell.value
+                if val is None or pd.isna(val) or val == "":
+                    cell.value = "-"
+                    cell.font = gray_font
+                else:
+                    cell.font = body_font
+                cell.alignment = alignment
+
+        worksheet.auto_filter.ref = (
+            f"A1:{get_column_letter(len(result_df_renamed.columns))}"
+            f"{len(result_df_renamed) + 1}")
+        worksheet.freeze_panes = 'A2'
+
+        for col in worksheet.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                if cell.value:
+                    text = str(cell.value)
+                    if '\n' in text:
+                        lines = text.split('\n')
+                        line_length = max(len(line) for line in lines)
+                    else:
+                        line_length = len(text)
+                    if line_length > max_length:
+                        max_length = line_length
+            adjusted_width = min(max_length + 5, 50)
+            worksheet.column_dimensions[column].width = adjusted_width
+
+    print(f"Results saved to: {filename}")
+
+
+# ============================================================
+# تابع اصلی
+# ============================================================
+def main():
+    """تابع اصلی اجرای استراتژی Bear Put Spread."""
+    try:
+        # ===== بارگذاری پروفایل نوسان =====
+        df_vol = load_volatility_profile()
+        if df_vol.empty:
+            print("\nWARNING: Volatility profile not loaded.")
+        else:
+            print(f"\nVolatility profile: {len(df_vol)} symbols loaded")
+
+        # ===== بارگذاری داده بازار =====
+        df_raw = MarketDownloader.from_tsetmc_direct()
+        df_cleaned = DataCleaner.clean(df_raw)
+        df_final = DataCleaner.add_derived_columns(df_cleaned)
+
+        DEBUG_SYMBOls = ['فزر']
+        df_final = df_final[df_final['UnderlyingTicker'].isin(DEBUG_SYMBOls)]
+
+        # ===== فیلتر PUT =====
+        is_put_mask = df_final['Type'].apply(
+            lambda x: x.name == 'PUT' if hasattr(x, 'name')
+            else str(x).upper() == 'PUT')
+
+        filtered_data = df_final[
+            (df_final['DaysToMaturity'] >= 0.0) & is_put_mask].copy()
+
+        if filtered_data.empty:
+            print("No market data found.")
+            return
+
+        print(f"Market data: {len(filtered_data)} PUT options loaded")
+
+        # ===== اجرای استراتژی =====
+        results = run_bear_put_spread_strategy(
+            filtered_data,
+            df_vol=df_vol,
+            min_monthly_return=DEFAULT_MIN_MONTHLY_RETURN,
+            min_margin_floor=DEFAULT_MIN_MARGIN_FLOOR,
+            margin_percentile=DEFAULT_MARGIN_PERCENTILE,
+            min_rr_ratio=DEFAULT_MIN_RR_RATIO,
+            w_r=DEFAULT_W_R,
+            w_m=DEFAULT_W_M,
+            vol_quality_power=DEFAULT_VOL_QUALITY_POWER,
+            imbalance_power=DEFAULT_IMBALANCE_POWER,
+            min_m_risk=DEFAULT_MIN_M_RISK,
+            decision_threshold=DEFAULT_DECISION_THRESHOLD,
+            near_expiry_min_return=NEAR_EXPIRY_MIN_RETURN,
+            near_expiry_min_margin=NEAR_EXPIRY_MIN_MARGIN,)
+
+        if results.empty:
+            print("No valid strategy setups found after filtering.")
+            return
+
+        print(f"\nResults: {len(results)} positions after filtering")
+
+        # ===== ذخیره در اکسل =====
+        save_results_to_excel(results)
+
+        # ===== ارسال به بله =====
+        send_best_position_to_bale(results)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+
+
+if __name__ == "__main__":
+    main()
