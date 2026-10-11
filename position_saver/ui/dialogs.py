@@ -4,6 +4,7 @@
 import re
 import sys
 import time
+import logging
 import jdatetime
 from typing import Optional, List, Dict, Any
 
@@ -12,31 +13,51 @@ from PySide6.QtWidgets import (
     QSpinBox, QDoubleSpinBox, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QComboBox, QMessageBox, QHeaderView,
     QGroupBox, QListWidget, QListWidgetItem, QAbstractItemView,
-    QDialogButtonBox,
+    QDialogButtonBox, QRadioButton, QAbstractSpinBox,
 )
-from PySide6.QtCore import Qt, QEvent, QPoint
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import Qt, QEvent, QPoint, QRegularExpression
+from PySide6.QtGui import (
+    QRegularExpressionValidator,
+)
 
 from position_saver.models import (
     StrategyPosition, OptionLeg, LegType, PositionStatus,
 )
 from position_saver.pnl_calculator import PositionPnLCalculator
+from position_saver.theme import (
+    CURRENCY, QSS,
+    fmt_money, fmt_pct, fmt_int, pnl_tone,
+    set_kind, set_tone, set_invalid,
+)
+
+from position_saver.providers import get_market_snapshot, get_setting
 from core.enums import OptionType
+
+
+logger = logging.getLogger("PositionSaver.Dialogs")
 
 
 # =====================================================
 # کارگزاری‌های پیش‌فرض
 # =====================================================
 
-BROKER_NAMES = ["مفید", "خبرگان سهام", "پیشرو", "سایر"]
+BROKER_NAMES = ["مفید", "خبرگان سهام", "پیشرو", "پارسیان", "سایر"]
 DEFAULT_BROKER = "مفید"
 
 
 # =====================================================
-# تغییر زبان کیبورد (ویندوز)
+# تغییر زبان کیبورد (ویندوز) — قابل غیرفعال‌سازی
 # =====================================================
 
-def switch_to_persian_keyboard():
+# اگر این متغیر True باشد، دیالوگ‌ها کیبورد را به فارسی تغییر می‌دهند.
+# می‌توان از بیرون (مثلاً از تنظیمات کاربر) آن را False کرد.
+AUTO_SWITCH_KEYBOARD = True
+
+
+def switch_to_persian_keyboard() -> None:
+    """تغییر زبان کیبورد به فارسی — فقط اگر فعال باشد"""
+    if not AUTO_SWITCH_KEYBOARD:
+        return
     if sys.platform == "win32":
         try:
             import win32api
@@ -45,11 +66,11 @@ def switch_to_persian_keyboard():
             win32api.LoadKeyboardLayout(
                 f"{PERSIAN_LAYOUT_ID:08x}", win32con.KLF_ACTIVATE)
         except Exception as e:
-            print(f"[Keyboard] Failed to switch: {e}")
+            logger.debug(f"[Keyboard] Failed to switch: {e}")
 
 
 # =====================================================
-# نرمال‌سازی نام نماد
+# نرمال‌سازی و پاکسازی ورودی نماد
 # =====================================================
 
 def normalize_symbol(s: str) -> str:
@@ -61,10 +82,6 @@ def normalize_symbol(s: str) -> str:
     s = re.sub(r'\s+', ' ', s)
     return s.strip()
 
-
-# =====================================================
-# پاکسازی ورودی نماد
-# =====================================================
 
 _SYMBOL_INVALID_CHARS = re.compile(r'[^\u0600-\u06FF\u200cA-Za-z0-9 ]')
 
@@ -79,24 +96,21 @@ def sanitize_symbol_input(text: str) -> str:
 # تابع کمکی: قیمت پایانی سهم پایه از snapshot
 # =====================================================
 
-def _get_underlying_closing_price(snapshot, underlying_ticker: str) -> float:
-    """
-    گرفتن قیمت پایانی سهم پایه از snapshot.
-    اول close_price (پایانی)، بعد last_price.
-    """
+def _get_underlying_closing_price(
+    snapshot, underlying_ticker: str
+) -> float:
+    """گرفتن قیمت پایانی سهم پایه (اول close_price)"""
     if snapshot is None or not underlying_ticker:
         return 0.0
     try:
         ua = snapshot.get_underlying_assets(underlying_ticker)
         if ua is not None:
-            # ✅ اول close_price (پایانی)
             if hasattr(ua, 'close_price') and ua.close_price > 0:
                 return float(ua.close_price)
-            # فال‌بک: last_price
             if hasattr(ua, 'last_price') and ua.last_price > 0:
                 return float(ua.last_price)
     except Exception as e:
-        print(f"[DefaultDialog] Failed to get closing price: {e}")
+        logger.debug(f"Failed to get closing price: {e}")
     return 0.0
 
 
@@ -110,149 +124,35 @@ COL_SIDE = 2
 COL_STRIKE = 3
 COL_QTY = 4
 COL_ENTRY = 5
-COL_EXPIRY = 6
-N_LEG_COLS = 7
+COL_CURRENT = 6
+COL_EXPIRY = 7
+N_LEG_COLS = 8
 
 
 # =====================================================
-# تشخیص خودکار نام استراتژی
+# اعتبارسنجی تاریخ شمسی
+# =====================================================
+
+def _make_date_validator() -> QRegularExpressionValidator:
+    """ساخت Validator برای تاریخ شمسی YYYY/MM/DD"""
+    pattern = QRegularExpression(
+        r'^\d{0,4}(/\d{0,2}(/\d{0,2})?)?$'
+    )
+    return QRegularExpressionValidator(pattern)
+
+
+# =====================================================
+# ✅ بازنویسی detect_strategy_name — حالا فقط wrapper است
 # =====================================================
 
 def detect_strategy_name(legs: List[OptionLeg]) -> str:
-    """تشخیص خودکار نام استراتژی از ترکیب لگ‌ها (مستقل از ترتیب)"""
-    if not legs:
-        return ""
+    """
+    تشخیص خودکار نام استراتژی — به PositionPnLCalculator واگذار شده.
 
-    stock_buys = [l for l in legs if l.is_stock and l.leg_type == LegType.BUY]
-    stock_sells = [
-        l for l in legs if l.is_stock and l.leg_type == LegType.SELL]
-    call_buys = [l for l in legs if l.is_call and l.leg_type == LegType.BUY]
-    call_sells = [l for l in legs if l.is_call and l.leg_type == LegType.SELL]
-    put_buys = [l for l in legs if l.is_put and l.leg_type == LegType.BUY]
-    put_sells = [l for l in legs if l.is_put and l.leg_type == LegType.SELL]
-
-    n_total = len(legs)
-    n_stock = len(stock_buys) + len(stock_sells)
-    n_call = len(call_buys) + len(call_sells)
-    n_put = len(put_buys) + len(put_sells)
-
-    # ═══════ تک‌لگ ═══════
-    if n_total == 1:
-        leg = legs[0]
-        if leg.is_stock:
-            return "Long Stock" if leg.leg_type == LegType.BUY else "Short Stock"
-        if leg.is_call:
-            return "Long Call" if leg.leg_type == LegType.BUY else "Short Call"
-        if leg.is_put:
-            return "Long Put" if leg.leg_type == LegType.BUY else "Short Put"
-
-    # ═══════ دولگ ═══════
-    if n_total == 2:
-        if n_stock == 1 and n_call == 1:
-            if stock_buys and call_sells:
-                return "Covered Call"
-            if stock_sells and call_buys:
-                return "Covered Call"
-            if stock_buys and call_buys:
-                return "Long Stock + Long Call"
-            if stock_sells and call_sells:
-                return "Short Stock + Short Call"
-
-        if n_stock == 1 and n_put == 1:
-            if stock_buys and put_buys:
-                return "Married Put"
-            if stock_buys and put_sells:
-                return "Covered Put"
-            if stock_sells and put_buys:
-                return "Protective Put (Short)"
-            if stock_sells and put_sells:
-                return "Covered Put (Short)"
-
-        if n_call == 2 and len(call_buys) == 1 and len(call_sells) == 1:
-            if call_buys[0].strike_price < call_sells[0].strike_price:
-                return "Bull Call Spread"
-            elif call_buys[0].strike_price > call_sells[0].strike_price:
-                return "Bear Call Spread"
-            else:
-                return "Call Spread"
-
-        if n_put == 2 and len(put_buys) == 1 and len(put_sells) == 1:
-            if put_buys[0].strike_price > put_sells[0].strike_price:
-                return "Bear Put Spread"
-            elif put_buys[0].strike_price < put_sells[0].strike_price:
-                return "Bull Put Spread"
-            else:
-                return "Put Spread"
-
-        if n_call == 1 and n_put == 1:
-            if call_buys and put_buys:
-                if call_buys[0].strike_price == put_buys[0].strike_price:
-                    return "Long Straddle"
-                elif call_buys[0].strike_price > put_buys[0].strike_price:
-                    return "Long Strangle"
-                else:
-                    return "Long Guts"
-            if call_sells and put_sells:
-                if call_sells[0].strike_price == put_sells[0].strike_price:
-                    return "Short Straddle"
-                elif call_sells[0].strike_price < put_sells[0].strike_price:
-                    return "Short Strangle"
-                else:
-                    return "Short Guts"
-            if call_buys and put_sells:
-                return "Synthetic Long Stock"
-            if call_sells and put_buys:
-                return "Synthetic Short Stock"
-
-    # ═══════ سه‌لگ ═══════
-    if n_total == 3:
-        if n_stock == 1 and n_call == 1 and n_put == 1:
-            if stock_buys and call_sells and put_buys:
-                return "Collar"
-            if stock_buys and call_sells and put_sells:
-                return "Covered Call + Covered Put"
-            if stock_sells and call_buys and put_buys:
-                return "Reverse Collar"
-
-        if n_call == 3:
-            if len(call_buys) == 2 and len(call_sells) == 1:
-                buys_sorted = sorted([l.strike_price for l in call_buys])
-                sell_strike = call_sells[0].strike_price
-                if buys_sorted[0] < sell_strike < buys_sorted[1]:
-                    return "Long Call Butterfly"
-            if len(call_buys) == 1 and len(call_sells) == 2:
-                sells_sorted = sorted([l.strike_price for l in call_sells])
-                buy_strike = call_buys[0].strike_price
-                if sells_sorted[0] < buy_strike < sells_sorted[1]:
-                    return "Short Call Butterfly"
-
-        if n_put == 3:
-            if len(put_buys) == 2 and len(put_sells) == 1:
-                buys_sorted = sorted([l.strike_price for l in put_buys])
-                sell_strike = put_sells[0].strike_price
-                if buys_sorted[0] < sell_strike < buys_sorted[1]:
-                    return "Long Put Butterfly"
-            if len(put_buys) == 1 and len(put_sells) == 2:
-                sells_sorted = sorted([l.strike_price for l in put_sells])
-                buy_strike = put_buys[0].strike_price
-                if sells_sorted[0] < buy_strike < sells_sorted[1]:
-                    return "Short Put Butterfly"
-
-        if n_call == 2 and n_put == 1:
-            return "Call Ratio + Put"
-        if n_call == 1 and n_put == 2:
-            return "Put Ratio + Call"
-
-    # ═══════ چهارلگ ═══════
-    if n_total == 4:
-        if n_call == 2 and n_put == 2:
-            return "Iron Condor"
-        if n_call == 4 and len(call_buys) == 2 and len(call_sells) == 2:
-            return "Condor (Call)"
-        if n_put == 4 and len(put_buys) == 2 and len(put_sells) == 2:
-            return "Condor (Put)"
-
-    return "Strategy"
+    این تابع فقط برای backward compatibility نگه داشته شده.
+    در کد جدید از PositionPnLCalculator.suggest_strategy_name استفاده کنید.
+    """
+    return PositionPnLCalculator.suggest_strategy_name(legs)
 
 
 # =====================================================
@@ -260,13 +160,7 @@ def detect_strategy_name(legs: List[OptionLeg]) -> str:
 # =====================================================
 
 class SymbolCompleter(QListWidget):
-    """
-    لیست شناور برای autocomplete نمادها.
-    - هرگز فوکوس کیبورد را از line_edit نمی‌گیرد.
-    - فقط نام نماد نمایش داده می‌شود.
-    - فیلتر با startswith.
-    - هنگام بسته شدن دیالوگ، به‌صورت کامل پنهان می‌شود.
-    """
+    """لیست شناور برای autocomplete نمادها"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -278,29 +172,6 @@ class SymbolCompleter(QListWidget):
         self.setFocusPolicy(Qt.NoFocus)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.setUniformItemSizes(True)
-        self.setStyleSheet("""
-            QListWidget {
-                background-color: #FFFFFF;
-                border: 1px solid #BDBDBD;
-                border-radius: 4px;
-                padding: 2px;
-                font-family: Tahoma, Arial;
-                font-size: 11px;
-                outline: none;
-            }
-            QListWidget::item {
-                padding: 4px 8px;
-                color: #212121;
-                border-radius: 3px;
-            }
-            QListWidget::item:selected {
-                background-color: #2196F3;
-                color: white;
-            }
-            QListWidget::item:hover {
-                background-color: #E3F2FD;
-            }
-        """)
 
         self._on_select_callback = None
         self._all_items: List[Dict[str, Any]] = []
@@ -409,7 +280,7 @@ class PositionEditDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle("ثبت / ویرایش موقعیت استراتژی")
-        self.resize(1100, 680)
+        self.setMinimumSize(1100, 620)
         self.setLayoutDirection(Qt.RightToLeft)
 
         switch_to_persian_keyboard()
@@ -518,6 +389,14 @@ class PositionEditDialog(QDialog):
                     if contract.expiry_date else "",
                     "current_price": float(
                         contract.close_price or contract.last_price),
+                    "bid_price": float(
+                        getattr(contract, 'bid', 0.0) or 0.0),
+                    "ask_price": float(
+                        getattr(contract, 'ask', 0.0) or 0.0),
+                    "last_price": float(
+                        getattr(contract, 'last_price', 0.0) or 0.0),
+                    "close_price": float(
+                        getattr(contract, 'close_price', 0.0) or 0.0),
                     "ins_code": str(contract.instrument_code or ""),
                     "underlying_ticker": normalize_symbol(
                         contract.underlying_ticker or ""),
@@ -546,6 +425,10 @@ class PositionEditDialog(QDialog):
                     "contract_size": 1,
                     "expiry_date": "",
                     "current_price": float(price),
+                    "bid_price": 0.0,
+                    "ask_price": 0.0,
+                    "last_price": float(price),
+                    "close_price": float(price),
                     "ins_code": "",
                     "underlying_ticker": underlying,
                 },
@@ -554,12 +437,10 @@ class PositionEditDialog(QDialog):
         return items
 
     def _lookup_underlying_price(self, normalized_ticker: str) -> float:
-        """جستجوی قیمت سهم پایه (قیمت پایانی، فال‌بک به last_price)"""
         if self.snapshot is None:
             return 0.0
         for ua_key, ua in self.snapshot.underlying_assets.items():
             if normalize_symbol(ua_key) == normalized_ticker:
-                # ✅ اول close_price
                 if hasattr(ua, 'close_price') and ua.close_price > 0:
                     return float(ua.close_price)
                 if hasattr(ua, 'last_price') and ua.last_price > 0:
@@ -572,6 +453,17 @@ class PositionEditDialog(QDialog):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(8)
+
+        # ─── هشدار منبع ایمپورت (اگر از اکسل آمده) ───
+        if self.position.source == "excel_import":
+            warning = QLabel(
+                f"📥 این موقعیت از ایمپورت اکسل آمده است "
+                f"(batch: {self.position.import_batch_id})"
+            )
+            set_tone(warning, "primary")
+            main_layout.addWidget(warning)
 
         # ─── اطلاعات کلی ───
         info_group = QGroupBox("اطلاعات کلی")
@@ -581,21 +473,14 @@ class PositionEditDialog(QDialog):
         self.txt_strategy.setPlaceholderText(
             "مثلاً: Covered Call / Bull Call Spread / Long Call")
 
-        # ✅ ردیف تشخیص خودکار
+        # ردیف تشخیص خودکار
         detected_row = QHBoxLayout()
 
-        self.lbl_detected_strategy = QLabel("(تشخیص خودکار: —)")
-        self.lbl_detected_strategy.setStyleSheet(
-            "color: #9E9E9E; font-size: 10px; "
-            "font-weight: bold; padding-right: 4px;")
+        self.lbl_detected_strategy = QLabel("(پیشنهاد خودکار: —)")
+        set_tone(self.lbl_detected_strategy, "muted")
 
         self.btn_use_suggestion = QPushButton("← استفاده")
         self.btn_use_suggestion.setFixedWidth(90)
-        self.btn_use_suggestion.setStyleSheet(
-            "background-color: #E3F2FD; color: #1976D2; "
-            "font-size: 10px; padding: 3px 6px; border-radius: 3px;")
-        self.btn_use_suggestion.setToolTip(
-            "کپی کردن پیشنهاد تشخیص خودکار در فیلد نام استراتژی")
         self.btn_use_suggestion.setEnabled(False)
         self.btn_use_suggestion.clicked.connect(self._apply_suggested_strategy)
 
@@ -603,7 +488,7 @@ class PositionEditDialog(QDialog):
         detected_row.addWidget(self.btn_use_suggestion)
         detected_row.addStretch()
 
-        # ✅ کارگزاری
+        # کارگزاری
         self.cmb_broker = QComboBox()
         self.cmb_broker.setEditable(True)
         self.cmb_broker.addItems(BROKER_NAMES)
@@ -611,13 +496,19 @@ class PositionEditDialog(QDialog):
         self.cmb_broker.setMinimumWidth(180)
         self.cmb_broker.setInsertPolicy(QComboBox.NoInsert)
 
+        # تاریخ اجرا
         self.txt_exec_date = QLineEdit()
         self.txt_exec_date.setPlaceholderText("1403/01/15")
+        self.txt_exec_date.setValidator(_make_date_validator())
+        self.txt_exec_date.textChanged.connect(
+            self._validate_date_field)
 
+        # حد هشدار
         self.spin_alert_roi = QDoubleSpinBox()
         self.spin_alert_roi.setRange(0.0, 1000.0)
         self.spin_alert_roi.setSuffix(" ٪")
         self.spin_alert_roi.setValue(10.0)
+        self.spin_alert_roi.setButtonSymbols(QAbstractSpinBox.NoButtons)
 
         form_layout.addRow("نام استراتژی:", self.txt_strategy)
         form_layout.addRow("", detected_row)
@@ -634,20 +525,22 @@ class PositionEditDialog(QDialog):
         self.table_legs = QTableWidget(0, N_LEG_COLS)
         self.table_legs.setHorizontalHeaderLabels([
             "نماد", "نوع", "موقعیت", "قیمت اعمال",
-            "تعداد", "قیمت ورود", "تاریخ سررسید",
+            "تعداد", "قیمت ورود", "قیمت لحظه‌ای", "تاریخ سررسید",
         ])
         self.table_legs.horizontalHeader().setSectionResizeMode(
             QHeaderView.Interactive)
         self.table_legs.horizontalHeader().setStretchLastSection(True)
-        self.table_legs.setColumnWidth(COL_SYMBOL, 280)
-        self.table_legs.setColumnWidth(COL_KIND, 90)
-        self.table_legs.setColumnWidth(COL_SIDE, 90)
-        self.table_legs.setColumnWidth(COL_STRIKE, 120)
-        self.table_legs.setColumnWidth(COL_QTY, 90)
-        self.table_legs.setColumnWidth(COL_ENTRY, 120)
+        self.table_legs.setColumnWidth(COL_SYMBOL, 240)
+        self.table_legs.setColumnWidth(COL_KIND, 80)
+        self.table_legs.setColumnWidth(COL_SIDE, 80)
+        self.table_legs.setColumnWidth(COL_STRIKE, 110)
+        self.table_legs.setColumnWidth(COL_QTY, 80)
+        self.table_legs.setColumnWidth(COL_ENTRY, 110)
+        self.table_legs.setColumnWidth(COL_CURRENT, 110)
         self.table_legs.setSelectionBehavior(QTableWidget.SelectRows)
         legs_layout.addWidget(self.table_legs)
 
+        # دکمه افزودن لنگه
         btn_row = QHBoxLayout()
         btn_add_leg = QPushButton("➕ افزودن لنگه")
         btn_add_leg.clicked.connect(self.add_leg_row)
@@ -662,13 +555,16 @@ class PositionEditDialog(QDialog):
 
         main_layout.addWidget(legs_group)
 
+        # ─── خلاصه زنده ───
+        self.lbl_live_summary = QLabel("—")
+        set_tone(self.lbl_live_summary, "muted")
+        main_layout.addWidget(self.lbl_live_summary)
+
         # ─── دکمه‌های پایین ───
         bottom_layout = QHBoxLayout()
         btn_save = QPushButton("💾 ذخیره موقعیت")
-        btn_save.setStyleSheet(
-            "background-color: #4CAF50; color: white; "
-            "font-weight: bold; padding: 6px 20px;")
         btn_save.clicked.connect(self.save_and_close)
+        set_kind(btn_save, "primary")
 
         btn_cancel = QPushButton("❌ انصراف")
         btn_cancel.clicked.connect(self.reject)
@@ -677,6 +573,20 @@ class PositionEditDialog(QDialog):
         bottom_layout.addWidget(btn_save)
         bottom_layout.addWidget(btn_cancel)
         main_layout.addLayout(bottom_layout)
+
+    # =====================================================
+    # اعتبارسنجی تاریخ
+    # =====================================================
+
+    def _validate_date_field(self, text: str):
+        if not text.strip():
+            set_invalid(self.txt_exec_date, False)
+            return
+
+        is_valid = bool(re.match(
+            r'^\d{4}/\d{1,2}/\d{1,2}$', text.strip()))
+
+        set_invalid(self.txt_exec_date, not is_valid)
 
     # =====================================================
     # مدیریت ردیف‌های لگ
@@ -733,7 +643,13 @@ class PositionEditDialog(QDialog):
             if idx >= 0:
                 cmb_side.setCurrentIndex(idx)
         cmb_side.currentIndexChanged.connect(
+            lambda _: self._update_live_summary())
+        cmb_side.currentIndexChanged.connect(
             lambda _: self._update_detected_strategy_label())
+        cmb_side.currentIndexChanged.connect(
+            lambda _, cmb=cmb_side:
+                self._update_live_price_for_row(
+                    self._get_row_of_widget(cmb)))
         self.table_legs.setCellWidget(row, COL_SIDE, cmb_side)
 
         # ─── ستون ۳: قیمت اعمال ───
@@ -741,16 +657,20 @@ class PositionEditDialog(QDialog):
         spin_strike.setRange(0, 1_000_000_000)
         spin_strike.setSingleStep(50)
         spin_strike.setGroupSeparatorShown(True)
+        spin_strike.setButtonSymbols(QAbstractSpinBox.NoButtons)
         spin_strike.setValue(int(leg.strike_price) if leg else 0)
         spin_strike.valueChanged.connect(
-            lambda _: self._update_detected_strategy_label())
+            lambda _: self._update_live_summary())
         self.table_legs.setCellWidget(row, COL_STRIKE, spin_strike)
 
         # ─── ستون ۴: تعداد ───
         spin_qty = QSpinBox()
         spin_qty.setRange(1, 100_000_000)
         spin_qty.setGroupSeparatorShown(True)
+        spin_qty.setButtonSymbols(QAbstractSpinBox.NoButtons)
         spin_qty.setValue(int(leg.quantity) if leg else 1)
+        spin_qty.valueChanged.connect(
+            lambda _: self._update_live_summary())
         self.table_legs.setCellWidget(row, COL_QTY, spin_qty)
 
         # ─── ستون ۵: قیمت ورود ───
@@ -758,17 +678,32 @@ class PositionEditDialog(QDialog):
         spin_entry.setRange(0, 1_000_000_000)
         spin_entry.setSingleStep(10)
         spin_entry.setGroupSeparatorShown(True)
+        spin_entry.setButtonSymbols(QAbstractSpinBox.NoButtons)
         spin_entry.setValue(int(leg.entry_price) if leg else 0)
+        spin_entry.valueChanged.connect(
+            lambda _: self._update_live_summary())
         self.table_legs.setCellWidget(row, COL_ENTRY, spin_entry)
 
-        # ─── ستون ۶: تاریخ سررسید ───
+        # ─── ستون ۶: قیمت لحظه‌ای (خواندنی) ───
+        spin_current = QSpinBox()
+        spin_current.setRange(0, 1_000_000_000)
+        spin_current.setSingleStep(10)
+        spin_current.setGroupSeparatorShown(True)
+        spin_current.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        spin_current.setEnabled(False)
+        spin_current.setValue(int(leg.current_price) if leg else 0)
+        self.table_legs.setCellWidget(row, COL_CURRENT, spin_current)
+
+        # ─── ستون ۷: تاریخ سررسید ───
         line_expiry = QLineEdit(leg.expiry_date if leg else "")
         line_expiry.setPlaceholderText("1403/06/20")
+        line_expiry.setValidator(_make_date_validator())
         self.table_legs.setCellWidget(row, COL_EXPIRY, line_expiry)
 
         self._apply_leg_row_state(row)
         self._refresh_row_indices()
         self._update_detected_strategy_label()
+        self._update_live_summary()
 
     def remove_leg_row(self):
         row = self.table_legs.currentRow()
@@ -777,23 +712,100 @@ class PositionEditDialog(QDialog):
             self.table_legs.removeRow(row)
             self._refresh_row_indices()
             self._update_detected_strategy_label()
+            self._update_live_summary()
+
+    # =====================================================
+    # به‌روزرسانی قیمت لحظه‌ای
+    # =====================================================
+
+    def _update_live_price_for_row(self, row: int):
+        if row < 0 or row >= self.table_legs.rowCount():
+            return
+
+        spin_current: QSpinBox = self.table_legs.cellWidget(row, COL_CURRENT)
+        if spin_current is None:
+            return
+
+        line_symbol: QLineEdit = self.table_legs.cellWidget(row, COL_SYMBOL)
+        if line_symbol is None or not line_symbol.text().strip():
+            return
+
+        cmb_side: QComboBox = self.table_legs.cellWidget(row, COL_SIDE)
+        if cmb_side is None:
+            return
+
+        symbol = normalize_symbol(line_symbol.text())
+        item_data = None
+        for it in self.symbol_items:
+            if it["symbol"] == symbol:
+                item_data = it["data"]
+                break
+
+        if item_data is None:
+            return
+
+        leg_type = cmb_side.currentData() or LegType.BUY
+        is_option = item_data.get("is_option", False)
+
+        if is_option:
+            if leg_type == LegType.BUY:
+                price = item_data.get("ask_price", 0)
+            else:
+                price = item_data.get("bid_price", 0)
+
+            if price <= 0:
+                price = item_data.get("last_price", 0)
+            if price <= 0:
+                price = item_data.get("close_price", 0)
+        else:
+            price = item_data.get("close_price", 0)
+            if price <= 0:
+                price = item_data.get("last_price", 0)
+
+        spin_current.setValue(int(price))
+
+    # =====================================================
+    # خلاصه زنده
+    # =====================================================
+
+    def _update_live_summary(self):
+        legs = self._collect_full_legs()
+        if not legs:
+            self.lbl_live_summary.setText(
+                "💡 برای مشاهده خلاصه، لنگه‌ها را وارد کنید")
+            set_tone(self.lbl_live_summary, "muted")
+            return
+
+        temp_pos = StrategyPosition(
+            strategy_name="temp",
+            underlying_symbol="",
+            legs=legs,
+        )
+
+        net_cost = PositionPnLCalculator.calculate_net_entry_cost(temp_pos)
+
+        if net_cost > 0:
+            kind = "دبیت (پرداختی)"
+            tone = "loss"
+        elif net_cost < 0:
+            kind = "کردیت (دریافتی)"
+            tone = "profit"
+        else:
+            kind = "خنثی"
+            tone = "muted"
+
+        text = (
+            f"💰 هزینه خالص ورود: {fmt_money(net_cost)} {CURRENCY}  |  "
+            f"نوع: {kind}"
+        )
+        self.lbl_live_summary.setText(text)
+        set_tone(self.lbl_live_summary, tone)
 
     # =====================================================
     # افزودن سطر جدید و فوکوس
     # =====================================================
 
     def _add_new_row_and_focus(self):
-        last_row = self.table_legs.rowCount() - 1
-
-        if last_row >= 0:
-            last_symbol = self.table_legs.cellWidget(last_row, COL_SYMBOL)
-            if isinstance(last_symbol, QLineEdit):
-                if not last_symbol.text().strip():
-                    self.table_legs.setCurrentCell(last_row, COL_SYMBOL)
-                    last_symbol.setFocus()
-                    last_symbol.selectAll()
-                    return
-
         self._hide_completer()
         self.add_leg_row()
 
@@ -806,7 +818,7 @@ class PositionEditDialog(QDialog):
         self.table_legs.scrollToBottom()
 
     # =====================================================
-    # استخراج لگ‌ها از جدول
+    # استخراج لگ‌ها
     # =====================================================
 
     def _collect_legs_from_table(self) -> List[OptionLeg]:
@@ -841,41 +853,78 @@ class PositionEditDialog(QDialog):
             legs.append(leg)
         return legs
 
+    def _collect_full_legs(self) -> List[OptionLeg]:
+        legs: List[OptionLeg] = []
+        for r in range(self.table_legs.rowCount()):
+            line_symbol: QLineEdit = self.table_legs.cellWidget(r, COL_SYMBOL)
+            cmb_kind: QComboBox = self.table_legs.cellWidget(r, COL_KIND)
+            cmb_side: QComboBox = self.table_legs.cellWidget(r, COL_SIDE)
+            spin_strike: QSpinBox = self.table_legs.cellWidget(r, COL_STRIKE)
+            spin_qty: QSpinBox = self.table_legs.cellWidget(r, COL_QTY)
+            spin_entry: QSpinBox = self.table_legs.cellWidget(r, COL_ENTRY)
+
+            if line_symbol is None or not line_symbol.text().strip():
+                continue
+
+            symbol = normalize_symbol(
+                sanitize_symbol_input(line_symbol.text()))
+            option_kind = cmb_kind.currentData() or OptionType.STOCK
+            leg_type = cmb_side.currentData() or LegType.BUY
+            is_option = (option_kind != OptionType.STOCK)
+
+            cs_prop = line_symbol.property("contract_size")
+            try:
+                cs_value = int(cs_prop) if cs_prop is not None else 0
+            except (TypeError, ValueError):
+                cs_value = 0
+
+            contract_size = cs_value if cs_value > 0 else (
+                1000 if is_option else 1)
+
+            leg = OptionLeg(
+                symbol=symbol,
+                is_option=is_option,
+                option_kind=option_kind,
+                leg_type=leg_type,
+                strike_price=spin_strike.value() if is_option else 0.0,
+                contract_size=int(contract_size),
+                quantity=spin_qty.value(),
+                entry_price=spin_entry.value(),
+                current_price=spin_entry.value(),
+                expiry_date="",
+            )
+            legs.append(leg)
+        return legs
+
     # =====================================================
-    # به‌روزرسانی لیبل تشخیص خودکار
+    # به‌روزرسانی لیبل پیشنهاد
     # =====================================================
 
     def _update_detected_strategy_label(self):
         legs = self._collect_legs_from_table()
         if not legs:
-            self.lbl_detected_strategy.setText("(تشخیص خودکار: —)")
-            self.lbl_detected_strategy.setStyleSheet(
-                "color: #9E9E9E; font-size: 10px; "
-                "font-weight: bold; padding-right: 4px;")
+            self.lbl_detected_strategy.setText("(پیشنهاد خودکار: —)")
+            set_tone(self.lbl_detected_strategy, "muted")
             self.btn_use_suggestion.setEnabled(False)
             return
 
-        suggested = detect_strategy_name(legs)
-        if suggested and suggested != "Strategy":
+        suggested = PositionPnLCalculator.suggest_strategy_name(legs)
+        if suggested:
             self.lbl_detected_strategy.setText(
-                f"(تشخیص خودکار: {suggested})")
-            self.lbl_detected_strategy.setStyleSheet(
-                "color: #1976D2; font-size: 10px; "
-                "font-weight: bold; padding-right: 4px;")
+                f"(پیشنهاد خودکار: {suggested})")
+            set_tone(self.lbl_detected_strategy, "primary")
             self.btn_use_suggestion.setEnabled(True)
         else:
-            self.lbl_detected_strategy.setText("(تشخیص خودکار: —)")
-            self.lbl_detected_strategy.setStyleSheet(
-                "color: #9E9E9E; font-size: 10px; "
-                "font-weight: bold; padding-right: 4px;")
+            self.lbl_detected_strategy.setText("(پیشنهاد خودکار: —)")
+            set_tone(self.lbl_detected_strategy, "muted")
             self.btn_use_suggestion.setEnabled(False)
 
     def _apply_suggested_strategy(self):
         legs = self._collect_legs_from_table()
         if not legs:
             return
-        suggested = detect_strategy_name(legs)
-        if suggested and suggested != "Strategy":
+        suggested = PositionPnLCalculator.suggest_strategy_name(legs)
+        if suggested:
             self.txt_strategy.setText(suggested)
 
     # =====================================================
@@ -902,6 +951,7 @@ class PositionEditDialog(QDialog):
         if row >= 0:
             self._apply_leg_row_state(row)
         self._update_detected_strategy_label()
+        self._update_live_summary()
 
     def _apply_leg_row_state(self, row: int):
         cmb_kind: QComboBox = self.table_legs.cellWidget(row, COL_KIND)
@@ -916,17 +966,11 @@ class PositionEditDialog(QDialog):
         if option_kind == OptionType.STOCK:
             spin_strike.setEnabled(False)
             spin_strike.setValue(0)
-            spin_strike.setStyleSheet(
-                "background-color: #EEEEEE; color: #9E9E9E;")
             line_expiry.setEnabled(False)
             line_expiry.setText("")
-            line_expiry.setStyleSheet(
-                "background-color: #EEEEEE; color: #9E9E9E;")
         else:
             spin_strike.setEnabled(True)
-            spin_strike.setStyleSheet("")
             line_expiry.setEnabled(True)
-            line_expiry.setStyleSheet("")
 
     # =====================================================
     # Autocomplete
@@ -1013,8 +1057,11 @@ class PositionEditDialog(QDialog):
         line_edit.setProperty("contract_size",
                               data.get("contract_size", 1000))
 
+        self._update_live_price_for_row(row)
+
         self._hide_completer()
         self._update_detected_strategy_label()
+        self._update_live_summary()
 
     # =====================================================
     # Event Filter
@@ -1078,8 +1125,8 @@ class PositionEditDialog(QDialog):
         for leg in self.position.legs:
             self.add_leg_row(leg)
 
-        self.add_leg_row()
         self._update_detected_strategy_label()
+        self._update_live_summary()
 
     # =====================================================
     # ذخیره
@@ -1094,8 +1141,7 @@ class PositionEditDialog(QDialog):
             QMessageBox.warning(
                 self, "خطا",
                 "نام استراتژی نمی‌تواند خالی باشد.\n\n"
-                "لطفاً یک نام برای استراتژی وارد کنید یا از "
-                "دکمه «← استفاده» کنار پیشنهاد «تشخیص خودکار» استفاده کنید.")
+                "لطفاً یک نام وارد کنید یا از دکمه «← استفاده» استفاده کنید.")
             self.txt_strategy.setFocus()
             return
 
@@ -1103,7 +1149,16 @@ class PositionEditDialog(QDialog):
             QMessageBox.warning(self, "خطا", "تاریخ اجرا را وارد کنید.")
             return
 
+        if not re.match(r'^\d{4}/\d{1,2}/\d{1,2}$', exec_date):
+            QMessageBox.warning(
+                self, "خطا",
+                "تاریخ اجرا نامعتبر است.\n"
+                "فرمت صحیح: YYYY/MM/DD (مثلاً 1403/01/15)")
+            return
+
+        # ─── استخراج لگ‌ها ───
         legs: List[OptionLeg] = []
+
         for r in range(self.table_legs.rowCount()):
             line_symbol: QLineEdit = self.table_legs.cellWidget(r, COL_SYMBOL)
             cmb_kind: QComboBox = self.table_legs.cellWidget(r, COL_KIND)
@@ -1111,6 +1166,8 @@ class PositionEditDialog(QDialog):
             spin_strike: QSpinBox = self.table_legs.cellWidget(r, COL_STRIKE)
             spin_qty: QSpinBox = self.table_legs.cellWidget(r, COL_QTY)
             spin_entry: QSpinBox = self.table_legs.cellWidget(r, COL_ENTRY)
+            spin_current: QSpinBox = self.table_legs.cellWidget(
+                r, COL_CURRENT)
             line_expiry: QLineEdit = self.table_legs.cellWidget(r, COL_EXPIRY)
 
             if line_symbol is None or not line_symbol.text().strip():
@@ -1124,6 +1181,7 @@ class PositionEditDialog(QDialog):
             strike = spin_strike.value()
             qty = spin_qty.value()
             entry_price = spin_entry.value()
+            current_price = spin_current.value() if spin_current else 0
             expiry = line_expiry.text().strip()
 
             is_option = (option_kind != OptionType.STOCK)
@@ -1139,6 +1197,19 @@ class PositionEditDialog(QDialog):
             contract_size = cs_value if cs_value > 0 else (
                 1000 if is_option else 1)
 
+            # حفظ فیلدهای قبلی اگر همان لگه بود
+            original = None
+            for orig in self.position.legs:
+                if orig.leg_id and getattr(orig, 'leg_id', '') == \
+                        line_symbol.property("leg_id"):
+                    original = orig
+                    break
+                if orig.symbol == symbol and \
+                   orig.leg_type == leg_type and \
+                   abs(orig.strike_price - strike) < 1:
+                    original = orig
+                    break
+
             leg = OptionLeg(
                 symbol=symbol,
                 is_option=is_option,
@@ -1148,10 +1219,31 @@ class PositionEditDialog(QDialog):
                 contract_size=int(contract_size),
                 quantity=qty,
                 entry_price=entry_price,
-                current_price=entry_price,
+                current_price=current_price,
                 expiry_date=expiry,
                 ins_code=ins_code,
             )
+
+            if original is not None:
+                leg.leg_id = original.leg_id
+                leg.close_price = original.close_price
+                leg.close_fee = original.close_fee
+                leg.entry_fee = original.entry_fee
+                leg.is_defaulted = original.is_defaulted
+                leg.default_penalty = original.default_penalty
+                leg.default_payment = original.default_payment
+                leg.settlement_price = original.settlement_price
+                # ✅ فیلدهای جدید
+                leg.source = original.source
+                leg.trade_ref = original.trade_ref
+                leg.close_trade_ref = original.close_trade_ref
+                leg.realized_pnl = original.realized_pnl
+                leg.open_date = original.open_date
+                leg.open_time = original.open_time
+                leg.close_date = original.close_date
+                leg.close_time = original.close_time
+                leg.trade_time = original.trade_time
+
             legs.append(leg)
 
         if not legs:
@@ -1210,30 +1302,274 @@ class PositionEditDialog(QDialog):
 
 
 # =====================================================
-# ✅ دیالوگ ثبت نکول CALL (جدید)
+# دیالوگ تسویه نقدی / نکول
 # =====================================================
 
-class DefaultSettlementDialog(QDialog):
-    """
-    دیالوگ ثبت نکول CALL در روز سررسید.
-    - کاربر قیمت پایانی سهم پایه را وارد/تأیید می‌کند
-    - محاسبه خودکار: payment + penalty + exercise_fee
-    - net نهایی (مثبت = ذی‌نفع، منفی = متضرر)
-    """
+class CashSettlementDialog(QDialog):
+    """دیالوگ ثبت تسویه نقدی یا نکول"""
 
-    def __init__(self, parent=None, position: StrategyPosition = None):
+    def __init__(self, parent=None, position: StrategyPosition = None,
+                 default_mode: str = "cash"):
         super().__init__(parent)
-        self.setWindowTitle("ثبت نکول CALL")
+        self.setWindowTitle("ثبت تسویه نقدی / نکول")
         self.setLayoutDirection(Qt.RightToLeft)
-        self.setMinimumWidth(580)
+        self.setMinimumWidth(620)
 
         self.position = position
+        self._default_mode = default_mode
         self._result = None
 
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        # ─── اطلاعات موقعیت ───
+        info_group = QGroupBox("اطلاعات موقعیت")
+        info_layout = QFormLayout(info_group)
+
+        info_layout.addRow("شناسه:", QLabel(self.position.position_id))
+        info_layout.addRow(
+            "استراتژی:", QLabel(self.position.strategy_name))
+        info_layout.addRow(
+            "کارگزاری:", QLabel(self.position.broker_name or "—"))
+        info_layout.addRow(
+            "نماد پایه:", QLabel(self.position.underlying_symbol))
+        info_layout.addRow(
+            "تاریخ سررسید:", QLabel(self.position.expiry_date))
+
+        layout.addWidget(info_group)
+
+        # ─── نوع انجام ───
+        type_group = QGroupBox("نوع انجام")
+        type_layout = QVBoxLayout(type_group)
+
+        self.radio_cash = QRadioButton("📌 تسویه نقدی معمولی")
+        self.radio_default = QRadioButton(
+            "⚖️ تسویه نقدی با نکول طرف مقابل")
+        self.radio_you_default = QRadioButton(
+            "❌ تسویه نقدی با نکول خودم")
+
+        has_call = any(l.is_call for l in self.position.legs)
+
+        if not has_call:
+            self.radio_default.setEnabled(False)
+            self.radio_you_default.setEnabled(False)
+            self.radio_default.setToolTip("نکول فقط برای CALL معنا دارد")
+            self.radio_you_default.setToolTip(
+                "نکول فقط برای CALL معنا دارد")
+
+        if self._default_mode == "default" and has_call:
+            self.radio_default.setChecked(True)
+        elif self._default_mode == "you_default" and has_call:
+            self.radio_you_default.setChecked(True)
+        else:
+            self.radio_cash.setChecked(True)
+
+        type_layout.addWidget(self.radio_cash)
+        type_layout.addWidget(self.radio_default)
+        type_layout.addWidget(self.radio_you_default)
+
+        self.radio_cash.toggled.connect(self._on_type_changed)
+        self.radio_default.toggled.connect(self._on_type_changed)
+        self.radio_you_default.toggled.connect(self._on_type_changed)
+
+        layout.addWidget(type_group)
+
+        # ─── تسویه نقدی معمولی ───
+        self.cash_group = QGroupBox("تسویه نقدی معمولی")
+        cash_layout = QFormLayout(self.cash_group)
+
+        self.spin_amount = QDoubleSpinBox()
+        self.spin_amount.setRange(-1e12, 1e12)
+        self.spin_amount.setDecimals(0)
+        self.spin_amount.setGroupSeparatorShown(True)
+        self.spin_amount.setSuffix(f" {CURRENCY}")
+        self.spin_amount.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self.spin_amount.setValue(0.0)
+
+        cash_layout.addRow(
+            "مبلغ خالص دریافتی/پرداختی:", self.spin_amount)
+
+        hint = QLabel(
+            "💡 مثبت = دریافت، منفی = پرداخت\n"
+            "   (بدون کارمزد اعمال یا جریمه)")
+        set_tone(hint, "muted")
+        cash_layout.addRow("", hint)
+
+        layout.addWidget(self.cash_group)
+
+        # ─── نکول ───
+        self.default_group = QGroupBox(
+            "تسویه نقدی با نکول (فقط برای CALL)")
+        default_layout = QFormLayout(self.default_group)
+
+        self.spin_st = QDoubleSpinBox()
+        self.spin_st.setRange(0, 1e12)
+        self.spin_st.setDecimals(0)
+        self.spin_st.setGroupSeparatorShown(True)
+        self.spin_st.setSuffix(" ریال")
+        self.spin_st.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self.spin_st.valueChanged.connect(self._update_default_calc)
+
+        # ✅ استفاده از get_market_snapshot از main
+        default_st = 0.0
+        try:
+            snap = get_market_snapshot(
+                use_cache=True, force_refresh=False)
+            default_st = _get_underlying_closing_price(
+                snap, self.position.underlying_symbol)
+        except Exception as e:
+            logger.warning(f"S_T load failed: {e}")
+
+        if default_st <= 0:
+            default_st = self.position.underlying_price
+        self.spin_st.setValue(default_st)
+
+        default_layout.addRow(
+            "قیمت پایانی سهم پایه (S_T):", self.spin_st)
+
+        st_hint = QLabel(
+            "💡 این مقدار از «قیمت پایانی» سهم پایه گرفته شده است.")
+        set_tone(st_hint, "muted")
+        default_layout.addRow("", st_hint)
+
+        self.lbl_payment = QLabel("—")
+        self.lbl_penalty = QLabel("—")
+        self.lbl_exercise_fee = QLabel("—")
+        self.lbl_net = QLabel("—")
+
+        default_layout.addRow("💰 وجه تسویه:", self.lbl_payment)
+        default_layout.addRow("💸 جریمه ۱٪:", self.lbl_penalty)
+        default_layout.addRow("📋 کارمزد اعمال:", self.lbl_exercise_fee)
+        default_layout.addRow("━━━━━━━━━━━", QLabel(""))
+        default_layout.addRow("📈 خالص نهایی:", self.lbl_net)
+
+        layout.addWidget(self.default_group)
+
+        # ─── دکمه‌ها ───
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("✅ تأیید و ثبت")
+        buttons.button(QDialogButtonBox.Cancel).setText("❌ انصراف")
+        set_kind(buttons.button(QDialogButtonBox.Ok), "primary")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+
+        layout.addWidget(buttons)
+
+        self._on_type_changed()
+
+    def _on_type_changed(self):
+        is_cash = self.radio_cash.isChecked()
+        self.cash_group.setVisible(is_cash)
+        self.default_group.setVisible(not is_cash)
+
+        if not is_cash:
+            self._update_default_calc()
+
+        self.adjustSize()
+
+    def _get_exercise_rate(self) -> float:
+        """نرخ کارمزد اعمال — از main.get_setting"""
+        try:
+            rate = get_setting(
+                "exercise_fee_rate",
+                self.position.underlying_symbol,
+            )
+            if rate is not None:
+                return float(rate)
+        except Exception as e:
+            logger.debug(f"exercise_fee_rate load failed: {e}")
+        return 0.0005  # پیش‌فرض
+
+    def _update_default_calc(self):
+        S_T = self.spin_st.value()
+        exercise_rate = self._get_exercise_rate()
+
+        # ✅ تعیین is_self_default بر اساس radio انتخاب‌شده
+        is_self_default = self.radio_you_default.isChecked()
+
+        total_payment = 0.0
+        total_penalty = 0.0
+        total_exercise_fee = 0.0
+        net_total = 0.0
+
+        for leg in self.position.legs:
+            if not leg.is_call:
+                continue
+            r = PositionPnLCalculator.calculate_call_default(
+                leg, S_T,
+                exercise_rate=exercise_rate,
+                is_self_default=is_self_default,
+            )
+            if r["valid"]:
+                total_payment += r["payment"]
+                total_penalty += r["penalty"]
+                total_exercise_fee += r["exercise_fee"]
+                net_total += r["net"]
+
+        self.lbl_payment.setText(f"{fmt_money(total_payment)} ریال")
+        self.lbl_penalty.setText(f"{fmt_money(total_penalty)} ریال")
+
+        if total_exercise_fee > 0:
+            self.lbl_exercise_fee.setText(
+                f"{fmt_money(total_exercise_fee)} ریال")
+            set_tone(self.lbl_exercise_fee, "loss")
+        else:
+            self.lbl_exercise_fee.setText("—")
+            set_tone(self.lbl_exercise_fee, "muted")
+
+        tone = pnl_tone(net_total)
+        self.lbl_net.setText(f"{fmt_money(net_total)} ریال")
+        set_tone(self.lbl_net, tone, big=True)
+
+    def _on_accept(self):
+        if self.radio_cash.isChecked():
+            amount = self.spin_amount.value()
+            self._result = {
+                "mode": "cash",
+                "amount": amount,
+            }
+        else:
+            mode = "default" if self.radio_default.isChecked() \
+                else "you_default"
+            self._result = {
+                "mode": mode,
+                "S_T": self.spin_st.value(),
+                "exercise_rate": self._get_exercise_rate(),
+            }
+        self.accept()
+
+    def get_result(self) -> dict:
+        return self._result
+
+
+# =====================================================
+# دیالوگ آفست
+# =====================================================
+
+class OffsetDialog(QDialog):
+    """دیالوگ آفست — بستن موقعیت باز با معامله معکوس"""
+
+    def __init__(self, parent=None, position: StrategyPosition = None):
+        super().__init__(parent)
+        self.setWindowTitle("آفست (بستن موقعیت باز)")
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.setMinimumWidth(720)
+
+        self.position = position
+        self._result = None
+        self._spin_outputs: List[QSpinBox] = []
+
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         # ─── اطلاعات موقعیت ───
         info_group = QGroupBox("اطلاعات موقعیت")
@@ -1246,183 +1582,333 @@ class DefaultSettlementDialog(QDialog):
         info_layout.addRow(
             "نماد پایه:", QLabel(self.position.underlying_symbol))
         info_layout.addRow(
-            "تاریخ سررسید:", QLabel(self.position.expiry_date))
-
-        call_legs = [l for l in self.position.legs if l.is_call]
-        if call_legs:
-            leg = call_legs[0]
-            role = "خریدار (ذی‌نفع)" if leg.leg_type == LegType.BUY \
-                else "فروشنده (متضرر)"
-            role_lbl = QLabel(role)
-            if leg.leg_type == LegType.BUY:
-                role_lbl.setStyleSheet(
-                    "color: #2E7D32; font-weight: bold;")
-            else:
-                role_lbl.setStyleSheet(
-                    "color: #C62828; font-weight: bold;")
-            info_layout.addRow("نقش شما:", role_lbl)
+            "تاریخ اجرا:", QLabel(self.position.execution_date))
 
         layout.addWidget(info_group)
 
-        # ─── لگ‌های CALL ───
-        call_group = QGroupBox("لگ‌های CALL در این موقعیت")
-        call_layout = QVBoxLayout(call_group)
+        # ─── جدول لگ‌ها ───
+        legs_group = QGroupBox("قیمت خروج هر لگ (معامله معکوس)")
+        legs_layout = QVBoxLayout(legs_group)
 
-        for i, leg in enumerate(call_legs, 1):
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels([
+            "#", "نماد", "نوع", "قیمت ورود", "قیمت خروج",
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Interactive)
+        self.table.setColumnWidth(0, 40)
+        self.table.setColumnWidth(1, 200)
+        self.table.setColumnWidth(2, 120)
+        self.table.setColumnWidth(3, 130)
+        self.table.setColumnWidth(4, 170)
+        self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table.setAlternatingRowColors(True)
+
+        for idx, leg in enumerate(self.position.legs, 1):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+            item_num = QTableWidgetItem(str(idx))
+            item_num.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 0, item_num)
+
+            item_sym = QTableWidgetItem(leg.symbol)
+            item_sym.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 1, item_sym)
+
             direction = "خرید" if leg.leg_type == LegType.BUY else "فروش"
-            text = (
-                f"{i}. {leg.symbol} | {direction} | "
-                f"اعمال: {int(leg.strike_price):,} | "
-                f"تعداد: {leg.quantity} × {leg.effective_contract_size}"
-            )
-            call_layout.addWidget(QLabel(text))
+            if leg.is_call:
+                direction += " (کال)"
+            elif leg.is_put:
+                direction += " (پوت)"
+            elif leg.is_stock:
+                direction += " (سهام)"
 
-        layout.addWidget(call_group)
+            item_kind = QTableWidgetItem(direction)
+            item_kind.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 2, item_kind)
 
-        # ─── ورودی S_T ───
-        input_group = QGroupBox(
-            "قیمت پایانی سهم پایه در روز سررسید")
-        input_layout = QFormLayout(input_group)
+            item_entry = QTableWidgetItem(fmt_int(leg.entry_price))
+            item_entry.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 3, item_entry)
 
-        self.spin_st = QDoubleSpinBox()
-        self.spin_st.setRange(0, 1e12)
-        self.spin_st.setDecimals(0)
-        self.spin_st.setGroupSeparatorShown(True)
-        self.spin_st.setSuffix(" ریال")
-        self.spin_st.valueChanged.connect(self._update_calculation)
+            spin_out = QSpinBox()
+            spin_out.setRange(0, 1_000_000_000)
+            spin_out.setSingleStep(10)
+            spin_out.setGroupSeparatorShown(True)
+            spin_out.setButtonSymbols(QAbstractSpinBox.NoButtons)
 
-        # مقدار پیش‌فرض: از snapshot.underlying_assets[ticker].close_price
-        default_st = 0.0
-        try:
-            from data.manager import get_market_snapshot
-            snap = get_market_snapshot(
-                use_cache=True, force_refresh=False)
-            default_st = _get_underlying_closing_price(
-                snap, self.position.underlying_symbol)
-        except Exception as e:
-            print(f"[DefaultDialog] S_T load failed: {e}")
+            default_price = leg.current_price or leg.entry_price
+            spin_out.setValue(int(default_price))
+            spin_out.valueChanged.connect(self._update_calculation)
 
-        if default_st <= 0:
-            default_st = self.position.underlying_price
+            self.table.setCellWidget(row, 4, spin_out)
+            self._spin_outputs.append(spin_out)
 
-        self.spin_st.setValue(default_st)
-
-        input_layout.addRow("S_T (پایانی):", self.spin_st)
-
-        st_hint = QLabel(
-            "💡 این مقدار از «قیمت پایانی» سهم پایه گرفته شده است.\n"
-            "   در صورت نیاز می‌توانید تغییر دهید.")
-        st_hint.setStyleSheet("color: #666; font-size: 10px;")
-        input_layout.addRow("", st_hint)
-
-        layout.addWidget(input_group)
+        legs_layout.addWidget(self.table)
+        layout.addWidget(legs_group)
 
         # ─── محاسبه خودکار ───
         result_group = QGroupBox("محاسبه خودکار")
         result_layout = QFormLayout(result_group)
 
-        self.lbl_payment = QLabel("—")
-        self.lbl_penalty = QLabel("—")
-        self.lbl_exercise_fee = QLabel("—")
-        self.lbl_total = QLabel("—")
-        self.lbl_total.setStyleSheet(
-            "font-weight: bold; color: #1976D2; font-size: 13px;")
+        self.lbl_net_entry = QLabel("—")
+        self.lbl_net_exit = QLabel("—")
+        self.lbl_close_fee = QLabel("—")
+        self.lbl_realized_pnl = QLabel("—")
+        self.lbl_realized_roi = QLabel("—")
 
-        result_layout.addRow("💰 وجه تسویه:", self.lbl_payment)
-        result_layout.addRow("💸 جریمه ۱٪ نکول:", self.lbl_penalty)
-        result_layout.addRow("📋 کارمزد اعمال:", self.lbl_exercise_fee)
-        result_layout.addRow("━━━━━━━━━━━", QLabel(""))
-        result_layout.addRow("📈 خالص نهایی:", self.lbl_total)
+        result_layout.addRow("💰 هزینه ورود خالص:", self.lbl_net_entry)
+        result_layout.addRow("💵 ارزش خروج خالص:", self.lbl_net_exit)
+        result_layout.addRow("📋 کارمزد خروج:", self.lbl_close_fee)
+        result_layout.addRow("━━━━━━━━━", QLabel(""))
+        result_layout.addRow(
+            "📈 سود/زیان محقق‌شده:", self.lbl_realized_pnl)
+        result_layout.addRow("📊 بازدهی (ROI):", self.lbl_realized_roi)
 
         layout.addWidget(result_group)
 
         # ─── دکمه‌ها ───
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText("✅ تأیید و ثبت نکول")
+        buttons.button(QDialogButtonBox.Ok).setText("✅ تأیید و بستن")
         buttons.button(QDialogButtonBox.Cancel).setText("❌ انصراف")
+        set_kind(buttons.button(QDialogButtonBox.Ok), "primary")
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
 
         layout.addWidget(buttons)
 
-        # محاسبه اولیه
         self._update_calculation()
 
-    def _get_exercise_rate(self) -> float:
-        """گرفتن نرخ کارمزد اعمال از config"""
-        try:
-            from config import (
-                get_exercise_fee_rate,
-                get_symbol_market,
-                get_symbol_kind,
-            )
-            market = get_symbol_market(self.position.underlying_symbol)
-            kind = get_symbol_kind(self.position.underlying_symbol)
-            rate = get_exercise_fee_rate(market, kind)
-            return float(rate) if rate else 0.0005
-        except Exception:
-            return 0.0005
-
     def _update_calculation(self):
-        """محاسبه و نمایش خودکار"""
-        S_T = self.spin_st.value()
-        exercise_rate = self._get_exercise_rate()
+        temp_legs: List[OptionLeg] = []
 
-        total_payment = 0.0
-        total_penalty = 0.0
-        total_exercise_fee = 0.0
-        net_total = 0.0
+        for i, leg in enumerate(self.position.legs):
+            close_price = self._spin_outputs[i].value()
 
-        for leg in self.position.legs:
-            if not leg.is_call:
-                continue
-            r = PositionPnLCalculator.calculate_call_default(
-                leg, S_T, exercise_rate=exercise_rate)
-            if r["valid"]:
-                total_payment += r["payment"]
-                total_penalty += r["penalty"]
-                total_exercise_fee += r["exercise_fee"]
-                net_total += r["net"]
+            temp_leg = OptionLeg(
+                leg_id=leg.leg_id,
+                symbol=leg.symbol,
+                is_option=leg.is_option,
+                option_kind=leg.option_kind,
+                leg_type=leg.leg_type,
+                strike_price=leg.strike_price,
+                contract_size=leg.contract_size,
+                quantity=leg.quantity,
+                entry_price=leg.entry_price,
+                entry_fee=leg.entry_fee,
+                current_price=leg.current_price,
+                close_price=float(close_price),
+                close_fee=0.0,
+                expiry_date=leg.expiry_date,
+                ins_code=leg.ins_code,
+            )
+            temp_leg.close_fee = \
+                PositionPnLCalculator.calculate_leg_close_fee(
+                    temp_leg, float(close_price))
+            temp_legs.append(temp_leg)
 
-        self.lbl_payment.setText(f"{int(total_payment):,} ریال")
-        self.lbl_penalty.setText(f"{int(total_penalty):,} ریال")
+        temp_pos = StrategyPosition(
+            position_id=self.position.position_id,
+            strategy_name=self.position.strategy_name,
+            broker_name=self.position.broker_name,
+            underlying_symbol=self.position.underlying_symbol,
+            underlying_price=self.position.underlying_price,
+            execution_date=self.position.execution_date,
+            expiry_date=self.position.expiry_date,
+            status=PositionStatus.CLOSED,
+            legs=temp_legs,
+        )
 
-        if total_exercise_fee > 0:
-            self.lbl_exercise_fee.setText(
-                f"{int(total_exercise_fee):,} ریال")
-            self.lbl_exercise_fee.setStyleSheet(
-                "color: #C62828; font-weight: bold;")
-        else:
-            self.lbl_exercise_fee.setText("—")
-            self.lbl_exercise_fee.setStyleSheet("")
+        net_entry = PositionPnLCalculator.calculate_net_entry_cost(temp_pos)
+        realized_pnl, realized_roi = \
+            PositionPnLCalculator.calculate_realized_pnl(temp_pos)
+        net_exit = net_entry + realized_pnl
+        total_close_fee = sum(l.close_fee for l in temp_legs)
 
-        # رنگ برای خالص
-        if net_total >= 0:
-            self.lbl_total.setStyleSheet(
-                "font-weight: bold; color: #2E7D32; font-size: 13px;")
-        else:
-            self.lbl_total.setStyleSheet(
-                "font-weight: bold; color: #C62828; font-size: 13px;")
+        self.lbl_net_entry.setText(fmt_money(net_entry))
+        self.lbl_net_exit.setText(fmt_money(net_exit))
+        self.lbl_close_fee.setText(fmt_money(total_close_fee))
 
-        self.lbl_total.setText(f"{int(net_total):,} ریال")
+        tone = pnl_tone(realized_pnl)
+        self.lbl_realized_pnl.setText(fmt_money(realized_pnl))
+        set_tone(self.lbl_realized_pnl, tone, big=True)
+
+        self.lbl_realized_roi.setText(fmt_pct(realized_roi, digits=2))
+        set_tone(self.lbl_realized_roi, tone)
 
         self._result = {
-            "S_T": S_T,
-            "payment": total_payment,
-            "penalty": total_penalty,
-            "exercise_fee": total_exercise_fee,
-            "net": net_total,
-            "exercise_rate": exercise_rate,
+            "net_entry": net_entry,
+            "net_exit": net_exit,
+            "realized_pnl": realized_pnl,
+            "realized_roi": realized_roi,
+            "total_close_fee": total_close_fee,
+            "close_prices": [s.value() for s in self._spin_outputs],
         }
 
     def _on_accept(self):
-        if not self._result or self._result["S_T"] <= 0:
-            QMessageBox.warning(
-                self, "خطا",
-                "قیمت پایانی سهم پایه (S_T) باید بزرگ‌تر از صفر باشد.")
+        if not self._result:
+            QMessageBox.warning(self, "خطا", "محاسبه معتبر نیست.")
             return
         self.accept()
 
     def get_result(self) -> dict:
         return self._result
+
+
+# =====================================================
+# ✅ دیالوگ تاریخچه‌ی ایمپورت‌ها (جدید)
+# =====================================================
+
+class ImportHistoryDialog(QDialog):
+    """دیالوگ تاریخچه‌ی ایمپورت‌ها + بازگردانی batch"""
+
+    def __init__(self, parent=None, storage=None):
+        super().__init__(parent)
+        self.setWindowTitle("تاریخچه‌ی ایمپورت‌ها")
+        self.setLayoutDirection(Qt.RightToLeft)
+        self.setMinimumSize(800, 500)
+
+        self.storage = storage
+        self._batches: List[dict] = []
+
+        self.init_ui()
+        self._load_batches()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        # ─── هدر ───
+        header = QLabel(
+            "📋 فهرست ایمپورت‌های انجام‌شده از اکسل کارگزاری"
+        )
+        set_tone(header, "primary", big=True)
+        layout.addWidget(header)
+
+        hint = QLabel(
+            "💡 با کلیک روی «بازگردانی»، همه‌ی موقعیت‌های آن batch حذف می‌شوند."
+        )
+        set_tone(hint, "muted")
+        layout.addWidget(hint)
+
+        # ─── جدول ───
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels([
+            "شناسه batch", "کارگزاری", "تاریخ ایجاد",
+            "معاملات", "باز", "بسته", "اقدام",
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Interactive)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setColumnWidth(0, 200)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 130)
+        self.table.setColumnWidth(3, 80)
+        self.table.setColumnWidth(4, 70)
+        self.table.setColumnWidth(5, 70)
+        self.table.verticalHeader().setDefaultSectionSize(36)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+
+        layout.addWidget(self.table, 1)
+
+        # ─── دکمه‌ها ───
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.button(QDialogButtonBox.Close).setText("بستن")
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _load_batches(self):
+        if self.storage is None:
+            return
+
+        self._batches = self.storage.load_import_batches()
+        self._refresh_table()
+
+    def _refresh_table(self):
+        self.table.setRowCount(0)
+
+        if not self._batches:
+            self.table.insertRow(0)
+            item = QTableWidgetItem("هیچ ایمپورتی ثبت نشده است")
+            item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(0, 0, item)
+            self.table.setSpan(0, 0, 1, 7)
+            return
+
+        for batch in self._batches:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+            self.table.setItem(row, 0, QTableWidgetItem(
+                batch.get("batch_id", "—")))
+            self.table.setItem(row, 1, QTableWidgetItem(
+                batch.get("broker", "—")))
+            self.table.setItem(row, 2, QTableWidgetItem(
+                batch.get("created_at", "—")))
+            self.table.setItem(row, 3, QTableWidgetItem(
+                str(batch.get("n_trades", 0))))
+            self.table.setItem(row, 4, QTableWidgetItem(
+                str(batch.get("n_positions_open", 0))))
+            self.table.setItem(row, 5, QTableWidgetItem(
+                str(batch.get("n_positions_closed", 0))))
+
+            btn = QPushButton("↩️ بازگردانی")
+            btn.clicked.connect(
+                lambda _, b=batch: self._rollback_batch(b))
+            self.table.setCellWidget(row, 6, btn)
+
+    def _rollback_batch(self, batch: dict):
+        batch_id = batch.get("batch_id", "")
+        if not batch_id:
+            return
+
+        n_open = batch.get("n_positions_open", 0)
+        n_closed = batch.get("n_positions_closed", 0)
+
+        reply = QMessageBox.question(
+            self, "تأیید بازگردانی",
+            f"آیا از بازگردانی ایمپورت زیر مطمئن هستید؟\n\n"
+            f"شناسه: {batch_id}\n"
+            f"کارگزاری: {batch.get('broker', '—')}\n"
+            f"موقعیت‌های باز: {n_open}\n"
+            f"موقعیت‌های بسته: {n_closed}\n\n"
+            f"⚠️ این عمل قابل بازگشت نیست!",
+            QMessageBox.Yes | QMessageBox.No)
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # حذف موقعیت‌ها
+        positions = self.storage.load_positions()
+        new_positions = [
+            p for p in positions
+            if p.import_batch_id != batch_id
+        ]
+
+        removed_count = len(positions) - len(new_positions)
+
+        if removed_count == 0:
+            QMessageBox.information(
+                self, "اطلاع",
+                "هیچ موقعیتی برای این batch یافت نشد.")
+            return
+
+        if not self.storage.save_positions(new_positions):
+            QMessageBox.critical(
+                self, "خطا",
+                "ذخیره‌سازی موقعیت‌ها ناموفق بود.")
+            return
+
+        # حذف batch از فایل batch ها
+        self.storage.delete_import_batch(batch_id)
+
+        QMessageBox.information(
+            self, "موفق",
+            f"✅ {removed_count} موقعیت حذف شد.")
+
+        self._load_batches()
