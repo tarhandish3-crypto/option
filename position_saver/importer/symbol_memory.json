@@ -1,0 +1,65 @@
+{
+  "ضفزر5051": {
+    "strike_price": 140000.0,
+    "expiry_date": "1405/05/25",
+    "option_kind": "CALL",
+    "underlying_symbol": "8175784894140974",
+    "ins_code_ua": "8175784894140974",
+    "last_updated": "2026/10/14 22:33:10",
+    "contract_size": 1000
+  },
+  "ضفزر6141": {
+    "strike_price": 120000.0,
+    "expiry_date": "1405/06/29",
+    "option_kind": "CALL",
+    "underlying_symbol": "فزر",
+    "ins_code_ua": "8175784894140974",
+    "last_updated": "2026/10/13 18:55:30"
+  },
+  "ضفزر6191": {
+    "strike_price": 170000.0,
+    "expiry_date": "1405/05/29",
+    "option_kind": "CALL",
+    "underlying_symbol": "فزر",
+    "ins_code_ua": "8175784894140974",
+    "last_updated": "2026/10/13 18:29:49"
+  },
+  "ضفزر6211": {
+    "strike_price": 190000.0,
+    "expiry_date": "1405/05/29",
+    "option_kind": "CALL",
+    "underlying_symbol": "فزر",
+    "ins_code_ua": "8175784894140974",
+    "last_updated": "2026/10/13 18:30:18"
+  },
+  "ضفزر6241": {
+    "strike_price": 220100.0,
+    "expiry_date": "1405/06/29",
+    "option_kind": "CALL",
+    "underlying_symbol": "فزر",
+    "ins_code_ua": "8175784894140974",
+    "last_updated": "2026/10/13 19:01:42"
+  },
+  "ضفزر819": {
+    "strike_price": 350000.0,
+    "expiry_date": "1405/08/24",
+    "option_kind": "CALL",
+    "underlying_symbol": "فزر",
+    "ins_code_ua": "8175784894140974",
+    "last_updated": "2026/10/13 19:51:40"
+  },
+  "ضهرم50341": {
+    "strike_price": 50000.0,
+    "expiry_date": "1405/05/28",
+    "option_kind": "CALL",
+    "underlying_symbol": "هرم",
+    "last_updated": "2026/10/13 19:47:35"
+  },
+  "طهرم50351": {
+    "strike_price": 38000.0,
+    "expiry_date": "1405/05/28",
+    "option_kind": "PUT",
+    "underlying_symbol": "هرم",
+    "last_updated": "2026/10/13 19:48:31"
+  }
+}

@@ -5,14 +5,15 @@
 ماژول UI پکیج Position Saver.
 
 شامل:
-    - PositionSaverWidget: ویجت اصلی مدیریت موقعیت‌ها
-    - دیالوگ‌های کاربردی: ویرایش، تسویه، آفست، تاریخچه‌ی ایمپورت
+    - PositionSaverWidget: ویجت اصلی
+    - دیالوگ‌ها: ویرایش، تسویه، آفست، تاریخچه، نوع اعمال
+    - دیالوگ‌های تخصصی: پر کردن نماد، تحلیل نماد، تعریف استراتژی
     - Wizard ایمپورت اکسل
-    - ثابت‌ها: نام کارگزاری‌ها، تنظیمات کیبورد
+    - ثابت‌ها: کارگزاری‌ها، استراتژی‌های استاندارد
 """
 
 # ═══════════════════════════════════════════════════
-# ۱. دیالوگ‌ها (اول، چون ویجت اصلی به آن‌ها وابسته است)
+# ۱. دیالوگ‌های پایه
 # ═══════════════════════════════════════════════════
 
 from position_saver.ui.dialogs import (
@@ -20,22 +21,42 @@ from position_saver.ui.dialogs import (
     CashSettlementDialog,
     OffsetDialog,
     ImportHistoryDialog,
+    ExerciseTypeDialog,
     # ثابت‌ها
     BROKER_NAMES,
     DEFAULT_BROKER,
     AUTO_SWITCH_KEYBOARD,
 )
 
+from position_saver.ui.split_position_dialog import (
+    SplitPositionDialog,
+    SPLIT_REASONS,
+)
+
 
 # ═══════════════════════════════════════════════════
-# ۲. ویجت اصلی
+# ۲. دیالوگ‌های تخصصی
+# ═══════════════════════════════════════════════════
+
+from position_saver.ui.symbol_fill_dialog import SymbolFillDialog
+
+from position_saver.ui.net_position_dialog import NetPositionDialog
+
+from position_saver.ui.strategy_dialog import (
+    StrategyDialog,
+    STANDARD_STRATEGIES,
+)
+
+
+# ═══════════════════════════════════════════════════
+# ۳. ویجت اصلی
 # ═══════════════════════════════════════════════════
 
 from position_saver.ui.main_widget import PositionSaverWidget
 
 
 # ═══════════════════════════════════════════════════
-# ۳. Wizard ایمپورت
+# ۴. Wizard ایمپورت (با محافظت)
 # ═══════════════════════════════════════════════════
 
 try:
@@ -49,23 +70,32 @@ except ImportError:
 
 
 # ═══════════════════════════════════════════════════
-# ۴. صادرکننده‌ها
+# ۵. صادرکننده‌ها
 # ═══════════════════════════════════════════════════
 
 __all__ = [
-    # ─── ویجت اصلی ───
+    # ─── Widgets ───
     "PositionSaverWidget",
 
-    # ─── دیالوگ‌ها ───
+    # ─── دیالوگ‌های پایه ───
     "PositionEditDialog",
     "CashSettlementDialog",
     "OffsetDialog",
     "ImportHistoryDialog",
+    "ExerciseTypeDialog",
+
+    # ─── دیالوگ‌های تخصصی ───
+    "SymbolFillDialog",
+    "NetPositionDialog",
+    "StrategyDialog",
+    "SplitPositionDialog",
+    "SPLIT_REASONS",
 
     # ─── Wizard ───
     "ImportWizardDialog",
 
-    # ─── ثابت‌های UI ───
+    # ─── ثابت‌ها ───
+    "STANDARD_STRATEGIES",
     "BROKER_NAMES",
     "DEFAULT_BROKER",
     "AUTO_SWITCH_KEYBOARD",

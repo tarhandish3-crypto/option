@@ -15,20 +15,146 @@ _FALLBACK_STOCK_BUY_RATE = 0.003712
 _FALLBACK_STOCK_SELL_RATE = 0.0088
 
 
+# ═══════════════════════════════════════════════════
+# قوانین استراتژی‌های استاندارد
+# ═══════════════════════════════════════════════════
+
+STRATEGY_REQUIREMENTS = {
+    # ─── استراتژی‌های تک‌لگ ───
+    "Long Call": {
+        "min": 1, "max": 1,
+        "fa_name": "لانگ کال",
+        "composition": [
+            {"leg_type": "buy", "option_kind": "CALL",
+             "min": 1, "desc": "خرید کال"},
+        ],
+    },
+    "Long Put": {
+        "min": 1, "max": 1,
+        "fa_name": "لانگ پوت",
+        "composition": [
+            {"leg_type": "buy", "option_kind": "PUT",
+             "min": 1, "desc": "خرید پوت"},
+        ],
+    },
+
+    # ─── استراتژی‌های اسپرد ───
+    "Bull Call Spread": {
+        "min": 2, "max": 2,
+        "fa_name": "بول کال اسپرد",
+        "composition": [
+            {"leg_type": "buy", "option_kind": "CALL",
+             "min": 1, "desc": "خرید کال"},
+            {"leg_type": "sell", "option_kind": "CALL",
+             "min": 1, "desc": "فروش کال"},
+        ],
+        "extra": "bull_call",
+    },
+    "Bear Put Spread": {
+        "min": 2, "max": 2,
+        "fa_name": "بیر پوت اسپرد",
+        "composition": [
+            {"leg_type": "buy", "option_kind": "PUT",
+             "min": 1, "desc": "خرید پوت"},
+            {"leg_type": "sell", "option_kind": "PUT",
+             "min": 1, "desc": "فروش پوت"},
+        ],
+        "extra": "bear_put",
+    },
+    "Covered Call": {
+        "min": 2, "max": 2,
+        "fa_name": "کاورد کال",
+        "composition": [
+            {"leg_type": "buy", "option_kind": "STOCK",
+             "min": 1, "desc": "خرید سهم پایه"},
+            {"leg_type": "sell", "option_kind": "CALL",
+             "min": 1, "desc": "فروش کال"},
+        ],
+    },
+
+    # ─── استراتژی‌های پیچیده ───
+    "Long Box": {
+        "min": 4, "max": 4,
+        "fa_name": "لانگ باکس",
+        "composition": [
+            {"leg_type": "buy", "option_kind": "CALL",
+             "min": 1, "desc": "خرید کال K1"},
+            {"leg_type": "sell", "option_kind": "CALL",
+             "min": 1, "desc": "فروش کال K2"},
+            {"leg_type": "buy", "option_kind": "PUT",
+             "min": 1, "desc": "خرید پوت K2"},
+            {"leg_type": "sell", "option_kind": "PUT",
+             "min": 1, "desc": "فروش پوت K1"},
+        ],
+        "extra": "long_box",
+    },
+    "Long Straddle": {
+        "min": 2, "max": 2,
+        "fa_name": "لانگ استرادل",
+        "composition": [
+            {"leg_type": "buy", "option_kind": "CALL",
+             "min": 1, "desc": "خرید کال"},
+            {"leg_type": "buy", "option_kind": "PUT",
+             "min": 1, "desc": "خرید پوت"},
+        ],
+        "extra": "straddle",
+    },
+    "Long Strangle": {
+        "min": 2, "max": 2,
+        "fa_name": "لانگ استرانگل",
+        "composition": [
+            {"leg_type": "buy", "option_kind": "CALL",
+             "min": 1, "desc": "خرید کال"},
+            {"leg_type": "buy", "option_kind": "PUT",
+             "min": 1, "desc": "خرید پوت"},
+        ],
+        "extra": "strangle",
+    },
+
+    # ─── استراتژی‌های جدید (برای آفست) ───
+    "Long Offset": {
+        "min": 2, "max": 2,
+        "fa_name": "آفست لانگ",
+        "composition": [
+            {"leg_type": "buy", "option_kind": None,
+             "min": 1, "desc": "خرید"},
+            {"leg_type": "sell", "option_kind": None,
+             "min": 1, "desc": "فروش"},
+        ],
+        "extra": "offset",
+    },
+    "Short Offset": {
+        "min": 2, "max": 2,
+        "fa_name": "آفست شورت",
+        "composition": [
+            {"leg_type": "sell", "option_kind": None,
+             "min": 1, "desc": "فروش"},
+            {"leg_type": "buy", "option_kind": None,
+             "min": 1, "desc": "خرید"},
+        ],
+        "extra": "offset",
+    },
+    "Single Trade": {
+        "min": 1, "max": 1,
+        "fa_name": "معامله‌ی تک",
+        "composition": [],
+        "extra": None,
+    },
+}
+
+
 class PositionPnLCalculator:
     """
     محاسبه‌گر سود/زیان موقعیت‌های استراتژی آپشن.
 
-    نکات کلیدی این نسخه:
-        - calculate_realized_pnl: لگ‌های close_price=None به عنوان «باز» در نظر
-          گرفته می‌شوند و از محاسبه حذف نمی‌شوند.
-        - calculate_live_pnl: کارمزد خروج برآوردی را لحاظ می‌کند تا با realized
-          هم‌پایه باشد.
-        - مبنای ROI: برای استراتژی‌های دبیت = هزینه خالص، برای کردیت = حداکثر
-          زیان یا وجه تضمین برآوردی.
-        - calculate_call_default: کارمزد اعمال فقط یک بار در net حساب می‌شود.
-        - تسویه نقدی: از cash_settlement_amount مستقیماً استفاده می‌شود.
-        - نکول: پارامتر is_self_default به صراحت تعیین می‌کند چه کسی نکول کرده.
+    نکات کلیدی:
+        - calculate_realized_pnl: لگ‌های close_price=None به عنوان
+          «باز» در نظر گرفته می‌شوند.
+        - calculate_live_pnl: کارمزد خروج برآوردی را لحاظ می‌کند.
+        - مبنای ROI: دبیت = هزینه خالص، کردیت = حداکثر زیان.
+        - calculate_call_default: کارمزد اعمال یک بار حساب می‌شود.
+        - تسویه نقدی: از cash_settlement_amount مستقیم استفاده می‌کند.
+        - validate_strategy: اعتبارسنجی ترکیب لگ‌ها.
     """
 
     # =====================================================
@@ -42,10 +168,7 @@ class PositionPnLCalculator:
 
     @classmethod
     def _fee_rate(cls, leg: OptionLeg, is_buy: bool) -> float:
-        """
-        نرخ کارمزد بر اساس نوع دارایی و سمت معامله.
-        از main.get_commission_rate استفاده می‌کند.
-        """
+        """نرخ کارمزد بر اساس نوع دارایی و سمت معامله"""
         if leg.is_option:
             market, asset_type = "tse", "option"
         else:
@@ -56,7 +179,6 @@ class PositionPnLCalculator:
         except Exception:
             rate = None
 
-        # مدیریت حالت None (کلید نامعتبر در COMMISSION_DICT)
         if rate is None:
             if leg.is_option:
                 rate = _FALLBACK_OPTION_RATE
@@ -83,7 +205,7 @@ class PositionPnLCalculator:
     def calculate_leg_close_fee(
         cls, leg: OptionLeg, close_price: float
     ) -> float:
-        """کارمزد خروج یک لنگه (سمت معامله معکوس می‌شود)"""
+        """کارمزد خروج یک لنگه"""
         if close_price is None or close_price <= 0:
             return 0.0
         is_buy_on_close = (leg.leg_type == LegType.SELL)
@@ -94,10 +216,7 @@ class PositionPnLCalculator:
 
     @classmethod
     def _estimated_close_fee(cls, leg: OptionLeg) -> float:
-        """
-        کارمزد خروج برآوردی بر اساس قیمت فعلی.
-        برای هم‌پایه‌سازی live_pnl با realized_pnl.
-        """
+        """کارمزد خروج برآوردی"""
         price = leg.current_price if leg.current_price > 0 \
             else leg.entry_price
         return cls.calculate_leg_close_fee(leg, price)
@@ -107,14 +226,10 @@ class PositionPnLCalculator:
     # =====================================================
 
     @classmethod
-    def calculate_net_entry_cost(cls, position: StrategyPosition) -> float:
-        """
-        هزینه خالص ورود به استراتژی:
-            لنگه‌های BUY: هزینه = ارزش + کارمزد
-            لنگه‌های SELL: درآمد = ارزش - کارمزد
-
-        مقدار مثبت = هزینه خالص (دبیت)، مقدار منفی = درآمد خالص (کردیت)
-        """
+    def calculate_net_entry_cost(
+        cls, position: StrategyPosition
+    ) -> float:
+        """هزینه خالص ورود به استراتژی"""
         net_cost = 0.0
         for leg in position.legs:
             cs = cls._contract_size(leg)
@@ -136,17 +251,13 @@ class PositionPnLCalculator:
     def _payoff_at_expiry(
         cls, position: StrategyPosition, S_T: float
     ) -> float:
-        """
-        محاسبه‌ی ارزش موقعیت در سررسید به ازای قیمت پایه‌ی S_T.
-        (شامل ارزش سهم و ارزش ذاتی آپشن‌ها)
-        """
+        """ارزش موقعیت در سررسید به ازای S_T"""
         total = 0.0
         for leg in position.legs:
             cs = cls._contract_size(leg)
             qty = leg.quantity
 
             if leg.is_stock:
-                # سهم پایه
                 value = S_T * qty * 1
             elif leg.is_call:
                 intrinsic = max(0.0, S_T - leg.strike_price)
@@ -168,19 +279,7 @@ class PositionPnLCalculator:
     def calculate_max_loss_estimate(
         cls, position: StrategyPosition
     ) -> float:
-        """
-        برآورد حداکثر زیان ممکن برای استراتژی — با payoff grid.
-
-        روش:
-            ۱. نقاط کلیدی: strike ها + مرزهای بالا/پایین
-            ۲. محاسبه‌ی PnL برای هر نقطه
-            ۳. حداکثر زیان = min(PnL)
-            ۴. اگر زیان نامحدود باشد (Short Call بدون پوشش)،
-               از نقاط دورتر استفاده می‌کنیم.
-
-        این روش دقیق‌تر از heuristic قبلی است.
-        """
-        # نقاط کلیدی: strike ها + مرزها
+        """برآورد حداکثر زیان — با payoff grid"""
         strikes = []
         for leg in position.legs:
             if leg.is_option and leg.strike_price > 0:
@@ -189,23 +288,20 @@ class PositionPnLCalculator:
                 strikes.append(leg.entry_price)
 
         if not strikes:
-            # بدون strike — از هزینه خالص استفاده کن
             return abs(cls.calculate_net_entry_cost(position))
 
         min_strike = min(strikes)
         max_strike = max(strikes)
 
-        # نقاط آزمون: 0, half, strikes, midpoints, double
         test_points = [
             0.0,
             min_strike * 0.5,
             *strikes,
             max_strike * 1.5,
-            max_strike * 3.0,    # برای Short Call
-            max_strike * 10.0,   # برای اطمینان
+            max_strike * 3.0,
+            max_strike * 10.0,
         ]
 
-        # midpoints بین strike ها
         sorted_strikes = sorted(set(strikes))
         for i in range(len(sorted_strikes) - 1):
             mid = (sorted_strikes[i] + sorted_strikes[i + 1]) / 2
@@ -213,7 +309,6 @@ class PositionPnLCalculator:
 
         test_points = sorted(set(test_points))
 
-        # محاسبه‌ی PnL در هر نقطه (با احتساب هزینه ورود)
         net_entry = cls.calculate_net_entry_cost(position)
         max_loss = 0.0
         for S_T in test_points:
@@ -222,38 +317,29 @@ class PositionPnLCalculator:
             if pnl < max_loss:
                 max_loss = pnl
 
-        # اگر هیچ زیانی نبود، حداقل هزینه خالص
         if max_loss >= 0:
             return max(abs(net_entry), 1.0)
 
         return abs(max_loss)
 
     # =====================================================
-    # مبنای سرمایه برای ROI
+    # مبنای سرمایه
     # =====================================================
 
     @classmethod
-    def _get_capital_base(cls, position: StrategyPosition) -> float:
-        """
-        مبنای سرمایه برای محاسبه ROI.
-
-        قواعد:
-            - اگر هزینه خالص (دبیت) > 0: مبنای = هزینه خالص
-            - اگر هزینه خالص (کردیت) < 0: مبنای = برآورد حداکثر زیان
-            - اگر هزینه خالص نزدیک صفر: مبنای = حداکثر زیان برآوردی
-        """
+    def _get_capital_base(
+        cls, position: StrategyPosition
+    ) -> float:
+        """مبنای سرمایه برای ROI"""
         net_cost = cls.calculate_net_entry_cost(position)
 
-        # اگر دبیت است، همان هزینه خالص
         if net_cost > 0:
             return net_cost
 
-        # اگر کردیت است، از برآورد حداکثر زیان استفاده کن
         max_loss = cls.calculate_max_loss_estimate(position)
         if max_loss > 0:
             return max_loss
 
-        # فال‌بک: حداقل ۱
         return abs(net_cost) if net_cost != 0 else 1.0
 
     # =====================================================
@@ -264,29 +350,17 @@ class PositionPnLCalculator:
     def calculate_live_pnl(
         cls, position: StrategyPosition
     ) -> Tuple[float, float]:
-        """
-        محاسبه سود/زیان لایو و درصد بازدهی (ROI).
-
-        Returns: (live_pnl: float, live_roi: float)
-        """
+        """محاسبه سود/زیان لایو و ROI"""
         live_pnl = 0.0
 
         for leg in position.legs:
             cs = cls._contract_size(leg)
-
-            # قیمت فعلی: اگر صفر بود، از entry_price
             curr_price = leg.current_price if leg.current_price > 0 \
                 else leg.entry_price
-
-            # سود/زیان ارزش
             val_diff = (curr_price - leg.entry_price) * \
                 leg.quantity * cs
-
-            # کارمزد ورود (اگر ذخیره نشده، محاسبه)
             entry_fee = leg.entry_fee if leg.entry_fee > 0 \
                 else cls.calculate_leg_entry_fee(leg)
-
-            # کارمزد خروج برآوردی
             est_close_fee = cls._estimated_close_fee(leg)
 
             if leg.leg_type == LegType.BUY:
@@ -295,8 +369,8 @@ class PositionPnLCalculator:
                 live_pnl -= val_diff + entry_fee + est_close_fee
 
         base_capital = cls._get_capital_base(position)
-        live_roi = (live_pnl / base_capital) * 100.0 if base_capital > 0 \
-            else 0.0
+        live_roi = (live_pnl / base_capital) * 100.0 \
+            if base_capital > 0 else 0.0
 
         return live_pnl, live_roi
 
@@ -308,23 +382,16 @@ class PositionPnLCalculator:
     def calculate_realized_pnl(
         cls, position: StrategyPosition
     ) -> Tuple[float, float]:
-        """
-        محاسبه سود/زیان محقق‌شده برای موقعیت‌های بسته‌شده.
-
-        ✅ اصلاح باگ تسویه نقدی:
-            اگر status == CASH_SETTLED و cash_settlement_amount > 0،
-            مستقیماً از آن استفاده می‌شود (بدون توزیع روی close_price).
-
-        Returns: (realized_pnl: float, realized_roi: float)
-        """
+        """محاسبه سود/زیان محقق‌شده"""
         if position.status == PositionStatus.OPEN:
             return 0.0, 0.0
 
-        # ✅ تسویه نقدی — استفاده مستقیم از cash_settlement_amount
+        # تسویه نقدی
         if position.status == PositionStatus.CASH_SETTLED:
             if position.cash_settlement_amount:
                 net_entry = cls.calculate_net_entry_cost(position)
-                realized_pnl = position.cash_settlement_amount - net_entry
+                realized_pnl = (
+                    position.cash_settlement_amount - net_entry)
                 base_capital = cls._get_capital_base(position)
                 realized_roi = (realized_pnl / base_capital) * 100.0 \
                     if base_capital > 0 else 0.0
@@ -332,19 +399,19 @@ class PositionPnLCalculator:
 
         # مسیر عادی
         net_entry = cls.calculate_net_entry_cost(position)
-
         net_exit = 0.0
+
         for leg in position.legs:
             cs = cls._contract_size(leg)
 
-            # اگر بسته نشده، از قیمت فعلی استفاده کن
             if leg.close_price is not None:
                 close_price = leg.close_price
                 fee = leg.close_fee if leg.close_fee > 0 \
-                    else cls.calculate_leg_close_fee(leg, close_price)
+                    else cls.calculate_leg_close_fee(
+                        leg, close_price)
             else:
-                close_price = leg.current_price if leg.current_price > 0 \
-                    else leg.entry_price
+                close_price = leg.current_price \
+                    if leg.current_price > 0 else leg.entry_price
                 fee = cls._estimated_close_fee(leg)
 
             val = leg.quantity * close_price * cs
@@ -365,25 +432,14 @@ class PositionPnLCalculator:
     def calculate_realized_pnl_with_details(
         cls, position: StrategyPosition
     ) -> Dict[str, float]:
-        """
-        نسخه با جزئیات — برای دیالوگ‌ها و گزارش‌ها.
-
-        Returns:
-            dict با کلیدهای:
-                - net_entry: هزینه خالص ورود
-                - net_exit: ارزش خالص خروج
-                - realized_pnl: سود/زیان محقق‌شده
-                - realized_roi: بازدهی
-                - capital_base: مبنای ROI
-                - total_close_fee: مجموع کارمزد خروج
-                - total_entry_fee: مجموع کارمزد ورود
-        """
-        # ✅ تسویه نقدی
+        """نسخه با جزئیات"""
+        # تسویه نقدی
         if position.status == PositionStatus.CASH_SETTLED \
                 and position.cash_settlement_amount:
             net_entry = cls.calculate_net_entry_cost(position)
             capital_base = cls._get_capital_base(position)
-            realized_pnl = position.cash_settlement_amount - net_entry
+            realized_pnl = (
+                position.cash_settlement_amount - net_entry)
             realized_roi = (realized_pnl / capital_base) * 100.0 \
                 if capital_base > 0 else 0.0
             return {
@@ -396,7 +452,6 @@ class PositionPnLCalculator:
                 "total_entry_fee": 0.0,
             }
 
-        # مسیر عادی
         net_entry = cls.calculate_net_entry_cost(position)
         capital_base = cls._get_capital_base(position)
 
@@ -414,10 +469,11 @@ class PositionPnLCalculator:
             if leg.close_price is not None:
                 close_price = leg.close_price
                 fee = leg.close_fee if leg.close_fee > 0 \
-                    else cls.calculate_leg_close_fee(leg, close_price)
+                    else cls.calculate_leg_close_fee(
+                        leg, close_price)
             else:
-                close_price = leg.current_price if leg.current_price > 0 \
-                    else leg.entry_price
+                close_price = leg.current_price \
+                    if leg.current_price > 0 else leg.entry_price
                 fee = cls._estimated_close_fee(leg)
 
             total_close_fee += fee
@@ -443,21 +499,18 @@ class PositionPnLCalculator:
         }
 
     # =====================================================
-    # اعمال فیزیکی — ارزش ذاتی
+    # اعمال فیزیکی
     # =====================================================
 
     @classmethod
     def calculate_exercise_intrinsic(
         cls, leg: OptionLeg, S_T: float
     ) -> float:
-        """
-        ارزش ذاتی یک لگ آپشن در روز اعمال.
-        """
+        """ارزش ذاتی یک لگ آپشن"""
         if not leg.is_option:
             return S_T
 
         K = leg.strike_price
-
         if leg.is_call:
             return max(0.0, S_T - K)
         elif leg.is_put:
@@ -468,9 +521,7 @@ class PositionPnLCalculator:
     def calculate_exercise_total(
         cls, leg: OptionLeg, S_T: float
     ) -> Dict[str, float]:
-        """
-        محاسبه کل مالی اعمال فیزیکی یک لگ.
-        """
+        """محاسبه کل مالی اعمال فیزیکی یک لگ"""
         intrinsic = cls.calculate_exercise_intrinsic(leg, S_T)
         cs = cls._contract_size(leg)
         total_value = intrinsic * leg.quantity * cs
@@ -482,7 +533,7 @@ class PositionPnLCalculator:
         }
 
     # =====================================================
-    # نکول CALL — با پارامتر is_self_default
+    # نکول CALL
     # =====================================================
 
     @classmethod
@@ -493,25 +544,7 @@ class PositionPnLCalculator:
         exercise_rate: float = 0.0,
         is_self_default: bool = False,
     ) -> Dict[str, float]:
-        """
-        محاسبه مالی نکول یک لگ CALL در روز سررسید.
-
-        فرمول‌ها (طبق ضوابط بورس تهران):
-            payment   = max(0, S_T - K) × qty × contract_size
-            penalty   = 0.01 × S_T × qty × contract_size
-            exercise_fee = exercise_rate × K × qty × contract_size
-
-        Args:
-            leg: لگ CALL (buy یا sell)
-            S_T: قیمت پایانی سهم پایه در روز سررسید
-            exercise_rate: نرخ کارمزد اعمال
-            is_self_default: اگر True، «من» نکول کرده‌ام (حتی اگر Long باشم).
-                             اگر False، بر اساس leg_type تصمیم گرفته می‌شود.
-
-        Returns:
-            dict با کلیدهای payment, penalty, exercise_fee,
-            total_received, total_paid, net, effective_price
-        """
+        """محاسبه مالی نکول یک لگ CALL"""
         _empty = {
             "valid": False,
             "payment": 0.0,
@@ -534,18 +567,13 @@ class PositionPnLCalculator:
             return _empty
 
         shares = qty * cs
-
         payment = max(0.0, S_T - K) * shares
         penalty = 0.01 * S_T * shares
 
-        # کارمزد اعمال فقط برای Long Call
         exercise_fee = 0.0
         if leg.leg_type == LegType.BUY and exercise_rate > 0:
             exercise_fee = exercise_rate * K * shares
 
-        # ✅ تعیین نقش: آیا من ذی‌نفع هستم یا متضرر؟
-        # پیش‌فرض: Long Call ذی‌نفع، Short Call متضرر
-        # اگر is_self_default=True → برعکس (من نکول کرده‌ام)
         if is_self_default:
             i_am_beneficiary = (leg.leg_type == LegType.SELL)
         else:
@@ -574,7 +602,7 @@ class PositionPnLCalculator:
         }
 
     # =====================================================
-    # آفست — محاسبه PnL محقق‌شده بر اساس قیمت‌های ورودی
+    # آفست
     # =====================================================
 
     @classmethod
@@ -583,9 +611,7 @@ class PositionPnLCalculator:
         position: StrategyPosition,
         close_prices: Dict[str, float],
     ) -> Dict[str, float]:
-        """
-        محاسبه PnL محقق‌شده برای آفست با قیمت‌های ورودی.
-        """
+        """محاسبه PnL محقق‌شده برای آفست"""
         temp = position.copy()
 
         for leg in temp.legs:
@@ -624,10 +650,9 @@ class PositionPnLCalculator:
         return count
 
     # =====================================================
-    # ✅ پیشنهاد نام استراتژی (برای ComboBox در Wizard)
+    # پیشنهاد نام استراتژی
     # =====================================================
 
-    # استراتژی‌های استاندارد پشتیبانی‌شده
     STANDARD_STRATEGIES = [
         "Long Call",
         "Long Put",
@@ -635,6 +660,11 @@ class PositionPnLCalculator:
         "Bear Put Spread",
         "Covered Call",
         "Long Box",
+        "Long Straddle",
+        "Long Strangle",
+        "Long Offset",
+        "Short Offset",
+        "Single Trade",
     ]
 
     @classmethod
@@ -643,50 +673,68 @@ class PositionPnLCalculator:
     ) -> str:
         """
         پیشنهاد نام استراتژی بر اساس ترکیب لگ‌ها.
-        این تابع هیچ‌گاه تصمیم قطعی نمی‌گیرد — فقط پیشنهاد می‌دهد.
 
-        Returns:
-            نام استراتژی یا "" اگر تشخیص ممکن نبود.
+        ترتیب اولویت:
+            1. Single Trade (تک‌لگ)
+            2. Offset (دولگ متقارن)
+            3. استراتژی‌های اسپرد
         """
         if not legs:
             return ""
-
-        # دسته‌بندی لگ‌ها
-        call_buys = [l for l in legs if l.is_call and l.leg_type == LegType.BUY]
-        call_sells = [l for l in legs if l.is_call and l.leg_type == LegType.SELL]
-        put_buys = [l for l in legs if l.is_put and l.leg_type == LegType.BUY]
-        put_sells = [l for l in legs if l.is_put and l.leg_type == LegType.SELL]
-        stock_buys = [l for l in legs if l.is_stock and l.leg_type == LegType.BUY]
 
         n_total = len(legs)
 
         # ─── تک‌لگ ───
         if n_total == 1:
-            leg = legs[0]
-            if leg.is_call and leg.leg_type == LegType.BUY:
-                return "Long Call"
-            if leg.is_put and leg.leg_type == LegType.BUY:
-                return "Long Put"
-            # Short Call / Short Put فعلاً پشتیبانی نمی‌شود
-            return ""
+            return "Single Trade"
+
+        # ─── تشخیص Offset ───
+        offset_name = cls._detect_offset(legs)
+        if offset_name:
+            return offset_name
+
+        # ─── بقیه ───
+        call_buys = [l for l in legs
+                     if l.is_call and l.leg_type == LegType.BUY]
+        call_sells = [l for l in legs
+                      if l.is_call and l.leg_type == LegType.SELL]
+        put_buys = [l for l in legs
+                    if l.is_put and l.leg_type == LegType.BUY]
+        put_sells = [l for l in legs
+                     if l.is_put and l.leg_type == LegType.SELL]
+        stock_buys = [l for l in legs
+                      if l.is_stock and l.leg_type == LegType.BUY]
 
         # ─── دولگ: Bull Call Spread ───
-        if n_total == 2 and len(call_buys) == 1 and len(call_sells) == 1:
-            if call_buys[0].strike_price < call_sells[0].strike_price:
-                return "Bull Call Spread"
+        if n_total == 2:
+            if len(call_buys) == 1 and len(call_sells) == 1:
+                if call_buys[0].strike_price < \
+                        call_sells[0].strike_price:
+                    return "Bull Call Spread"
 
-        # ─── دولگ: Bear Put Spread ───
-        if n_total == 2 and len(put_buys) == 1 and len(put_sells) == 1:
-            if put_buys[0].strike_price > put_sells[0].strike_price:
-                return "Bear Put Spread"
+            # Bear Put Spread
+            if len(put_buys) == 1 and len(put_sells) == 1:
+                if put_buys[0].strike_price > \
+                        put_sells[0].strike_price:
+                    return "Bear Put Spread"
 
-        # ─── دولگ: Covered Call ───
-        if n_total == 2 and len(stock_buys) == 1 and len(call_sells) == 1:
-            return "Covered Call"
+            # Covered Call
+            if len(stock_buys) == 1 and len(call_sells) == 1:
+                return "Covered Call"
+
+            # Long Straddle
+            if len(call_buys) == 1 and len(put_buys) == 1:
+                if call_buys[0].strike_price == \
+                        put_buys[0].strike_price:
+                    return "Long Straddle"
+
+            # Long Strangle
+            if len(call_buys) == 1 and len(put_buys) == 1:
+                if call_buys[0].strike_price != \
+                        put_buys[0].strike_price:
+                    return "Long Strangle"
 
         # ─── چهارلگ: Long Box ───
-        # Long Call K1 + Short Call K2 + Long Put K2 + Short Put K1
-        # (K1 < K2، همه با یک expiry)
         if n_total == 4:
             if (len(call_buys) == 1 and len(call_sells) == 1
                     and len(put_buys) == 1 and len(put_sells) == 1):
@@ -700,3 +748,263 @@ class PositionPnLCalculator:
                     return "Long Box"
 
         return ""
+
+    @classmethod
+    def _detect_offset(cls, legs: List[OptionLeg]) -> str:
+        """
+        تشخیص آفست از ترکیب لگ‌ها.
+
+        Returns:
+            "Long Offset" یا "Short Offset" یا ""
+        """
+        if len(legs) != 2:
+            return ""
+
+        # بررسی همان نماد
+        if legs[0].symbol != legs[1].symbol:
+            return ""
+
+        # بررسی همان strike
+        if abs(legs[0].strike_price - legs[1].strike_price) > 1:
+            return ""
+
+        # بررسی همان expiry
+        if legs[0].expiry_date != legs[1].expiry_date:
+            return ""
+
+        # بررسی جهت مخالف
+        buy_count = sum(
+            1 for l in legs if l.leg_type == LegType.BUY)
+        sell_count = sum(
+            1 for l in legs if l.leg_type == LegType.SELL)
+
+        if buy_count != 1 or sell_count != 1:
+            return ""
+
+        # کدام اول BUY بود؟
+        sorted_legs = sorted(
+            legs,
+            key=lambda l: l.open_date or "9999/99/99")
+        if sorted_legs[0].leg_type == LegType.BUY:
+            return "Long Offset"
+        else:
+            return "Short Offset"
+
+    # =====================================================
+    # اعتبارسنجی استراتژی
+    # =====================================================
+
+    @classmethod
+    def validate_strategy(
+        cls, strategy_name: str, legs: List[OptionLeg]
+    ) -> Dict:
+        """
+        اعتبارسنجی ترکیب لگ‌ها با استراتژی انتخاب‌شده.
+
+        Returns:
+            dict با کلیدهای:
+                - valid: bool
+                - errors: List[str]
+                - warnings: List[str]
+        """
+        result = {"valid": True, "errors": [], "warnings": []}
+
+        # سفارشی — همیشه معتبر
+        if strategy_name in ("سفارشی", "Custom", "custom", ""):
+            return result
+
+        req = STRATEGY_REQUIREMENTS.get(strategy_name)
+        if req is None:
+            result["warnings"].append(
+                f"استراتژی «{strategy_name}» در لیست "
+                f"استاندارد نیست.")
+            return result
+
+        n = len(legs)
+        fa_name = req.get("fa_name", strategy_name)
+
+        # ─── تعداد لگ ───
+        if n < req["min"]:
+            result["valid"] = False
+            result["errors"].append(
+                f"استراتژی «{fa_name}» نیاز به حداقل "
+                f"{req['min']} لگ دارد (شما {n} لگ انتخاب "
+                f"کرده‌اید).")
+            return result
+
+        if n > req["max"]:
+            result["valid"] = False
+            result["errors"].append(
+                f"استراتژی «{fa_name}» حداکثر {req['max']} لگ "
+                f"می‌پذیرد (شما {n} لگ انتخاب کرده‌اید).")
+            return result
+
+        # ─── ترکیب لگ‌ها ───
+        for item in req.get("composition", []):
+            count = 0
+            for leg in legs:
+                match_leg_type = (
+                    leg.leg_type.value == item["leg_type"])
+
+                # اگر option_kind=None باشد، همه‌ی انواع قبول
+                if item.get("option_kind") is None:
+                    match_kind = True
+                else:
+                    match_kind = (
+                        leg.option_kind.name == item["option_kind"])
+
+                if match_leg_type and match_kind:
+                    count += 1
+
+            if count < item.get("min", 1):
+                result["valid"] = False
+                result["errors"].append(
+                    f"استراتژی «{fa_name}» نیاز به حداقل "
+                    f"{item.get('min', 1)} × {item['desc']} دارد "
+                    f"(شما {count} دارید).")
+
+        if not result["valid"]:
+            return result
+
+        # ─── قوانین اضافی ───
+        extra = req.get("extra")
+
+        if extra == "bull_call":
+            buys = [l for l in legs
+                    if l.leg_type == LegType.BUY and l.is_call]
+            sells = [l for l in legs
+                     if l.leg_type == LegType.SELL and l.is_call]
+            if buys and sells:
+                if buys[0].strike_price >= sells[0].strike_price:
+                    result["valid"] = False
+                    result["errors"].append(
+                        f"در Bull Call Spread، قیمت اعمال خرید "
+                        f"({buys[0].strike_price:,.0f}) باید "
+                        f"کمتر از قیمت اعمال فروش "
+                        f"({sells[0].strike_price:,.0f}) باشد.")
+
+        elif extra == "bear_put":
+            buys = [l for l in legs
+                    if l.leg_type == LegType.BUY and l.is_put]
+            sells = [l for l in legs
+                     if l.leg_type == LegType.SELL and l.is_put]
+            if buys and sells:
+                if buys[0].strike_price <= sells[0].strike_price:
+                    result["valid"] = False
+                    result["errors"].append(
+                        f"در Bear Put Spread، قیمت اعمال خرید "
+                        f"({buys[0].strike_price:,.0f}) باید "
+                        f"بیشتر از قیمت اعمال فروش "
+                        f"({sells[0].strike_price:,.0f}) باشد.")
+
+        elif extra == "straddle":
+            calls = [l for l in legs if l.is_call]
+            puts = [l for l in legs if l.is_put]
+            if calls and puts:
+                if calls[0].strike_price != puts[0].strike_price:
+                    result["warnings"].append(
+                        "در Long Straddle، قیمت اعمال Call و "
+                        "Put باید یکسان باشد.")
+
+        elif extra == "strangle":
+            calls = [l for l in legs if l.is_call]
+            puts = [l for l in legs if l.is_put]
+            if calls and puts:
+                if calls[0].strike_price == puts[0].strike_price:
+                    result["warnings"].append(
+                        "در Long Strangle، قیمت اعمال Call و "
+                        "Put باید متفاوت باشد.")
+
+        elif extra == "long_box":
+            call_buys = [l for l in legs
+                         if l.is_call
+                         and l.leg_type == LegType.BUY]
+            call_sells = [l for l in legs
+                          if l.is_call
+                          and l.leg_type == LegType.SELL]
+            put_buys = [l for l in legs
+                        if l.is_put
+                        and l.leg_type == LegType.BUY]
+            put_sells = [l for l in legs
+                         if l.is_put
+                         and l.leg_type == LegType.SELL]
+            if call_buys and call_sells and put_buys and put_sells:
+                K1_call = call_buys[0].strike_price
+                K2_call = call_sells[0].strike_price
+                K2_put = put_buys[0].strike_price
+                K1_put = put_sells[0].strike_price
+                if not (K1_call < K2_call):
+                    result["valid"] = False
+                    result["errors"].append(
+                        f"در Long Box، باید K1_call < K2_call "
+                        f"باشد ({K1_call:,.0f} < {K2_call:,.0f})")
+                if abs(K2_call - K2_put) > 1:
+                    result["warnings"].append(
+                        f"در Long Box، K2_call "
+                        f"({K2_call:,.0f}) و K2_put "
+                        f"({K2_put:,.0f}) باید یکسان باشند.")
+                if abs(K1_call - K1_put) > 1:
+                    result["warnings"].append(
+                        f"در Long Box، K1_call "
+                        f"({K1_call:,.0f}) و K1_put "
+                        f"({K1_put:,.0f}) باید یکسان باشند.")
+
+        elif extra == "offset":
+            # بررسی همان نماد
+            symbols = set(l.symbol for l in legs)
+            if len(symbols) > 1:
+                result["valid"] = False
+                result["errors"].append(
+                    f"در آفست، همه‌ی لگ‌ها باید همان نماد "
+                    f"باشند (شما {len(symbols)} نماد دارید).")
+                return result
+
+            # بررسی همان strike
+            strikes = set(
+                l.strike_price for l in legs if l.is_option)
+            if len(strikes) > 1:
+                result["valid"] = False
+                result["errors"].append(
+                    f"در آفست، همه‌ی لگ‌ها باید همان "
+                    f"قیمت اعمال داشته باشند.")
+                return result
+
+            # بررسی همان expiry
+            expiries = set(
+                l.expiry_date for l in legs
+                if l.is_option and l.expiry_date)
+            if len(expiries) > 1:
+                result["valid"] = False
+                result["errors"].append(
+                    f"در آفست، همه‌ی لگ‌ها باید همان "
+                    f"تاریخ سررسید داشته باشند.")
+
+        # ─── بررسی یکسان بودن سررسید (عمومی) ───
+        if extra != "offset":
+            expiries = set()
+            for leg in legs:
+                if leg.is_option and leg.expiry_date:
+                    expiries.add(leg.expiry_date)
+            if len(expiries) > 1:
+                result["warnings"].append(
+                    f"لگ‌ها سررسید متفاوت دارند: "
+                    f"{', '.join(sorted(expiries))}.")
+
+        # ─── بررسی یکسان بودن سهم پایه ───
+        import re
+        underlyings = set()
+        for leg in legs:
+            if leg.is_option and leg.symbol:
+                s = leg.symbol
+                if s.startswith(("ض", "ط")):
+                    s = s[1:]
+                m = re.match(r'([^\d]+)', s)
+                if m:
+                    underlyings.add(m.group(1))
+        if len(underlyings) > 1:
+            result["valid"] = False
+            result["errors"].append(
+                f"لگ‌ها سهم پایه‌ی متفاوت دارند: "
+                f"{', '.join(sorted(underlyings))}.")
+
+        return result

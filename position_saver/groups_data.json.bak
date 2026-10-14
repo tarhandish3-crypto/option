@@ -1,0 +1,18 @@
+{
+  "version": 3,
+  "groups": [
+    {
+      "group_id": "GRP-747526",
+      "strategy_type": "Long Offset",
+      "display_name": "Long Offset - ضفزر5051",
+      "position_ids": [
+        "POS-670C3F",
+        "POS-FC7C95"
+      ],
+      "created_at": "1405/07/22",
+      "notes": "",
+      "alert_target_roi": 10.0,
+      "alert_sent": false
+    }
+  ]
+}

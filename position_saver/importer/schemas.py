@@ -3,18 +3,6 @@
 
 """
 ساختار داده‌های موقت برای ایمپورت اکسل کارگزاری.
-
-این ماژول شامل مدل‌های داده‌ای است که در طول فرایند ایمپورت
-استفاده می‌شوند، ولی در فایل `positions_data.json` ذخیره نمی‌شوند.
-
-تفاوت با position_saver/models.py:
-    - models.py:    مدل‌های ماندگار (StrategyPosition, OptionLeg)
-    - schemas.py:   مدل‌های موقت برای Wizard (TradeRecord, MatchedLot)
-
-نکته طراحی:
-    نام schemas.py انتخاب شد تا با models.py تداخل نداشته باشد
-    و برنامه‌نویس سریع بفهمد که این‌ها DTO (Data Transfer Objects)
-    هستند، نه مدل‌های ماندگار.
 """
 
 from __future__ import annotations
@@ -28,66 +16,80 @@ from core.enums import OptionType
 from position_saver.models import LegType
 
 
-# =====================================================
-# TradeRecord — یک ردیف خام از اکسل
-# =====================================================
+# ═══════════════════════════════════════════════════
+# مقادیر close_reason
+# ═══════════════════════════════════════════════════
+
+CLOSE_REASON_OPEN = "open"
+CLOSE_REASON_OFFSET = "offset"
+CLOSE_REASON_EXERCISE = "exercise"
+CLOSE_REASON_CASH_SETTLE = "cash_settle"
+CLOSE_REASON_DEFAULTED = "defaulted"
+CLOSE_REASON_YOU_DEFAULTED = "you_defaulted"
+CLOSE_REASON_UNKNOWN = "unknown"
+CLOSE_REASON_STOCK = "stock"
+CLOSE_REASON_INCOMPLETE = "incomplete"
+
+CLOSE_REASON_LABELS = {
+    CLOSE_REASON_OPEN: "🟢 باز",
+    CLOSE_REASON_OFFSET: "🟢 آفست شده",
+    CLOSE_REASON_EXERCISE: "🏦 اعمال فیزیکی",
+    CLOSE_REASON_CASH_SETTLE: "💵 تسویه نقدی",
+    CLOSE_REASON_DEFAULTED: "⚖️ نکول طرف مقابل",
+    CLOSE_REASON_YOU_DEFAULTED: "❌ نکول خودم",
+    CLOSE_REASON_UNKNOWN: "⚫ نیازمند تصمیم",
+    CLOSE_REASON_STOCK: "🏢 سهم پایه",
+    CLOSE_REASON_INCOMPLETE: "⚠️ ناقص",
+}
+
+
+# ═══════════════════════════════════════════════════
+# TradeRecord
+# ═══════════════════════════════════════════════════
 
 @dataclass
 class TradeRecord:
-    """
-    یک ردیف معامله که از اکسل کارگزاری پارس شده است.
+    """یک ردیف معامله پارس‌شده از اکسل."""
 
-    چرخه‌ی عمر:
-        ۱. Parser: پر کردن فیلدهای اصلی از اکسل
-        ۲. Enricher: پر کردن strike/expiry/contract_size از Snapshot
-        ۳. Wizard: نمایش به کاربر و ویرایش دستی
-
-    فیلدهای کلیدی:
-        - trade_id: شناسه‌ی یکتای ردیف (برای ارجاع در OptionLeg)
-        - timestamp: datetime میلادی (از تاریخ و ساعت شمسی)
-        - side: BUY یا SELL
-        - needs_review: اگر strike/expiry خالی باشد True می‌شود
-        - is_complete: property که همه‌ی فیلدهای لازم را چک می‌کند
-    """
-
-    # ─── از اکسل ───
     trade_id: str = field(
         default_factory=lambda: f"trade_{str(uuid.uuid4())[:6]}")
     timestamp: Optional[datetime] = None
-    raw_date: str = ""              # "1405/07/19"
-    raw_time: str = ""              # "12:07:43"
-    symbol: str = ""                # نرمال‌شده: "ضفزر722"
+    raw_date: str = ""
+    raw_time: str = ""
+    symbol: str = ""
     side: LegType = LegType.BUY
     quantity: int = 0
     price: float = 0.0
-    raw_status: str = ""            # "انجام شده"
+    raw_status: str = ""
 
-    # ─── از Wizard ───
-    broker: str = ""                # "مفید"
+    broker: str = ""
 
-    # ─── از Snapshot (پس از Enrichment) ───
     strike_price: Optional[float] = None
-    expiry_date: str = ""           # "1405/07/26"
-    contract_size: int = 0          # پیش‌فرض آپشن: 1000
+    expiry_date: str = ""
+    contract_size: int = 0
     option_kind: Optional[OptionType] = None
-    underlying_symbol: str = ""     # "فزر"
-    ins_code: str = ""              # کد نماد
+    underlying_symbol: str = ""
+    ins_code: str = ""
+    ins_code_ua: str = ""
 
-    # ─── متادیتا ───
-    is_selected: bool = True        # انتخاب کاربر در Wizard
-    needs_review: bool = False      # اطلاعات ناقص
-    user_edited: bool = False       # کاربر دستی ویرایش کرده
+    is_selected: bool = False
+    auto_selected: bool = False
+    needs_review: bool = False
+    user_edited: bool = False
     warnings: List[str] = field(default_factory=list)
 
-    # =====================================================
-    # Property های مشتق‌شده
-    # =====================================================
+    close_reason: str = ""
+    close_price: Optional[float] = None
+    close_date: str = ""
+    close_trade_ref: str = ""
+    user_chosen_reason: bool = False
+    details: str = ""
+
+    # ─── Propertyها ───
 
     @property
     def is_option(self) -> bool:
-        """آیا این معامله روی آپشن است؟"""
         if self.option_kind is None:
-            # اگر option_kind ست نشده، از پیشوند نماد تشخیص بده
             return self.symbol.startswith(("ض", "ط"))
         return self.option_kind != OptionType.STOCK
 
@@ -112,36 +114,29 @@ class TradeRecord:
         return self.side == LegType.SELL
 
     @property
+    def is_stock_underlying(self) -> bool:
+        return self.is_stock and bool(self.underlying_symbol)
+
+    @property
+    def is_unknown(self) -> bool:
+        return (not self.is_option
+                and not self.is_stock
+                and self.option_kind is None)
+
+    @property
     def effective_contract_size(self) -> int:
-        """
-        اندازه‌ی قرارداد مؤثر:
-            - سهم پایه: 1
-            - آپشن: contract_size یا 1000 (پیش‌فرض بورس تهران)
-        """
         if not self.is_option:
             return 1
         return self.contract_size if self.contract_size > 0 else 1000
 
     @property
     def is_complete(self) -> bool:
-        """
-        آیا همه‌ی فیلدهای لازم پر است؟
-
-        قاعده:
-            - سهم پایه: فقط symbol لازم است
-            - آپشن: symbol + strike_price + expiry_date
-        """
         if not self.symbol:
             return False
-
-        # اگر option_kind ست نشده، نمی‌توانیم بگوییم کامل است
         if self.option_kind is None:
             return False
-
         if self.option_kind == OptionType.STOCK:
             return True
-
-        # آپشن: strike و expiry لازم است
         return (
             self.strike_price is not None
             and self.strike_price > 0
@@ -150,12 +145,41 @@ class TradeRecord:
 
     @property
     def is_incomplete(self) -> bool:
-        """عکسِ is_complete"""
         return not self.is_complete
 
     @property
+    def is_expired(self) -> bool:
+        if not self.is_option or not self.expiry_date:
+            return False
+        from position_saver.live_monitor import is_expired_date
+        return is_expired_date(self.expiry_date)
+
+    @property
+    def needs_close_decision(self) -> bool:
+        return (
+            self.is_option
+            and self.is_expired
+            and self.close_reason == CLOSE_REASON_UNKNOWN
+            and not self.user_chosen_reason
+        )
+
+    @property
+    def is_ready_for_import(self) -> bool:
+        """
+        ✅ آماده برای انتقال به تکمیل‌شده.
+
+        فقط اطلاعات پایه کافی است (symbol + strike + expiry برای آپشن).
+        نوع بستن در تب تکمیل‌شده توسط کاربر تعیین می‌شود.
+        """
+        return self.is_complete
+
+    @property
+    def close_reason_label(self) -> str:
+        return CLOSE_REASON_LABELS.get(
+            self.close_reason, self.close_reason or "—")
+
+    @property
     def datetime_str(self) -> str:
-        """نمایش زیبای timestamp"""
         if self.timestamp is None:
             return f"{self.raw_date} {self.raw_time}".strip()
         try:
@@ -165,53 +189,33 @@ class TradeRecord:
 
     @property
     def side_label_fa(self) -> str:
-        """نمایش فارسی سمت سفارش"""
         return self.side.label_fa
 
-    # =====================================================
-    # محاسبات
-    # =====================================================
+    @property
+    def duplicate_key(self) -> tuple:
+        return (self.symbol, self.raw_date, self.raw_time,
+                self.side.value)
+
+    # ─── محاسبات ───
 
     def value(self) -> float:
-        """
-        ارزش کل این معامله (بدون کارمزد).
-        = quantity × price × contract_size
-        """
-        return (
-            self.quantity
-            * self.price
-            * self.effective_contract_size
-        )
+        return self.quantity * self.price * self.effective_contract_size
 
     def signed_quantity(self) -> int:
-        """
-        تعداد با علامت:
-            +quantity برای BUY
-            -quantity برای SELL
-        """
         return self.quantity * self.side.side_sign
 
     def signed_value(self) -> float:
-        """
-        ارزش با علامت (جریان نقدی خام):
-            +value برای SELL (دریافت وجه)
-            -value برای BUY  (پرداخت وجه)
-        """
         if self.side == LegType.BUY:
             return -self.value()
         return self.value()
 
-    # =====================================================
-    # Serialization
-    # =====================================================
+    # ─── Serialization ───
 
     def to_dict(self) -> dict:
         return {
             "trade_id": self.trade_id,
-            "timestamp": (
-                self.timestamp.isoformat()
-                if self.timestamp else None
-            ),
+            "timestamp": (self.timestamp.isoformat()
+                          if self.timestamp else None),
             "raw_date": self.raw_date,
             "raw_time": self.raw_time,
             "symbol": self.symbol,
@@ -223,21 +227,26 @@ class TradeRecord:
             "strike_price": self.strike_price,
             "expiry_date": self.expiry_date,
             "contract_size": self.contract_size,
-            "option_kind": (
-                self.option_kind.name
-                if self.option_kind else None
-            ),
+            "option_kind": (self.option_kind.name
+                            if self.option_kind else None),
             "underlying_symbol": self.underlying_symbol,
             "ins_code": self.ins_code,
+            "ins_code_ua": self.ins_code_ua,
             "is_selected": self.is_selected,
+            "auto_selected": self.auto_selected,
             "needs_review": self.needs_review,
             "user_edited": self.user_edited,
             "warnings": list(self.warnings),
+            "close_reason": self.close_reason,
+            "close_price": self.close_price,
+            "close_date": self.close_date,
+            "close_trade_ref": self.close_trade_ref,
+            "user_chosen_reason": self.user_chosen_reason,
+            "details": self.details,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "TradeRecord":
-        # timestamp
         ts_raw = data.get("timestamp")
         ts = None
         if ts_raw:
@@ -246,7 +255,6 @@ class TradeRecord:
             except Exception:
                 ts = None
 
-        # option_kind
         ok_raw = data.get("option_kind")
         option_kind = None
         if ok_raw:
@@ -255,11 +263,18 @@ class TradeRecord:
             except KeyError:
                 option_kind = None
 
-        # side
         try:
             side = LegType.from_value(data.get("side", "buy"))
         except ValueError:
             side = LegType.BUY
+
+        cp_raw = data.get("close_price")
+        close_price = None
+        if cp_raw is not None:
+            try:
+                close_price = float(cp_raw)
+            except (TypeError, ValueError):
+                close_price = None
 
         return cls(
             trade_id=data.get("trade_id", ""),
@@ -272,53 +287,45 @@ class TradeRecord:
             price=float(data.get("price", 0.0)),
             raw_status=data.get("raw_status", ""),
             broker=data.get("broker", ""),
-            strike_price=(
-                float(data["strike_price"])
-                if data.get("strike_price") is not None
-                else None
-            ),
+            strike_price=(float(data["strike_price"])
+                          if data.get("strike_price") is not None
+                          else None),
             expiry_date=data.get("expiry_date", ""),
             contract_size=int(data.get("contract_size", 0)),
             option_kind=option_kind,
             underlying_symbol=data.get("underlying_symbol", ""),
             ins_code=data.get("ins_code", ""),
-            is_selected=bool(data.get("is_selected", True)),
+            ins_code_ua=data.get("ins_code_ua", ""),
+            is_selected=bool(data.get("is_selected", False)),
+            auto_selected=bool(data.get("auto_selected", False)),
             needs_review=bool(data.get("needs_review", False)),
             user_edited=bool(data.get("user_edited", False)),
             warnings=list(data.get("warnings", [])),
+            close_reason=data.get("close_reason", ""),
+            close_price=close_price,
+            close_date=data.get("close_date", ""),
+            close_trade_ref=data.get("close_trade_ref", ""),
+            user_chosen_reason=bool(
+                data.get("user_chosen_reason", False)),
+            details=data.get("details", ""),
         )
 
     def copy(self) -> "TradeRecord":
-        """کپی مستقل"""
         return TradeRecord.from_dict(self.to_dict())
 
     def copy_with_quantity(self, new_qty: int) -> "TradeRecord":
-        """
-        کپی با تغییر quantity.
-        برای Partial Match در Matcher استفاده می‌شود.
-        """
-        new_trade = self.copy()
-        new_trade.quantity = new_qty
-        new_trade.trade_id = f"{self.trade_id}_q{new_qty}"
-        return new_trade
+        new_t = self.copy()
+        new_t.quantity = new_qty
+        new_t.trade_id = f"{self.trade_id}_q{new_qty}"
+        return new_t
 
 
-# =====================================================
-# MatchedLot — جفت BUY-SELL
-# =====================================================
+# ═══════════════════════════════════════════════════
+# MatchedLot
+# ═══════════════════════════════════════════════════
 
 @dataclass
 class MatchedLot:
-    """
-    یک lot معاملاتی: یک BUY و اختیاراً یک SELL که آن را بست.
-
-    خروجی FifoMatcher.
-
-    حالت‌ها:
-        - is_closed=True:  BUY + SELL (آفست شده)
-        - is_open=True:    فقط BUY (موقعیت باز)
-    """
-
     lot_id: str = field(
         default_factory=lambda: f"lot_{str(uuid.uuid4())[:6]}")
     symbol: str = ""
@@ -326,48 +333,33 @@ class MatchedLot:
     close_trade: Optional[TradeRecord] = None
     realized_pnl: Optional[float] = None
 
-    # =====================================================
-    # Property ها
-    # =====================================================
-
     @property
     def is_closed(self) -> bool:
-        """آیا lot بسته شده؟"""
         return self.close_trade is not None
 
     @property
     def is_open(self) -> bool:
-        """آیا lot باز است؟"""
         return self.close_trade is None
 
     @property
     def quantity(self) -> int:
-        """تعداد lot (از BUY)"""
         return self.open_trade.quantity if self.open_trade else 0
 
     @property
     def entry_price(self) -> float:
-        """قیمت ورود (BUY)"""
         return self.open_trade.price if self.open_trade else 0.0
 
     @property
     def close_price(self) -> Optional[float]:
-        """قیمت خروج (SELL) — None اگر باز باشد"""
         return self.close_trade.price if self.close_trade else None
 
     @property
     def entry_value(self) -> float:
-        """ارزش ورود کل"""
-        if not self.open_trade:
-            return 0.0
-        return self.open_trade.value()
+        return self.open_trade.value() if self.open_trade else 0.0
 
     @property
     def close_value(self) -> float:
-        """ارزش خروج کل — صفر اگر باز باشد"""
-        if not self.close_trade:
-            return 0.0
-        return self.close_trade.value()
+        return self.close_trade.value() if self.close_trade else 0.0
 
     @property
     def open_timestamp(self) -> Optional[datetime]:
@@ -379,86 +371,39 @@ class MatchedLot:
 
     @property
     def entry_date_jalali(self) -> str:
-        """تاریخ ورود شمسی"""
-        if not self.open_trade:
-            return ""
-        return self.open_trade.raw_date
+        return self.open_trade.raw_date if self.open_trade else ""
 
     @property
     def close_date_jalali(self) -> str:
-        """تاریخ خروج شمسی"""
-        if not self.close_trade:
-            return ""
-        return self.close_trade.raw_date
+        return self.close_trade.raw_date if self.close_trade else ""
 
     @property
-    def option_kind(self) -> Optional[OptionType]:
-        """نوع آپشن (از open_trade)"""
-        if self.open_trade:
-            return self.open_trade.option_kind
-        return None
+    def option_kind(self):
+        return self.open_trade.option_kind if self.open_trade else None
 
     @property
     def underlying_symbol(self) -> str:
-        """نماد پایه"""
-        if self.open_trade:
-            return self.open_trade.underlying_symbol
-        return ""
-
-    # =====================================================
-    # محاسبات
-    # =====================================================
+        return (self.open_trade.underlying_symbol
+                if self.open_trade else "")
 
     def holding_days(self) -> Optional[int]:
-        """
-        مدت نگه‌داری به روز.
-        فقط اگر باز شده باشد (close_timestamp موجود).
-        """
         if not self.open_timestamp or not self.close_timestamp:
             return None
-        delta = self.close_timestamp - self.open_timestamp
-        return delta.days
+        return (self.close_timestamp - self.open_timestamp).days
 
     def gross_pnl(self) -> Optional[float]:
-        """
-        سود/زیان خام (بدون کارمزد).
-        فقط برای lot های بسته.
-        """
         if not self.is_closed:
             return None
-        # BUY ارزان + SELL گران = سود
         return self.close_value - self.entry_value
-
-    def compute_realized_pnl(self, calculator=None) -> Optional[float]:
-        """
-        محاسبه‌ی سود/زیان محقق‌شده با کارمزد.
-
-        Args:
-            calculator: PositionPnLCalculator (اختیاری)
-
-        Returns:
-            float یا None اگر lot باز باشد
-        """
-        if not self.is_closed:
-            return None
-
-        # ساده: بدون کارمزد
-        return self.gross_pnl()
-
-    # =====================================================
-    # Serialization
-    # =====================================================
 
     def to_dict(self) -> dict:
         return {
             "lot_id": self.lot_id,
             "symbol": self.symbol,
-            "open_trade": (
-                self.open_trade.to_dict() if self.open_trade else None
-            ),
-            "close_trade": (
-                self.close_trade.to_dict() if self.close_trade else None
-            ),
+            "open_trade": (self.open_trade.to_dict()
+                           if self.open_trade else None),
+            "close_trade": (self.close_trade.to_dict()
+                            if self.close_trade else None),
             "realized_pnl": self.realized_pnl,
         }
 
@@ -466,28 +411,19 @@ class MatchedLot:
     def from_dict(cls, data: dict) -> "MatchedLot":
         open_raw = data.get("open_trade")
         close_raw = data.get("close_trade")
-
-        open_trade = (
-            TradeRecord.from_dict(open_raw)
-            if open_raw else None
-        )
-        close_trade = (
-            TradeRecord.from_dict(close_raw)
-            if close_raw else None
-        )
-
         realized = data.get("realized_pnl")
         if realized is not None:
             try:
                 realized = float(realized)
             except (TypeError, ValueError):
                 realized = None
-
         return cls(
             lot_id=data.get("lot_id", ""),
             symbol=data.get("symbol", ""),
-            open_trade=open_trade,
-            close_trade=close_trade,
+            open_trade=(TradeRecord.from_dict(open_raw)
+                        if open_raw else None),
+            close_trade=(TradeRecord.from_dict(close_raw)
+                         if close_raw else None),
             realized_pnl=realized,
         )
 
@@ -495,36 +431,17 @@ class MatchedLot:
         return MatchedLot.from_dict(self.to_dict())
 
 
-# =====================================================
-# ImportSettings — تنظیمات Wizard
-# =====================================================
+# ═══════════════════════════════════════════════════
+# ImportSettings / ImportBatch / ImportResult / BrokerTemplate
+# ═══════════════════════════════════════════════════
 
 @dataclass
 class ImportSettings:
-    """
-    تنظیمات وارد شده توسط کاربر در Wizard.
-
-    این تنظیمات در مرحله‌ی ۱ Wizard اعمال می‌شوند و
-    در ImportEngine.run() استفاده می‌شوند.
-    """
-
-    # روش تطبیق BUY-SELL
-    match_method: str = "fifo"          # "fifo" | "lifo"
-
-    # پنجره‌ی زمانی گروه‌بندی (ثانیه)
+    match_method: str = "fifo"
     time_window_seconds: int = 60
-
-    # گروه‌بندی بر اساس نماد پایه
     group_by_underlying: bool = True
-
-    # رفتار با تکراری‌ها
     skip_duplicates: bool = True
-
-    # وضعیت‌های مجاز سفارش
-    valid_statuses: List[str] = field(
-        default_factory=lambda: ["انجام شده"])
-
-    # حد هشدار پیش‌فرض برای موقعیت‌های جدید
+    valid_statuses: List[str] = field(default_factory=list)
     default_alert_roi: float = 10.0
 
     def to_dict(self) -> dict:
@@ -545,50 +462,32 @@ class ImportSettings:
                 data.get("time_window_seconds", 60)),
             group_by_underlying=bool(
                 data.get("group_by_underlying", True)),
-            skip_duplicates=bool(
-                data.get("skip_duplicates", True)),
-            valid_statuses=list(
-                data.get("valid_statuses", ["انجام شده"])),
+            skip_duplicates=bool(data.get("skip_duplicates", True)),
+            valid_statuses=list(data.get("valid_statuses", [])),
             default_alert_roi=float(
                 data.get("default_alert_roi", 10.0)),
         )
 
 
-# =====================================================
-# ImportBatch — یک ایمپورت کامل
-# =====================================================
-
 @dataclass
 class ImportBatch:
-    """
-    شناسنامه‌ی یک ایمپورت کامل.
-
-    در `import_batches.json` ذخیره می‌شود و
-    برای rollback و audit استفاده می‌شود.
-    """
-
     batch_id: str = field(
         default_factory=lambda: (
             datetime.now().strftime("%Y%m%d-%H%M%S-")
-            + str(uuid.uuid4())[:4]
-        ))
+            + str(uuid.uuid4())[:4]))
     broker: str = ""
     source_file: str = ""
-    created_at: str = ""                # ISO datetime
-    import_date_jalali: str = ""        # "1405/10/21"
-
-    # ─── آمار ───
+    created_at: str = ""
+    import_date_jalali: str = ""
     n_trades: int = 0
     n_positions_open: int = 0
     n_positions_closed: int = 0
     n_needs_review: int = 0
-
-    # ─── ارجاعات ───
+    n_duplicates: int = 0
     position_ids: List[str] = field(default_factory=list)
 
     @property
     def n_positions_total(self) -> int:
-        """تعداد کل موقعیت‌های ساخته‌شده"""
         return self.n_positions_open + self.n_positions_closed
 
     def to_dict(self) -> dict:
@@ -602,6 +501,7 @@ class ImportBatch:
             "n_positions_open": self.n_positions_open,
             "n_positions_closed": self.n_positions_closed,
             "n_needs_review": self.n_needs_review,
+            "n_duplicates": self.n_duplicates,
             "position_ids": list(self.position_ids),
         }
 
@@ -617,46 +517,24 @@ class ImportBatch:
             n_positions_open=int(data.get("n_positions_open", 0)),
             n_positions_closed=int(data.get("n_positions_closed", 0)),
             n_needs_review=int(data.get("n_needs_review", 0)),
+            n_duplicates=int(data.get("n_duplicates", 0)),
             position_ids=list(data.get("position_ids", [])),
         )
 
 
-# =====================================================
-# ImportResult — خروجی ImportEngine.run()
-# =====================================================
-
 @dataclass
 class ImportResult:
-    """
-    نتیجه‌ی کامل ImportEngine.run().
-
-    این ساختار در Wizard استفاده می‌شود تا:
-        - معاملات کامل را در تب «کامل» نشان دهد
-        - معاملات ناقص را در تب «ناقص» نشان دهد
-        - lot های باز/بسته را برای گروه‌بندی نمایش دهد
-    """
-
-    # ─── معاملات ───
     trades: List[TradeRecord] = field(default_factory=list)
     complete_trades: List[TradeRecord] = field(default_factory=list)
     incomplete_trades: List[TradeRecord] = field(default_factory=list)
-
-    # ─── Lot ها ───
     lots: List[MatchedLot] = field(default_factory=list)
     open_lots: List[MatchedLot] = field(default_factory=list)
     closed_lots: List[MatchedLot] = field(default_factory=list)
-
-    # ─── خطاها ───
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
-    # =====================================================
-    # Property ها
-    # =====================================================
-
     @property
     def has_incomplete(self) -> bool:
-        """آیا معاملات ناقص وجود دارد؟"""
         return len(self.incomplete_trades) > 0
 
     @property
@@ -687,23 +565,11 @@ class ImportResult:
     def n_closed_lots(self) -> int:
         return len(self.closed_lots)
 
-    @property
-    def all_complete(self) -> bool:
-        """آیا همه‌ی معاملات کامل هستند؟"""
-        return (
-            len(self.incomplete_trades) == 0
-            and len(self.trades) > 0
-        )
-
-    # =====================================================
-    # Summary
-    # =====================================================
-
     def summary_text(self) -> str:
-        """خلاصه‌ی متنی برای نمایش در UI"""
-        parts = []
-        parts.append(f"کل: {self.n_trades}")
-        parts.append(f"کامل: {self.n_complete}")
+        parts = [
+            f"کل: {self.n_trades}",
+            f"کامل: {self.n_complete}",
+        ]
         if self.n_incomplete:
             parts.append(f"ناقص: {self.n_incomplete}")
         parts.append(f"بسته: {self.n_closed_lots}")
@@ -711,19 +577,8 @@ class ImportResult:
         return " | ".join(parts)
 
 
-# =====================================================
-# BrokerTemplate — قالب ستون‌های کارگزاری
-# =====================================================
-
 @dataclass
 class BrokerTemplate:
-    """
-    نگاشت ستون‌های اکسل یک کارگزاری به فیلدهای TradeRecord.
-
-    برای هر کارگزاری یک قالب ذخیره می‌شود تا در ایمپورت‌های
-    بعدی نیازی به تعیین دستی ستون‌ها نباشد.
-    """
-
     broker_name: str = ""
     date_col: str = "تاریخ"
     time_col: str = "ساعت"
@@ -732,8 +587,7 @@ class BrokerTemplate:
     qty_col: str = "حجم انجام شده"
     price_col: str = "قیمت"
     status_col: str = "وضعیت"
-    valid_statuses: List[str] = field(
-        default_factory=lambda: ["انجام شده"])
+    valid_statuses: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -759,17 +613,12 @@ class BrokerTemplate:
             qty_col=data.get("qty_col", "حجم انجام شده"),
             price_col=data.get("price_col", "قیمت"),
             status_col=data.get("status_col", "وضعیت"),
-            valid_statuses=list(
-                data.get("valid_statuses", ["انجام شده"])),
+            valid_statuses=list(data.get("valid_statuses", [])),
         )
 
     def copy(self) -> "BrokerTemplate":
         return BrokerTemplate.from_dict(self.to_dict())
 
-
-# =====================================================
-# صادرات
-# =====================================================
 
 __all__ = [
     "TradeRecord",
@@ -778,4 +627,14 @@ __all__ = [
     "ImportBatch",
     "ImportResult",
     "BrokerTemplate",
+    "CLOSE_REASON_OPEN",
+    "CLOSE_REASON_OFFSET",
+    "CLOSE_REASON_EXERCISE",
+    "CLOSE_REASON_CASH_SETTLE",
+    "CLOSE_REASON_DEFAULTED",
+    "CLOSE_REASON_YOU_DEFAULTED",
+    "CLOSE_REASON_UNKNOWN",
+    "CLOSE_REASON_STOCK",
+    "CLOSE_REASON_INCOMPLETE",
+    "CLOSE_REASON_LABELS",
 ]

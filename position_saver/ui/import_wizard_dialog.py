@@ -2,1191 +2,2594 @@
 # -*- coding: utf-8 -*-
 
 """
-جادوگر ایمپورت اکسل کارگزاری — چند مرحله‌ای.
+جادوگر ایمپورت اکسل کارگزاری — سه تب.
 
-مراحل:
-    ۱. انتخاب فایل و کارگزاری
-    ۲. پیش‌نمایش معاملات خام (با فیلتر)
-    ۳. بازبینی با زیرتب‌ها:
-        - ⚠️ ناقص (Exception Queue)
-        - ✅ کامل
-        - 📜 بسته‌شده
-    ۴. تأیید و ثبت
+ساختار:
+    📋 معاملات خام:          خلوت‌سازی + تکمیل اطلاعات پایه
+    ✅ تأیید موقعیت‌ها:      تعیین نوع بستن هر trade
+    📁 گروه‌بندی استراتژی‌ها: تعریف استراتژی + ایمپورت نهایی
+
+قواعد کلیدی:
+    ✅ trades منتقل‌شده از تب مبدأ حذف می‌شوند
+    ✅ چک‌باکس «انتخاب هم‌نام» در تب ۱ و ۲
+    ✅ انتخاب هوشمند: با انتخاب یک نماد، نمادهای دیگر لغو می‌شوند
+    ✅ دکمه‌های «انتخاب همه» و «لغو همه» در هر دو تب
+    ✅ نوع بستن الزامی برای انتقال از تب ۲ به تب ۳
+    ✅ گروه‌بندی الزامی برای ذخیره‌ی نهایی
+    ✅ Sort-safe: استفاده از trade_id برای همه‌ی عملیات
 """
 
 import logging
 import os
-from typing import List, Optional, Dict
+import re
+from datetime import datetime
+from typing import List, Optional, Dict, Any
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QPushButton, QLabel, QComboBox, QMessageBox,
     QHeaderView, QGroupBox, QTableWidget, QTableWidgetItem,
-    QAbstractItemView, QDialogButtonBox, QCheckBox, QSpinBox,
-    QFileDialog, QStackedWidget, QWidget, QTabWidget,
-    QSizePolicy, QSplitter,
+    QAbstractItemView, QCheckBox, QSpinBox, QFileDialog,
+    QWidget, QTabWidget, QAbstractSpinBox, QInputDialog,
+    QFrame, QScrollArea, QApplication,
 )
-from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QColor, QBrush, QFont
+from PySide6.QtCore import Qt, QTimer, QRegularExpression
+from PySide6.QtGui import QColor, QRegularExpressionValidator
 
 from position_saver.models import (
-    StrategyPosition, OptionLeg, LegType, PositionStatus,
+    StrategyPosition, StrategyGroup, OptionLeg,
+    LegType, PositionStatus,
 )
+from core.enums import OptionType
 from position_saver.pnl_calculator import PositionPnLCalculator
 from position_saver.storage import (
-    PositionStorage, normalize_symbol,
-    infer_underlying_symbol, today_jalali,
+    PositionStorage, today_jalali, infer_underlying_symbol,
 )
-from position_saver.main import get_market_snapshot
+from position_saver.providers import get_market_snapshot
 from position_saver.theme import (
-    Theme, CURRENCY,
-    fmt_money, fmt_pct, fmt_int,
-    set_kind, set_tone,
+    Theme, CURRENCY, fmt_money, fmt_int, set_kind, set_tone,
 )
 from position_saver.importer import (
     ImportEngine, ImportSettings, ImportResult, ImportBatch,
     TradeRecord, MatchedLot,
-    get_template_for_broker, list_broker_names,
+    list_broker_names,
+    CLOSE_REASON_OPEN, CLOSE_REASON_OFFSET, CLOSE_REASON_EXERCISE,
+    CLOSE_REASON_CASH_SETTLE, CLOSE_REASON_DEFAULTED,
+    CLOSE_REASON_YOU_DEFAULTED, CLOSE_REASON_UNKNOWN,
+    CLOSE_REASON_STOCK, CLOSE_REASON_INCOMPLETE, CLOSE_REASON_LABELS,
+    is_known_underlying,
+    get_symbol_info, save_symbol_info, save_from_trade,
+    has_symbol, get_symbol_memory_count,
 )
-from position_saver.ui.dialogs import BROKER_NAMES
+from position_saver.ui.strategy_dialog import StrategyDialog
+from position_saver.ui.net_position_dialog import NetPositionDialog
 
 
 logger = logging.getLogger("PositionSaver.UI.ImportWizard")
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
 # ثابت‌ها
-# =====================================================
+# ═══════════════════════════════════════════════════
 
-STEP_FILE = 0
-STEP_PREVIEW = 1
-STEP_REVIEW = 2
-STEP_CONFIRM = 3
+TAB_RAW = 0
+TAB_CONFIRM = 1
+TAB_GROUP = 2
 
-TAB_INCOMPLETE = 0
-TAB_COMPLETE = 1
-TAB_CLOSED = 2
+# ─── ستون‌های تب «📋 معاملات خام» ───
+RAW_COLS = ["✓", "تاریخ", "ساعت", "سمت", "نماد",
+            "نوع", "تعداد", "قیمت", "قیمت اعمال",
+            "سررسید", "وضعیت"]
+RAW_COL_STRIKE = 8
+RAW_COL_EXPIRY = 9
+RAW_COL_STATUS = 10
+
+# ─── ستون‌های تب «✅ تأیید موقعیت‌ها» ───
+CONFIRM_COLS = ["✓", "تاریخ", "ساعت", "سمت", "نماد",
+                "نوع", "تعداد", "قیمت", "قیمت اعمال",
+                "سررسید", "نوع بستن"]
+CONFIRM_COL_CLOSE = 10
+
+# ─── گزینه‌های ComboBox نوع بستن ───
+CLOSE_OPTIONS = [
+    (CLOSE_REASON_OPEN, "🟢 باز"),
+    (CLOSE_REASON_OFFSET, "🔄 آفست شده"),
+    (CLOSE_REASON_EXERCISE, "🏦 اعمال فیزیکی"),
+    (CLOSE_REASON_CASH_SETTLE, "💵 تسویه نقدی"),
+    (CLOSE_REASON_DEFAULTED, "⚖️ نکول طرف مقابل"),
+    (CLOSE_REASON_YOU_DEFAULTED, "❌ نکول خودم"),
+    ("skip", "⏭️ نادیده بگیر"),
+]
+
+SYNC_BULK_THRESHOLD = 500
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
+# SortableItem
+# ═══════════════════════════════════════════════════
+
+class SortableItem(QTableWidgetItem):
+    """آیتم جدول با مقدار سورت سفارشی"""
+
+    def __init__(self, display_text: str, sort_value: Any = None):
+        super().__init__(str(display_text))
+        self._sort_value = (
+            sort_value if sort_value is not None else display_text
+        )
+
+    def __lt__(self, other):
+        if isinstance(other, SortableItem):
+            try:
+                if (isinstance(self._sort_value, (int, float)) and
+                        isinstance(other._sort_value, (int, float))):
+                    return self._sort_value < other._sort_value
+                return str(self._sort_value) < str(other._sort_value)
+            except Exception:
+                return str(self._sort_value) < str(other._sort_value)
+        return super().__lt__(other)
+
+
+# ═══════════════════════════════════════════════════
 # ImportWizardDialog
-# =====================================================
+# ═══════════════════════════════════════════════════
 
 class ImportWizardDialog(QDialog):
-    """
-    جادوگر ایمپورت اکسل.
+    """جادوگر ایمپورت اکسل — سه تب."""
 
-    استفاده:
-        dlg = ImportWizardDialog(parent=self, storage=self.storage)
-        if dlg.exec():
-            result = dlg.get_result()
-    """
-
-    def __init__(self, parent=None, storage: Optional[PositionStorage] = None):
+    def __init__(self, parent=None,
+                 storage: Optional[PositionStorage] = None):
         super().__init__(parent)
         self.setWindowTitle("📥 ایمپورت اکسل کارگزاری")
         self.setLayoutDirection(Qt.RightToLeft)
-        self.setMinimumSize(1200, 720)
+
+        # ✅ اندازه‌ی متناسب با صفحه
+        self.setMinimumSize(900, 600)
+        self._fit_to_screen()
 
         self.storage = storage or PositionStorage()
         self.engine = ImportEngine(storage=self.storage)
 
-        # state
+        # ─── فایل ───
         self._file_path: str = ""
-        self._broker: str = BROKER_NAMES[0] if BROKER_NAMES else "مفید"
+        self._broker: str = "مفید"
         self._settings = ImportSettings()
-        self._import_result: Optional[ImportResult] = None
 
-        # ویجت‌های inline editing در تب «ناقص»
-        self._incomplete_rows: Dict[int, TradeRecord] = {}
-        self._incomplete_widgets: Dict[int, dict] = {}
+        # ─── state اصلی ───
+        self._result: Optional[ImportResult] = None
+        self._all_trades: List[TradeRecord] = []
+
+        # ─── state تب‌ها ───
+        self._raw_trades: List[TradeRecord] = []
+        self._confirm_trades: List[TradeRecord] = []
+        self._group_positions: List[StrategyPosition] = []
+        self._groups: List[StrategyGroup] = []
+
+        # ─── flag ها ───
+        self._refreshing = False
+        self._syncing = False
 
         self._build_ui()
-        self._update_navigation()
 
-    # =====================================================
+    # ═══════════════════════════════════════════════
+    # تنظیم اندازه‌ی پنجره
+    # ═══════════════════════════════════════════════
+
+    def _fit_to_screen(self):
+        """تنظیم اندازه‌ی پنجره متناسب با صفحه"""
+        try:
+            screen = QApplication.primaryScreen()
+            if screen is None:
+                self.resize(1200, 700)
+                return
+
+            available = screen.availableGeometry()
+            screen_w = available.width()
+            screen_h = available.height()
+
+            # ۹۰٪ عرض و ۹۰٪ ارتفاع
+            w = min(1400, int(screen_w * 0.9))
+            h = min(900, int(screen_h * 0.9))
+
+            w = max(w, 900)
+            h = max(h, 600)
+
+            self.resize(w, h)
+
+            # Centered
+            x = available.x() + (screen_w - w) // 2
+            y = available.y() + (screen_h - h) // 2
+            self.move(x, y)
+
+            logger.debug(
+                f"Wizard size: {w}x{h} (screen: {screen_w}x{screen_h})")
+        except Exception as e:
+            logger.warning(f"Fit to screen failed: {e}")
+            self.resize(1200, 700)
+
+    # ═══════════════════════════════════════════════
     # ساخت UI
-    # =====================================================
+    # ═══════════════════════════════════════════════
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(8)
+        root.setContentsMargins(8, 8, 8, 8)
+        root.setSpacing(6)
 
-        # ─── هدر (نوار بالا: کارگزاری + فایل) ───
         root.addWidget(self._build_header())
 
-        # ─── نوار مراحل ───
-        root.addWidget(self._build_step_indicator())
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_tab_raw(), "📋 معاملات خام")
+        self.tabs.addTab(self._build_tab_confirm(), "✅ تأیید موقعیت‌ها")
+        self.tabs.addTab(self._build_tab_group(), "📁 گروه‌بندی استراتژی‌ها")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        root.addWidget(self.tabs, 1)
 
-        # ─── بدنه (QStackedWidget) ───
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self._build_step_file())
-        self.stack.addWidget(self._build_step_preview())
-        self.stack.addWidget(self._build_step_review())
-        self.stack.addWidget(self._build_step_confirm())
-        root.addWidget(self.stack, 1)
+        root.addLayout(self._build_footer())
 
-        # ─── نوار پایین ───
-        root.addLayout(self._build_navigation())
-
-    # -----------------------------------------------------
-    # هدر — کارگزاری و فایل
-    # -----------------------------------------------------
+    # -------------------------------------------------
+    # هدر
+    # -------------------------------------------------
 
     def _build_header(self) -> QWidget:
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
 
-        layout.addWidget(QLabel("🏦 کارگزاری:"))
-
+        lay.addWidget(QLabel("🏦 کارگزاری:"))
         self.cmb_broker = QComboBox()
-        self.cmb_broker.addItems(BROKER_NAMES)
-        self.cmb_broker.setCurrentText(self._broker)
-        self.cmb_broker.setMinimumWidth(180)
+        names = list_broker_names()
+        self.cmb_broker.addItems(names)
+        if "مفید" in names:
+            self.cmb_broker.setCurrentText("مفید")
+        self.cmb_broker.setMinimumWidth(140)
         self.cmb_broker.currentTextChanged.connect(self._on_broker_changed)
-        layout.addWidget(self.cmb_broker)
+        lay.addWidget(self.cmb_broker)
 
-        layout.addSpacing(20)
-        layout.addWidget(QLabel("📄 فایل:"))
-        self.lbl_file = QLabel("— هیچ فایلی انتخاب نشده —")
-        set_tone(self.lbl_file, "muted")
-        self.lbl_file.setMinimumWidth(400)
-        layout.addWidget(self.lbl_file, 1)
+        lay.addSpacing(12)
+        lay.addWidget(QLabel("📄 فایل:"))
+        self.txt_file = QLineEdit()
+        self.txt_file.setReadOnly(True)
+        self.txt_file.setPlaceholderText("— هیچ فایلی انتخاب نشده —")
+        lay.addWidget(self.txt_file, 1)
 
-        return widget
+        self.btn_pick = QPushButton("📂 انتخاب فایل...")
+        self.btn_pick.clicked.connect(self._pick_file)
+        set_kind(self.btn_pick, "primary")
+        lay.addWidget(self.btn_pick)
+
+        self.btn_reload = QPushButton("🔄 بارگذاری مجدد")
+        self.btn_reload.clicked.connect(self._reload)
+        self.btn_reload.setEnabled(False)
+        lay.addWidget(self.btn_reload)
+
+        return w
 
     def _on_broker_changed(self, broker: str):
         self._broker = broker
 
-    # -----------------------------------------------------
-    # نوار مراحل
-    # -----------------------------------------------------
+    # ═══════════════════════════════════════════════
+    # تب ۱: معاملات خام
+    # ═══════════════════════════════════════════════
 
-    def _build_step_indicator(self) -> QWidget:
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 4, 0, 4)
+    def _build_tab_raw(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
 
-        self.lbl_step = QLabel("مرحله ۱: انتخاب فایل")
-        set_tone(self.lbl_step, "primary", big=True)
-        layout.addWidget(self.lbl_step)
-        layout.addStretch()
+        # ─── نوار اول: اطلاعات و ابزارها ───
+        bar = QHBoxLayout()
+        bar.setSpacing(4)
 
-        return widget
+        self.lbl_raw_info = QLabel("در انتظار انتخاب فایل...")
+        set_tone(self.lbl_raw_info, "muted")
+        bar.addWidget(self.lbl_raw_info)
+        bar.addStretch()
 
-    def _update_step_label(self):
-        texts = {
-            STEP_FILE: "مرحله ۱: انتخاب فایل و تنظیمات",
-            STEP_PREVIEW: "مرحله ۲: پیش‌نمایش معاملات خام",
-            STEP_REVIEW: "مرحله ۳: بازبینی و گروه‌بندی",
-            STEP_CONFIRM: "مرحله ۴: تأیید و ثبت نهایی",
-        }
-        self.lbl_step.setText(texts.get(self.stack.currentIndex(), ""))
+        # چک‌باکس‌ها
+        self.chk_raw_select_same = QCheckBox("✓ هم‌نام")
+        self.chk_raw_select_same.setChecked(True)
+        self.chk_raw_select_same.setToolTip(
+            "با تیک یک ردیف، همه‌ی ردیف‌های همان نماد تیک می‌خورند")
+        bar.addWidget(self.chk_raw_select_same)
 
-    # -----------------------------------------------------
-    # مرحله ۱ — فایل و تنظیمات
-    # -----------------------------------------------------
+        self.chk_raw_sync = QCheckBox("🔄 همگام‌سازی")
+        self.chk_raw_sync.setChecked(True)
+        self.chk_raw_sync.setToolTip(
+            "با تایپ در یک ردیف، همه‌ی ردیف‌های همان نماد پر می‌شوند")
+        bar.addWidget(self.chk_raw_sync)
 
-    def _build_step_file(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        # ✅ دکمه‌های انتخاب همه / لغو همه
+        self.btn_raw_select_all = QPushButton("✓ همه")
+        self.btn_raw_select_all.setToolTip("انتخاب همه‌ی ردیف‌ها")
+        self.btn_raw_select_all.clicked.connect(
+            lambda: self._toggle_all_raw(True))
+        bar.addWidget(self.btn_raw_select_all)
 
-        # ─── انتخاب فایل ───
-        file_group = QGroupBox("۱. انتخاب فایل اکسل")
-        file_layout = QHBoxLayout(file_group)
-        self.txt_file = QLineEdit()
-        self.txt_file.setPlaceholderText("مسیر فایل اکسل کارگزاری...")
-        self.txt_file.setReadOnly(True)
-        file_layout.addWidget(self.txt_file, 1)
+        self.btn_raw_deselect_all = QPushButton("✗ هیچ")
+        self.btn_raw_deselect_all.setToolTip("لغو انتخاب همه")
+        self.btn_raw_deselect_all.clicked.connect(
+            lambda: self._toggle_all_raw(False))
+        bar.addWidget(self.btn_raw_deselect_all)
 
-        btn_pick = QPushButton("📂 انتخاب فایل...")
-        btn_pick.clicked.connect(self._pick_file)
-        set_kind(btn_pick, "primary")
-        file_layout.addWidget(btn_pick)
+        lay.addLayout(bar)
 
-        layout.addWidget(file_group)
+        # ─── نوار دوم: عملیات ───
+        bar2 = QHBoxLayout()
+        bar2.setSpacing(4)
 
-        # ─── تنظیمات ───
-        settings_group = QGroupBox("۲. تنظیمات ایمپورت")
-        form = QFormLayout(settings_group)
+        self.btn_bulk_fill = QPushButton("⚡ پر کردن گروهی")
+        self.btn_bulk_fill.clicked.connect(self._open_bulk_fill_dialog)
+        self.btn_bulk_fill.setEnabled(False)
+        bar2.addWidget(self.btn_bulk_fill)
 
-        self.cmb_match_method = QComboBox()
-        self.cmb_match_method.addItem("FIFO (اول-ورود، اول-خروج)", "fifo")
-        self.cmb_match_method.addItem("LIFO (آخر-ورود، اول-خروج)", "lifo")
-        form.addRow("روش تطبیق:", self.cmb_match_method)
+        self.btn_memory = QPushButton("💾 حافظه")
+        self.btn_memory.clicked.connect(self._show_symbol_memory)
+        bar2.addWidget(self.btn_memory)
 
-        self.spin_time_window = QSpinBox()
-        self.spin_time_window.setRange(5, 3600)
-        self.spin_time_window.setValue(60)
-        self.spin_time_window.setSuffix(" ثانیه")
-        form.addRow("پنجره‌ی زمانی گروه‌بندی:", self.spin_time_window)
+        self.btn_raw_view_symbol = QPushButton("📊 مشاهده‌ی نماد")
+        self.btn_raw_view_symbol.clicked.connect(
+            lambda: self._open_net_position_dialog(from_tab="raw"))
+        bar2.addWidget(self.btn_raw_view_symbol)
 
-        self.chk_skip_duplicates = QCheckBox(
-            "رد کردن معاملات تکراری در ایمپورت‌های قبلی")
-        self.chk_skip_duplicates.setChecked(True)
-        form.addRow("", self.chk_skip_duplicates)
+        bar2.addStretch()
 
-        layout.addWidget(settings_group)
-        layout.addStretch()
-        return widget
+        self.btn_raw_delete = QPushButton("🗑 حذف")
+        self.btn_raw_delete.clicked.connect(self._delete_raw_selected)
+        set_kind(self.btn_raw_delete, "danger")
+        self.btn_raw_delete.setEnabled(False)
+        bar2.addWidget(self.btn_raw_delete)
+
+        self.btn_raw_move = QPushButton("➡️ انتقال به تأیید")
+        self.btn_raw_move.clicked.connect(self._move_raw_to_confirm)
+        set_kind(self.btn_raw_move, "primary")
+        self.btn_raw_move.setEnabled(False)
+        bar2.addWidget(self.btn_raw_move)
+
+        lay.addLayout(bar2)
+
+        # ─── جدول ───
+        self.tbl_raw = QTableWidget(0, len(RAW_COLS))
+        self.tbl_raw.setHorizontalHeaderLabels(RAW_COLS)
+        self._setup_table(self.tbl_raw)
+        self.tbl_raw.itemChanged.connect(self._on_raw_item_changed)
+        lay.addWidget(self.tbl_raw, 1)
+
+        hint = QLabel(
+            "💡 فیلدهای ناقص را پر کنید. با «🔄 همگام‌سازی»، "
+            "همه‌ی ردیف‌های همان نماد یک‌جا پر می‌شوند.")
+        set_tone(hint, "muted")
+        lay.addWidget(hint)
+
+        return w
+
+    # ═══════════════════════════════════════════════
+    # تب ۲: تأیید موقعیت‌ها
+    # ═══════════════════════════════════════════════
+
+    def _build_tab_confirm(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
+
+        # ─── نوار اول: اطلاعات و ابزارها ───
+        bar = QHBoxLayout()
+        bar.setSpacing(4)
+
+        self.lbl_confirm_info = QLabel("—")
+        set_tone(self.lbl_confirm_info, "muted")
+        bar.addWidget(self.lbl_confirm_info)
+        bar.addStretch()
+
+        # چک‌باکس انتخاب هم‌نام
+        self.chk_confirm_select_same = QCheckBox("✓ هم‌نام")
+        self.chk_confirm_select_same.setChecked(True)
+        self.chk_confirm_select_same.setToolTip(
+            "با تیک یک ردیف، همه‌ی ردیف‌های همان نماد تیک می‌خورند "
+            "و نمادهای دیگر از تیک خارج می‌شوند")
+        bar.addWidget(self.chk_confirm_select_same)
+
+        # ✅ دکمه‌های انتخاب همه / لغو همه
+        self.btn_confirm_select_all = QPushButton("✓ همه")
+        self.btn_confirm_select_all.setToolTip("انتخاب همه‌ی ردیف‌ها")
+        self.btn_confirm_select_all.clicked.connect(
+            lambda: self._toggle_all_confirm(True))
+        bar.addWidget(self.btn_confirm_select_all)
+
+        self.btn_confirm_deselect_all = QPushButton("✗ هیچ")
+        self.btn_confirm_deselect_all.setToolTip("لغو انتخاب همه")
+        self.btn_confirm_deselect_all.clicked.connect(
+            lambda: self._toggle_all_confirm(False))
+        bar.addWidget(self.btn_confirm_deselect_all)
+
+        lay.addLayout(bar)
+
+        # ─── نوار دوم: عملیات ───
+        bar2 = QHBoxLayout()
+        bar2.setSpacing(4)
+
+        self.btn_confirm_view_symbol = QPushButton("📊 مشاهده‌ی نماد")
+        self.btn_confirm_view_symbol.clicked.connect(
+            lambda: self._open_net_position_dialog(from_tab="confirm"))
+        bar2.addWidget(self.btn_confirm_view_symbol)
+
+        bar2.addStretch()
+
+        self.btn_confirm_back = QPushButton("↩️ بازگشت به معاملات خام")
+        self.btn_confirm_back.clicked.connect(
+            self._move_confirm_back_to_raw)
+        bar2.addWidget(self.btn_confirm_back)
+
+        self.btn_confirm_move = QPushButton("➡️ انتقال به گروه‌بندی")
+        self.btn_confirm_move.clicked.connect(
+            self._move_confirm_to_group)
+        set_kind(self.btn_confirm_move, "primary")
+        self.btn_confirm_move.setEnabled(False)
+        bar2.addWidget(self.btn_confirm_move)
+
+        lay.addLayout(bar2)
+
+        self.tbl_confirm = QTableWidget(0, len(CONFIRM_COLS))
+        self.tbl_confirm.setHorizontalHeaderLabels(CONFIRM_COLS)
+        self._setup_table(self.tbl_confirm)
+        self.tbl_confirm.setSelectionMode(
+            QAbstractItemView.ExtendedSelection)
+        self.tbl_confirm.itemChanged.connect(
+            self._on_confirm_item_changed)
+        lay.addWidget(self.tbl_confirm, 1)
+
+        hint = QLabel(
+            "💡 نوع بستن هر معامله را از ComboBox تعیین کنید. "
+            "تا وقتی همه‌ی ردیف‌های تیک‌خورده نوع بستن نداشته باشند، "
+            "انتقال انجام نمی‌شود.")
+        set_tone(hint, "muted")
+        lay.addWidget(hint)
+
+        return w
+
+    # ═══════════════════════════════════════════════
+    # تب ۳: گروه‌بندی استراتژی‌ها
+    # ═══════════════════════════════════════════════
+
+    def _build_tab_group(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(4, 4, 4, 4)
+        lay.setSpacing(4)
+
+        # ─── نوار ابزار ───
+        bar = QHBoxLayout()
+        bar.setSpacing(4)
+
+        self.lbl_group_info = QLabel("—")
+        set_tone(self.lbl_group_info, "profit", big=True)
+        bar.addWidget(self.lbl_group_info)
+        bar.addStretch()
+
+        self.btn_group_back = QPushButton("↩️ بازگشت")
+        self.btn_group_back.clicked.connect(
+            self._move_group_back_to_confirm)
+        bar.addWidget(self.btn_group_back)
+
+        self.btn_group_new = QPushButton("➕ تعریف استراتژی جدید")
+        self.btn_group_new.clicked.connect(self._create_new_strategy)
+        set_kind(self.btn_group_new, "primary")
+        bar.addWidget(self.btn_group_new)
+
+        self.btn_group_ungroup = QPushButton("✂️ جدا کردن")
+        self.btn_group_ungroup.clicked.connect(self._ungroup_selected)
+        self.btn_group_ungroup.setEnabled(False)
+        bar.addWidget(self.btn_group_ungroup)
+
+        self.btn_group_delete = QPushButton("🗑 حذف گروه")
+        self.btn_group_delete.clicked.connect(self._delete_group)
+        set_kind(self.btn_group_delete, "danger")
+        self.btn_group_delete.setEnabled(False)
+        bar.addWidget(self.btn_group_delete)
+
+        bar.addSpacing(12)
+
+        # ✅ دکمه‌ی شکستن موقعیت
+        self.btn_split = QPushButton("🔨 شکستن موقعیت")
+        self.btn_split.clicked.connect(self._split_selected_position)
+        self.btn_split.setToolTip(
+            "شکستن یک موقعیت به چند قطعه")
+        bar.addWidget(self.btn_split)
+
+        # ✅ دکمه‌ی ادغام
+        self.btn_merge = QPushButton("🔗 ادغام موقعیت‌ها")
+        self.btn_merge.clicked.connect(self._merge_selected_positions)
+        self.btn_merge.setToolTip(
+            "ادغام چند موقعیت سازگار")
+        bar.addWidget(self.btn_merge)
+
+        lay.addLayout(bar)
+
+        # ─── ناحیه‌ی کارت‌ها (Scroll) ───
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        self.groups_container = QWidget()
+        self.groups_layout = QVBoxLayout(self.groups_container)
+        self.groups_layout.setContentsMargins(2, 2, 2, 2)
+        self.groups_layout.setSpacing(8)
+        self.groups_layout.addStretch()
+
+        scroll.setWidget(self.groups_container)
+        lay.addWidget(scroll, 1)
+
+        # ─── نوار پایین ───
+        bottom = QHBoxLayout()
+        bottom.addStretch()
+        self.btn_commit = QPushButton("✅ ارسال به برنامه و ذخیره")
+        self.btn_commit.setMinimumHeight(38)
+        self.btn_commit.setMinimumWidth(260)
+        set_kind(self.btn_commit, "primary")
+        self.btn_commit.clicked.connect(self._commit_import)
+        self.btn_commit.setEnabled(False)
+        bottom.addWidget(self.btn_commit)
+        bottom.addStretch()
+        lay.addLayout(bottom)
+
+        return w
+
+    # -------------------------------------------------
+    # نوار پایین
+    # -------------------------------------------------
+
+    def _build_footer(self) -> QHBoxLayout:
+        lay = QHBoxLayout()
+        lay.addStretch()
+        self.btn_close = QPushButton("❌ انصراف")
+        self.btn_close.clicked.connect(self.reject)
+        lay.addWidget(self.btn_close)
+        return lay
+
+    # ═══════════════════════════════════════════════
+    # تنظیمات جدول
+    # ═══════════════════════════════════════════════
+
+    @staticmethod
+    def _setup_table(table: QTableWidget):
+        h = table.horizontalHeader()
+        h.setSectionResizeMode(QHeaderView.Interactive)
+        h.setStretchLastSection(True)
+        table.setSortingEnabled(True)
+        h.setSortIndicatorShown(True)
+        h.setSectionsClickable(True)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setDefaultSectionSize(28)
+        table.verticalHeader().setVisible(False)
+
+    # ═══════════════════════════════════════════════
+    # فایل
+    # ═══════════════════════════════════════════════
 
     def _pick_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "انتخاب فایل اکسل",
-            "", "Excel Files (*.xlsx *.xls)")
+            self, "انتخاب فایل اکسل", "",
+            "Excel Files (*.xlsx *.xls)")
         if not path:
             return
         self._file_path = path
         self.txt_file.setText(path)
-        self.lbl_file.setText(os.path.basename(path))
-        set_tone(self.lbl_file, "neutral")
+        self.btn_reload.setEnabled(True)
+        self._run_import()
 
-    # -----------------------------------------------------
-    # مرحله ۲ — پیش‌نمایش معاملات خام
-    # -----------------------------------------------------
+    def _reload(self):
+        if self._file_path:
+            self._run_import()
 
-    def _build_step_preview(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+    # ═══════════════════════════════════════════════
+    # اجرای ایمپورت
+    # ═══════════════════════════════════════════════
 
-        # ─── نوار ابزار ───
-        toolbar = QHBoxLayout()
-
-        btn_select_all = QPushButton("✓ انتخاب همه")
-        btn_select_all.clicked.connect(
-            lambda: self._set_all_selected(True))
-        toolbar.addWidget(btn_select_all)
-
-        btn_deselect_all = QPushButton("✗ لغو انتخاب همه")
-        btn_deselect_all.clicked.connect(
-            lambda: self._set_all_selected(False))
-        toolbar.addWidget(btn_deselect_all)
-
-        toolbar.addStretch()
-
-        self.lbl_preview_stats = QLabel("—")
-        set_tone(self.lbl_preview_stats, "muted")
-        toolbar.addWidget(self.lbl_preview_stats)
-
-        layout.addLayout(toolbar)
-
-        # ─── جدول ───
-        self.table_preview = QTableWidget(0, 9)
-        self.table_preview.setHorizontalHeaderLabels([
-            "✓", "تاریخ", "ساعت", "سمت",
-            "نماد", "تعداد", "قیمت", "وضعیت", "⚠️",
-        ])
-        self.table_preview.horizontalHeader().setSectionResizeMode(
-            QHeaderView.Interactive)
-        self.table_preview.horizontalHeader().setStretchLastSection(True)
-        self.table_preview.setColumnWidth(0, 40)
-        self.table_preview.setColumnWidth(1, 100)
-        self.table_preview.setColumnWidth(2, 90)
-        self.table_preview.setColumnWidth(3, 70)
-        self.table_preview.setColumnWidth(4, 140)
-        self.table_preview.setColumnWidth(5, 70)
-        self.table_preview.setColumnWidth(6, 100)
-        self.table_preview.setColumnWidth(7, 100)
-        self.table_preview.setSelectionBehavior(
-            QTableWidget.SelectRows)
-        self.table_preview.setEditTriggers(
-            QTableWidget.NoEditTriggers)
-        self.table_preview.setAlternatingRowColors(True)
-        self.table_preview.verticalHeader().setDefaultSectionSize(28)
-
-        layout.addWidget(self.table_preview, 1)
-        return widget
-
-    def _set_all_selected(self, selected: bool):
-        if not self._import_result:
-            return
-        for t in self._import_result.trades:
-            t.is_selected = selected
-        self._refresh_preview_table()
-
-    def _refresh_preview_table(self):
-        trades = self._import_result.trades if self._import_result else []
-        self.table_preview.setRowCount(0)
-
-        for idx, t in enumerate(trades):
-            row = self.table_preview.rowCount()
-            self.table_preview.insertRow(row)
-
-            # ─── ستون ۰: چک‌باکس ───
-            chk_item = QTableWidgetItem()
-            chk_item.setFlags(
-                Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            chk_item.setCheckState(
-                Qt.Checked if t.is_selected else Qt.Unchecked)
-            self.table_preview.setItem(row, 0, chk_item)
-
-            # ستون ۱: تاریخ
-            self.table_preview.setItem(row, 1, QTableWidgetItem(
-                t.raw_date or "—"))
-            # ستون ۲: ساعت
-            self.table_preview.setItem(row, 2, QTableWidgetItem(
-                t.raw_time or "—"))
-            # ستون ۳: سمت
-            side_item = QTableWidgetItem(t.side.label_fa)
-            side_item.setForeground(
-                QColor(Theme.PROFIT if t.is_buy else Theme.LOSS))
-            self.table_preview.setItem(row, 3, side_item)
-            # ستون ۴: نماد
-            self.table_preview.setItem(row, 4, QTableWidgetItem(
-                t.symbol))
-            # ستون ۵: تعداد
-            self.table_preview.setItem(row, 5, QTableWidgetItem(
-                fmt_int(t.quantity)))
-            # ستون ۶: قیمت
-            self.table_preview.setItem(row, 6, QTableWidgetItem(
-                fmt_money(t.price)))
-            # ستون ۷: وضعیت
-            self.table_preview.setItem(row, 7, QTableWidgetItem(
-                t.raw_status or "—"))
-            # ستون ۸: هشدار
-            if t.warnings:
-                warn_item = QTableWidgetItem("⚠️")
-                warn_item.setToolTip("\n".join(t.warnings))
-                warn_item.setForeground(QColor(Theme.WARN))
-                self.table_preview.setItem(row, 8, warn_item)
-
-        # آمار
-        selected = sum(1 for t in trades if t.is_selected)
-        total = len(trades)
-        self.lbl_preview_stats.setText(
-            f"نمایش {total} ردیف — انتخاب‌شده: {selected}")
-
-    # -----------------------------------------------------
-    # مرحله ۳ — بازبینی (تب‌ها)
-    # -----------------------------------------------------
-
-    def _build_step_review(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        self.tabs_review = QTabWidget()
-        self.tabs_review.addTab(
-            self._build_tab_incomplete(), "⚠️ ناقص")
-        self.tabs_review.addTab(
-            self._build_tab_complete(), "✅ کامل")
-        self.tabs_review.addTab(
-            self._build_tab_closed(), "📜 بسته‌شده")
-        self.tabs_review.currentChanged.connect(
-            self._on_review_tab_changed)
-
-        layout.addWidget(self.tabs_review)
-        return widget
-
-    # --- زیرتب ناقص ---
-
-    def _build_tab_incomplete(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        # هدر
-        header = QHBoxLayout()
-        self.lbl_incomplete_info = QLabel("—")
-        set_tone(self.lbl_incomplete_info, "warn", big=True)
-        header.addWidget(self.lbl_incomplete_info)
-        header.addStretch()
-        layout.addLayout(header)
-
-        hint = QLabel(
-            "💡 لطفاً برای هر ردیف، قیمت اعمال و تاریخ سررسید را وارد کنید. "
-            "به محض پر شدن همه‌ی فیلدها، دکمه ✓ فعال می‌شود."
-        )
-        set_tone(hint, "muted")
-        layout.addWidget(hint)
-
-        # جدول با ویرایش inline
-        self.table_incomplete = QTableWidget(0, 7)
-        self.table_incomplete.setHorizontalHeaderLabels([
-            "نماد", "سمت", "تعداد", "قیمت",
-            "قیمت اعمال", "تاریخ سررسید", "✓",
-        ])
-        self.table_incomplete.horizontalHeader().setSectionResizeMode(
-            QHeaderView.Interactive)
-        self.table_incomplete.horizontalHeader().setStretchLastSection(False)
-        self.table_incomplete.setColumnWidth(0, 140)
-        self.table_incomplete.setColumnWidth(1, 70)
-        self.table_incomplete.setColumnWidth(2, 70)
-        self.table_incomplete.setColumnWidth(3, 110)
-        self.table_incomplete.setColumnWidth(4, 140)
-        self.table_incomplete.setColumnWidth(5, 140)
-        self.table_incomplete.setColumnWidth(6, 60)
-        self.table_incomplete.verticalHeader().setDefaultSectionSize(34)
-        self.table_incomplete.setAlternatingRowColors(True)
-        self.table_incomplete.setSelectionBehavior(
-            QTableWidget.SelectRows)
-        layout.addWidget(self.table_incomplete, 1)
-
-        return widget
-
-    def _refresh_incomplete_table(self):
-        self.table_incomplete.setRowCount(0)
-        self._incomplete_rows.clear()
-        self._incomplete_widgets.clear()
-
-        if not self._import_result:
+    def _run_import(self):
+        if not self._file_path:
             return
 
-        incomplete = self._import_result.incomplete_trades
+        self._broker = self.cmb_broker.currentText() or "مفید"
+        self._settings = ImportSettings()
 
-        if not incomplete:
-            self.lbl_incomplete_info.setText(
-                "✅ همه‌ی ردیف‌ها تکمیل شدند")
-            set_tone(self.lbl_incomplete_info, "profit")
-            return
-
-        self.lbl_incomplete_info.setText(
-            f"⚠️ {len(incomplete)} ردیف نیازمند تکمیل دستی")
-        set_tone(self.lbl_incomplete_info, "warn")
-
-        for idx, trade in enumerate(incomplete):
-            row = self.table_incomplete.rowCount()
-            self.table_incomplete.insertRow(row)
-            self._incomplete_rows[row] = trade
-            self._build_incomplete_row(row, trade)
-
-    def _build_incomplete_row(self, row: int, trade: TradeRecord):
-        """ساخت یک ردیف ناقص با ویجت‌های inline"""
-        from PySide6.QtWidgets import QSpinBox, QLineEdit, QAbstractSpinBox
-
-        # ─── ستون ۰: نماد (خواندنی) ───
-        sym_item = QTableWidgetItem(trade.symbol)
-        sym_item.setFlags(Qt.ItemIsEnabled)
-        self.table_incomplete.setItem(row, 0, sym_item)
-
-        # ─── ستون ۱: سمت ───
-        side_item = QTableWidgetItem(trade.side.label_fa)
-        side_item.setTextAlignment(Qt.AlignCenter)
-        side_item.setFlags(Qt.ItemIsEnabled)
-        side_item.setForeground(
-            QColor(Theme.PROFIT if trade.is_buy else Theme.LOSS))
-        self.table_incomplete.setItem(row, 1, side_item)
-
-        # ─── ستون ۲: تعداد (خواندنی) ───
-        qty_item = QTableWidgetItem(fmt_int(trade.quantity))
-        qty_item.setTextAlignment(Qt.AlignCenter)
-        qty_item.setFlags(Qt.ItemIsEnabled)
-        self.table_incomplete.setItem(row, 2, qty_item)
-
-        # ─── ستون ۳: قیمت (خواندنی) ───
-        price_item = QTableWidgetItem(fmt_money(trade.price))
-        price_item.setTextAlignment(Qt.AlignCenter)
-        price_item.setFlags(Qt.ItemIsEnabled)
-        self.table_incomplete.setItem(row, 3, price_item)
-
-        # ─── ستون ۴: قیمت اعمال (editable) ───
-        spin_strike = QSpinBox()
-        spin_strike.setRange(0, 1_000_000_000)
-        spin_strike.setSingleStep(50)
-        spin_strike.setGroupSeparatorShown(True)
-        spin_strike.setButtonSymbols(QAbstractSpinBox.NoButtons)
-        spin_strike.setValue(int(trade.strike_price or 0))
-        spin_strike.valueChanged.connect(
-            lambda _, r=row: self._on_strike_changed(r))
-        self.table_incomplete.setCellWidget(row, 4, spin_strike)
-
-        # ─── ستون ۵: تاریخ سررسید (editable) ───
-        line_expiry = QLineEdit(trade.expiry_date or "")
-        line_expiry.setPlaceholderText("1405/07/26")
-        line_expiry.textChanged.connect(
-            lambda _, r=row: self._on_expiry_changed(r))
-        self.table_incomplete.setCellWidget(row, 5, line_expiry)
-
-        # ─── ستون ۶: دکمه تأیید ───
-        btn_confirm = QPushButton("✓")
-        btn_confirm.setFixedWidth(45)
-        btn_confirm.setEnabled(trade.is_complete)
-        if trade.is_complete:
-            set_kind(btn_confirm, "primary")
-        btn_confirm.clicked.connect(
-            lambda _, r=row: self._on_confirm_row(r))
-        self.table_incomplete.setCellWidget(row, 6, btn_confirm)
-
-        # ذخیره‌ی ویجت‌ها
-        self._incomplete_widgets[row] = {
-            "strike": spin_strike,
-            "expiry": line_expiry,
-            "confirm": btn_confirm,
-        }
-
-    def _on_strike_changed(self, row: int):
-        widgets = self._incomplete_widgets.get(row)
-        trade = self._incomplete_rows.get(row)
-        if not widgets or not trade:
-            return
-        trade.strike_price = float(widgets["strike"].value())
-        trade.user_edited = True
-        self._update_confirm_button_state(row)
-
-    def _on_expiry_changed(self, row: int):
-        widgets = self._incomplete_widgets.get(row)
-        trade = self._incomplete_rows.get(row)
-        if not widgets or not trade:
-            return
-        trade.expiry_date = widgets["expiry"].text().strip()
-        trade.user_edited = True
-        self._update_confirm_button_state(row)
-
-    def _update_confirm_button_state(self, row: int):
-        widgets = self._incomplete_widgets.get(row)
-        trade = self._incomplete_rows.get(row)
-        if not widgets or not trade:
-            return
-
-        # بررسی کامل بودن
-        if trade.is_complete:
-            widgets["confirm"].setEnabled(True)
-            set_kind(widgets["confirm"], "primary")
-        else:
-            widgets["confirm"].setEnabled(False)
-            set_kind(widgets["confirm"], "")
-
-    def _on_confirm_row(self, row: int):
-        """تأیید یک ردیف ناقص — انتقال به تب کامل"""
-        trade = self._incomplete_rows.get(row)
-        if not trade or not trade.is_complete:
-            return
-
-        trade.needs_review = False
-        trade.warnings = []
-
-        # انتقال به لیست کامل
-        if trade in self._import_result.incomplete_trades:
-            self._import_result.incomplete_trades.remove(trade)
-        if trade not in self._import_result.complete_trades:
-            self._import_result.complete_trades.append(trade)
-
-        # refresh
-        self._refresh_incomplete_table()
-        self._refresh_complete_table()
-        self._update_tab_badges()
-        self._update_navigation()
-
-    # --- زیرتب کامل ---
-
-    def _build_tab_complete(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        header = QHBoxLayout()
-        self.lbl_complete_info = QLabel("—")
-        set_tone(self.lbl_complete_info, "profit", big=True)
-        header.addWidget(self.lbl_complete_info)
-        header.addStretch()
-        layout.addLayout(header)
-
-        hint = QLabel(
-            "💡 برای گروه‌بندی، چند ردیف را انتخاب کنید و روی "
-            "«➕ استراتژی جدید» کلیک کنید."
-        )
-        set_tone(hint, "muted")
-        layout.addWidget(hint)
-
-        # نوار ابزار گروه‌بندی
-        group_bar = QHBoxLayout()
-        btn_new_strategy = QPushButton("➕ استراتژی جدید از انتخاب")
-        btn_new_strategy.clicked.connect(self._create_strategy_from_selection)
-        set_kind(btn_new_strategy, "primary")
-        group_bar.addWidget(btn_new_strategy)
-        group_bar.addStretch()
-        layout.addLayout(group_bar)
-
-        # جدول
-        self.table_complete = QTableWidget(0, 8)
-        self.table_complete.setHorizontalHeaderLabels([
-            "نماد", "نوع", "سمت", "تعداد", "قیمت",
-            "قیمت اعمال", "سررسید", "گروه",
-        ])
-        self.table_complete.horizontalHeader().setSectionResizeMode(
-            QHeaderView.Interactive)
-        self.table_complete.horizontalHeader().setStretchLastSection(True)
-        self.table_complete.setColumnWidth(0, 140)
-        self.table_complete.setColumnWidth(1, 70)
-        self.table_complete.setColumnWidth(2, 70)
-        self.table_complete.setColumnWidth(3, 70)
-        self.table_complete.setColumnWidth(4, 110)
-        self.table_complete.setColumnWidth(5, 120)
-        self.table_complete.setColumnWidth(6, 100)
-        self.table_complete.setSelectionBehavior(
-            QTableWidget.SelectRows)
-        self.table_complete.setSelectionMode(
-            QAbstractItemView.ExtendedSelection)
-        self.table_complete.setEditTriggers(
-            QTableWidget.NoEditTriggers)
-        self.table_complete.setAlternatingRowColors(True)
-        self.table_complete.verticalHeader().setDefaultSectionSize(28)
-
-        layout.addWidget(self.table_complete, 1)
-        return widget
-
-    def _refresh_complete_table(self):
-        self.table_complete.setRowCount(0)
-        if not self._import_result:
-            return
-
-        complete = self._import_result.complete_trades
-        if not complete:
-            self.lbl_complete_info.setText("هیچ ردیف کاملی وجود ندارد")
-            set_tone(self.lbl_complete_info, "muted")
-            return
-
-        self.lbl_complete_info.setText(
-            f"✅ {len(complete)} ردیف آماده برای گروه‌بندی")
-
-        for trade in complete:
-            row = self.table_complete.rowCount()
-            self.table_complete.insertRow(row)
-
-            self.table_complete.setItem(row, 0, QTableWidgetItem(
-                trade.symbol))
-            kind_text = "—"
-            if trade.option_kind:
-                kind_text = trade.option_kind.name
-            self.table_complete.setItem(row, 1, QTableWidgetItem(
-                kind_text))
-            side_item = QTableWidgetItem(trade.side.label_fa)
-            side_item.setForeground(
-                QColor(Theme.PROFIT if trade.is_buy else Theme.LOSS))
-            self.table_complete.setItem(row, 2, side_item)
-            self.table_complete.setItem(row, 3, QTableWidgetItem(
-                fmt_int(trade.quantity)))
-            self.table_complete.setItem(row, 4, QTableWidgetItem(
-                fmt_money(trade.price)))
-            self.table_complete.setItem(row, 5, QTableWidgetItem(
-                fmt_money(trade.strike_price or 0)))
-            self.table_complete.setItem(row, 6, QTableWidgetItem(
-                trade.expiry_date or "—"))
-            # گروه — فعلاً خالی
-            self.table_complete.setItem(row, 7, QTableWidgetItem(""))
-
-        self._update_tab_badges()
-
-    # --- زیرتب بسته ---
-
-    def _build_tab_closed(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        self.lbl_closed_info = QLabel("—")
-        set_tone(self.lbl_closed_info, "muted", big=True)
-        layout.addWidget(self.lbl_closed_info)
-
-        hint = QLabel(
-            "💡 این معاملات در همان بازه‌ی ایمپورت باز و بسته شده‌اند "
-            "(آفست). به تب «تاریخچه» منتقل می‌شوند."
-        )
-        set_tone(hint, "muted")
-        layout.addWidget(hint)
-
-        self.table_closed = QTableWidget(0, 7)
-        self.table_closed.setHorizontalHeaderLabels([
-            "#", "نماد", "نوع", "ورود", "خروج",
-            "تعداد", "سود/زیان",
-        ])
-        self.table_closed.horizontalHeader().setSectionResizeMode(
-            QHeaderView.Interactive)
-        self.table_closed.horizontalHeader().setStretchLastSection(True)
-        self.table_closed.setColumnWidth(0, 40)
-        self.table_closed.setColumnWidth(1, 140)
-        self.table_closed.setColumnWidth(2, 100)
-        self.table_closed.setColumnWidth(3, 110)
-        self.table_closed.setColumnWidth(4, 110)
-        self.table_closed.setColumnWidth(5, 70)
-        self.table_closed.setAlternatingRowColors(True)
-        self.table_closed.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table_closed.verticalHeader().setDefaultSectionSize(28)
-
-        layout.addWidget(self.table_closed, 1)
-        return widget
-
-    def _refresh_closed_table(self):
-        self.table_closed.setRowCount(0)
-        if not self._import_result:
-            return
-
-        closed = self._import_result.closed_lots
-        self.lbl_closed_info.setText(
-            f"📜 {len(closed)} معامله‌ی آفست‌شده")
-
-        for idx, lot in enumerate(closed, 1):
-            row = self.table_closed.rowCount()
-            self.table_closed.insertRow(row)
-
-            self.table_closed.setItem(row, 0, QTableWidgetItem(
-                str(idx)))
-            self.table_closed.setItem(row, 1, QTableWidgetItem(
-                lot.symbol))
-            kind_text = "—"
-            if lot.option_kind:
-                kind_text = lot.option_kind.name
-            self.table_closed.setItem(row, 2, QTableWidgetItem(
-                kind_text))
-            self.table_closed.setItem(row, 3, QTableWidgetItem(
-                fmt_money(lot.entry_price)))
-            self.table_closed.setItem(row, 4, QTableWidgetItem(
-                fmt_money(lot.close_price or 0)))
-            self.table_closed.setItem(row, 5, QTableWidgetItem(
-                fmt_int(lot.quantity)))
-
-            pnl = lot.gross_pnl() or 0.0
-            pnl_item = QTableWidgetItem(fmt_money(pnl))
-            pnl_item.setForeground(
-                QColor(Theme.PROFIT if pnl > 0
-                       else (Theme.LOSS if pnl < 0 else Theme.MUTED)))
-            self.table_closed.setItem(row, 6, pnl_item)
-
-    def _on_review_tab_changed(self, index: int):
-        pass
-
-    def _update_tab_badges(self):
-        if not self._import_result:
-            return
-        n_incomplete = len(self._import_result.incomplete_trades)
-        n_complete = len(self._import_result.complete_trades)
-        n_closed = len(self._import_result.closed_lots)
-
-        self.tabs_review.setTabText(0, f"⚠️ ناقص ({n_incomplete})")
-        self.tabs_review.setTabText(1, f"✅ کامل ({n_complete})")
-        self.tabs_review.setTabText(2, f"📜 بسته‌شده ({n_closed})")
-
-    # -----------------------------------------------------
-    # گروه‌بندی — اختصاص نام استراتژی
-    # -----------------------------------------------------
-
-    def _create_strategy_from_selection(self):
-        rows = sorted(set(
-            idx.row() for idx in
-            self.table_complete.selectedIndexes()))
-        if not rows:
-            QMessageBox.information(
-                self, "اطلاع",
-                "لطفاً ابتدا یک یا چند ردیف را انتخاب کنید.")
-            return
-
-        # جمع‌آوری trade ها
-        selected_trades: List[TradeRecord] = []
-        for r in rows:
-            if 0 <= r < len(self._import_result.complete_trades):
-                selected_trades.append(
-                    self._import_result.complete_trades[r])
-
-        if not selected_trades:
-            return
-
-        # پیشنهاد نام
-        from position_saver.importer.suggest import suggest_strategy_name
-        suggestion = suggest_strategy_name(selected_trades)
-
-        # دیالوگ نام
-        from PySide6.QtWidgets import QInputDialog
-        items = [
-            "Long Call", "Long Put",
-            "Bull Call Spread", "Bear Put Spread",
-            "Covered Call", "Long Box",
-        ]
-        if suggestion and suggestion not in items:
-            items.insert(0, suggestion)
-
-        default_index = 0
-        if suggestion in items:
-            default_index = items.index(suggestion)
-
-        name, ok = QInputDialog.getItem(
-            self, "نام استراتژی",
-            f"نام استراتژی برای {len(selected_trades)} لگ:",
-            items, default_index, True)
-        if not ok or not name.strip():
-            return
-
-        # ذخیره در ستون «گروه»
-        for r in rows:
-            item = self.table_complete.item(r, 7)
-            if item:
-                item.setText(name.strip())
-
-        QMessageBox.information(
-            self, "✅ موفق",
-            f"استراتژی «{name.strip()}» برای "
-            f"{len(selected_trades)} لگ ثبت شد.")
-
-    # -----------------------------------------------------
-    # مرحله ۴ — تأیید
-    # -----------------------------------------------------
-
-    def _build_step_confirm(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        info = QLabel("📋 خلاصه‌ی ایمپورت")
-        set_tone(info, "primary", big=True)
-        layout.addWidget(info)
-
-        self.lbl_confirm_summary = QLabel("—")
-        self.lbl_confirm_summary.setWordWrap(True)
-        layout.addWidget(self.lbl_confirm_summary)
-
-        layout.addStretch()
-        return widget
-
-    def _refresh_confirm_summary(self):
-        if not self._import_result:
-            return
-        r = self._import_result
-        text = (
-            f"📊 معاملات: {r.n_trades}\n"
-            f"✅ کامل: {r.n_complete}\n"
-            f"⚠️ ناقص: {r.n_incomplete}\n"
-            f"📜 بسته‌شده: {r.n_closed_lots}\n"
-            f"📌 باز: {r.n_open_lots}\n\n"
-            f"🏦 کارگزاری: {self._broker}\n"
-            f"📄 فایل: {os.path.basename(self._file_path)}"
-        )
-        self.lbl_confirm_summary.setText(text)
-
-    # -----------------------------------------------------
-    # ناوبری (دکمه‌های پایین)
-    # -----------------------------------------------------
-
-    def _build_navigation(self) -> QHBoxLayout:
-        layout = QHBoxLayout()
-
-        self.btn_back = QPushButton("← قبلی")
-        self.btn_back.clicked.connect(self._on_back)
-        layout.addWidget(self.btn_back)
-
-        layout.addStretch()
-
-        self.btn_cancel = QPushButton("❌ انصراف")
-        self.btn_cancel.clicked.connect(self.reject)
-        layout.addWidget(self.btn_cancel)
-
-        self.btn_next = QPushButton("بعدی →")
-        self.btn_next.clicked.connect(self._on_next)
-        set_kind(self.btn_next, "primary")
-        layout.addWidget(self.btn_next)
-
-        return layout
-
-    def _update_navigation(self):
-        idx = self.stack.currentIndex()
-        self._update_step_label()
-
-        self.btn_back.setEnabled(idx > STEP_FILE)
-
-        if idx == STEP_CONFIRM:
-            self.btn_next.setText("✅ ایمپورت و ثبت")
-        else:
-            self.btn_next.setText("بعدی →")
-
-    def _on_back(self):
-        idx = self.stack.currentIndex()
-        if idx > STEP_FILE:
-            self.stack.setCurrentIndex(idx - 1)
-            self._update_navigation()
-
-    def _on_next(self):
-        idx = self.stack.currentIndex()
-
-        if idx == STEP_FILE:
-            if not self._file_path:
-                QMessageBox.warning(
-                    self, "خطا", "لطفاً ابتدا فایل اکسل را انتخاب کنید.")
-                return
-            self._run_parse_and_move()
-
-        elif idx == STEP_PREVIEW:
-            # رفتن به بازبینی
-            self._refresh_incomplete_table()
-            self._refresh_complete_table()
-            self._refresh_closed_table()
-            self._update_tab_badges()
-            self.stack.setCurrentIndex(STEP_REVIEW)
-            self._update_navigation()
-
-        elif idx == STEP_REVIEW:
-            # رفتن به تأیید
-            if not self._import_result:
-                return
-            if self._import_result.has_incomplete:
-                reply = QMessageBox.question(
-                    self, "هشدار",
-                    f"⚠️ {self._import_result.n_incomplete} ردیف ناقص "
-                    f"وجود دارد.\n\n"
-                    f"آیا بدون تکمیل آن‌ها ادامه می‌دهید؟\n"
-                    f"(این ردیف‌ها در پنل اصلی با علامت ⚠️ نمایش "
-                    f"داده می‌شوند)",
-                    QMessageBox.Yes | QMessageBox.No)
-                if reply != QMessageBox.Yes:
-                    self.tabs_review.setCurrentIndex(0)
-                    return
-
-            self._refresh_confirm_summary()
-            self.stack.setCurrentIndex(STEP_CONFIRM)
-            self._update_navigation()
-
-        elif idx == STEP_CONFIRM:
-            self._commit_import()
-
-    # -----------------------------------------------------
-    # اجرای پارس
-    # -----------------------------------------------------
-
-    def _run_parse_and_move(self):
-        """پارس فایل و رفتن به مرحله ۲"""
-        # ساخت settings از UI
-        self._settings = ImportSettings(
-            match_method=self.cmb_match_method.currentData() or "fifo",
-            time_window_seconds=self.spin_time_window.value(),
-            skip_duplicates=self.chk_skip_duplicates.isChecked(),
-        )
-
-        # Snapshot
         snapshot = None
         try:
             snapshot = get_market_snapshot(
                 use_cache=True, force_refresh=False)
         except Exception as e:
-            logger.warning(f"Snapshot load failed: {e}")
+            logger.warning(f"Snapshot failed: {e}")
 
-        # اجرا
         try:
-            self._import_result = self.engine.run(
+            self._result = self.engine.run(
                 file_path=self._file_path,
                 broker=self._broker,
                 settings=self._settings,
                 snapshot=snapshot,
             )
         except Exception as e:
-            logger.exception(f"Engine run failed: {e}")
-            QMessageBox.critical(
-                self, "خطا", f"خطا در ایمپورت:\n{e}")
+            logger.exception(f"Engine failed: {e}")
+            QMessageBox.critical(self, "خطا",
+                                 f"خطا در ایمپورت:\n{e}")
             return
 
-        if not self._import_result.trades:
+        if not self._result.trades:
+            error_msg = "هیچ معامله‌ای در فایل یافت نشد."
+            if self._result.errors:
+                error_msg += "\n\nخطاها:\n" + "\n".join(
+                    f"  • {e}" for e in self._result.errors)
+            if self._result.warnings:
+                error_msg += "\n\nهشدارها:\n" + "\n".join(
+                    f"  • {w}" for w in self._result.warnings)
+            QMessageBox.warning(self, "خطا", error_msg)
+            return
+
+        # ─── ذخیره‌ی مرجع ───
+        self._all_trades = list(self._result.trades)
+
+        # ─── پاکسازی انتخاب‌ها ───
+        for t in self._all_trades:
+            t.is_selected = False
+            t.auto_selected = False
+
+        # ─── تفکیک بر اساس وضعیت ───
+        self._raw_trades = []
+        self._confirm_trades = []
+        for t in self._all_trades:
+            if t.is_incomplete:
+                self._raw_trades.append(t)
+            else:
+                self._confirm_trades.append(t)
+
+        # ─── پاکسازی گروه‌ها ───
+        self._group_positions = []
+        self._groups = []
+
+        self._refresh_raw()
+        self._refresh_confirm()
+        self._refresh_group()
+
+        self.tabs.setCurrentIndex(TAB_RAW)
+
+    # ═══════════════════════════════════════════════
+    # تب‌بندی
+    # ═══════════════════════════════════════════════
+
+    def _on_tab_changed(self, idx: int):
+        if self._refreshing:
+            return
+        if idx == TAB_RAW:
+            self._refresh_raw()
+        elif idx == TAB_CONFIRM:
+            self._refresh_confirm()
+        elif idx == TAB_GROUP:
+            self._refresh_group()
+
+    # ═══════════════════════════════════════════════
+    # تب ۱: Refresh
+    # ═══════════════════════════════════════════════
+
+    def _refresh_raw(self):
+        self._refreshing = True
+        try:
+            self.tbl_raw.setSortingEnabled(False)
+            self.tbl_raw.setRowCount(0)
+
+            for t in self._raw_trades:
+                row = self.tbl_raw.rowCount()
+                self.tbl_raw.insertRow(row)
+                self._fill_raw_row(row, t)
+                self._install_raw_widgets(row, t)
+
+            self.tbl_raw.setSortingEnabled(True)
+
+            # ─── آمار ───
+            n_raw = len(self._raw_trades)
+            n_confirm = len(self._confirm_trades)
+            n_group = len(self._group_positions)
+            n_memory = get_symbol_memory_count()
+
+            self.lbl_raw_info.setText(
+                f"خام: {n_raw}  |  تأیید: {n_confirm}  |  "
+                f"گروه: {n_group}  |  حافظه: {n_memory}")
+        finally:
+            self._refreshing = False
+
+        self._update_raw_buttons()
+
+    def _fill_raw_row(self, row: int, t: TradeRecord):
+        # ✓ با trade_id
+        chk = QTableWidgetItem()
+        chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+        chk.setCheckState(Qt.Checked if t.is_selected else Qt.Unchecked)
+        chk.setData(Qt.UserRole, t.trade_id)
+        self.tbl_raw.setItem(row, 0, chk)
+
+        # تاریخ / ساعت
+        self.tbl_raw.setItem(row, 1,
+            SortableItem(t.raw_date or "—", t.raw_date or ""))
+        self.tbl_raw.setItem(row, 2,
+            SortableItem(t.raw_time or "—", t.raw_time or ""))
+
+        # سمت
+        side_item = SortableItem(
+            t.side.label_fa, 0 if t.is_buy else 1)
+        side_item.setTextAlignment(Qt.AlignCenter)
+        side_item.setForeground(
+            QColor(Theme.PROFIT if t.is_buy else Theme.LOSS))
+        self.tbl_raw.setItem(row, 3, side_item)
+
+        # نماد
+        sym_item = SortableItem(t.symbol, t.symbol)
+        if has_symbol(t.symbol):
+            sym_item.setToolTip(f"{t.symbol}\n✅ در حافظه موجود")
+        self.tbl_raw.setItem(row, 4, sym_item)
+
+        # نوع
+        kind_text, kind_order = "—", 99
+        if t.is_option:
+            if t.is_call:
+                kind_text, kind_order = "CALL", 1
+            else:
+                kind_text, kind_order = "PUT", 2
+        elif t.is_stock:
+            kind_text, kind_order = "سهم", 3
+        elif t.is_unknown:
+            kind_text, kind_order = "❓", 4
+        self.tbl_raw.setItem(row, 5,
+            SortableItem(kind_text, kind_order))
+
+        # تعداد
+        qty_item = SortableItem(fmt_int(t.quantity), t.quantity)
+        qty_item.setTextAlignment(Qt.AlignCenter)
+        self.tbl_raw.setItem(row, 6, qty_item)
+
+        # قیمت
+        pr_item = SortableItem(fmt_money(t.price), t.price)
+        pr_item.setTextAlignment(Qt.AlignCenter)
+        self.tbl_raw.setItem(row, 7, pr_item)
+
+        # ستون ۸ و ۹ در _install_raw_widgets
+        # ستون ۱۰: وضعیت
+        self._set_raw_status(row, t)
+
+    def _set_raw_status(self, row: int, t: TradeRecord):
+        try:
+            is_ready = t.is_complete
+            text = "✅ آماده" if is_ready else "⚠️ ناقص"
+            item = SortableItem(text, 0 if is_ready else 1)
+            item.setTextAlignment(Qt.AlignCenter)
+            item.setForeground(
+                QColor(Theme.PROFIT if is_ready else Theme.WARN))
+            self.tbl_raw.setItem(row, RAW_COL_STATUS, item)
+        except Exception as e:
+            logger.debug(f"set_raw_status failed: {e}")
+
+    def _install_raw_widgets(self, row: int, t: TradeRecord,
+                             force: bool = True):
+        """افزودن ویجت‌های inline (strike + expiry)"""
+        # ─── strike ───
+        spin_strike = QSpinBox()
+        spin_strike.setRange(0, 1_000_000_000)
+        spin_strike.setSingleStep(50)
+        spin_strike.setGroupSeparatorShown(True)
+        spin_strike.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        spin_strike.setValue(int(t.strike_price or 0))
+        spin_strike.valueChanged.connect(
+            lambda _, tr=t, r=row:
+                self._on_raw_edit(tr, r, "strike"))
+        self.tbl_raw.setCellWidget(row, RAW_COL_STRIKE, spin_strike)
+
+        # ─── expiry ───
+        line_expiry = QLineEdit(t.expiry_date or "")
+        line_expiry.setPlaceholderText("1405/05/25")
+        validator = QRegularExpressionValidator(
+            QRegularExpression(r'^\d{0,4}(/\d{0,2}(/\d{0,2})?)?$'))
+        line_expiry.setValidator(validator)
+        line_expiry.textChanged.connect(
+            lambda _, tr=t, r=row:
+                self._on_raw_edit(tr, r, "expiry"))
+        self.tbl_raw.setCellWidget(row, RAW_COL_EXPIRY, line_expiry)
+
+        t._inline_widgets = {
+            "strike": spin_strike,
+            "expiry": line_expiry,
+        }
+
+    # ═══════════════════════════════════════════════
+    # تب ۱: ویرایش
+    # ═══════════════════════════════════════════════
+
+    def _on_raw_edit(self, t: TradeRecord, row: int, field: str):
+        if self._refreshing or self._syncing:
+            return
+
+        widgets = getattr(t, "_inline_widgets", None)
+        if not widgets:
+            return
+
+        if field == "strike":
+            value = float(widgets["strike"].value())
+            t.strike_price = value if value > 0 else None
+        elif field == "expiry":
+            value = widgets["expiry"].text().strip()
+            t.expiry_date = value
+
+        t.user_edited = True
+        t.needs_review = not t.is_complete
+
+        # ─── همگام‌سازی ───
+        if self.chk_raw_sync.isChecked():
+            self._sync_raw_field(t, field, value)
+
+        # ─── ذخیره در حافظه ───
+        if t.strike_price and t.expiry_date:
+            try:
+                save_from_trade(t)
+            except Exception as e:
+                logger.debug(f"save_from_trade failed: {e}")
+
+        # ─── به‌روزرسانی وضعیت با تأخیر ───
+        delay = (300 if len(self._raw_trades) > SYNC_BULK_THRESHOLD
+                 else 150)
+        QTimer.singleShot(delay, self._refresh_raw_statuses)
+
+    def _sync_raw_field(self, source_t: TradeRecord,
+                         field: str, value):
+        """همگام‌سازی یک فیلد با ردیف‌های هم‌نام"""
+        self._syncing = True
+        try:
+            for row in range(self.tbl_raw.rowCount()):
+                t = self._find_raw_trade_for_row(row)
+                if t is None or t is source_t:
+                    continue
+                if t.symbol != source_t.symbol:
+                    continue
+
+                widgets = getattr(t, "_inline_widgets", None)
+                if not widgets:
+                    continue
+                target = widgets.get(field)
+                if target is None:
+                    continue
+
+                target.blockSignals(True)
+                try:
+                    if field == "strike":
+                        target.setValue(int(value or 0))
+                        t.strike_price = (
+                            float(value) if value else None)
+                    elif field == "expiry":
+                        target.setText(str(value or ""))
+                        t.expiry_date = str(value) if value else ""
+
+                    t.user_edited = True
+                    t.needs_review = not t.is_complete
+                finally:
+                    target.blockSignals(False)
+        finally:
+            self._syncing = False
+
+    def _refresh_raw_statuses(self):
+        """به‌روزرسانی ستون وضعیت همه‌ی ردیف‌های تب ۱"""
+        try:
+            if self._refreshing:
+                return
+            was = self.tbl_raw.isSortingEnabled()
+            self.tbl_raw.setSortingEnabled(False)
+
+            for row in range(self.tbl_raw.rowCount()):
+                t = self._find_raw_trade_for_row(row)
+                if t is not None:
+                    self._set_raw_status(row, t)
+                    # ─── تیک خودکار ───
+                    if t.is_complete and not t.auto_selected:
+                        chk = self.tbl_raw.item(row, 0)
+                        if chk and chk.checkState() != Qt.Checked:
+                            self._refreshing = True
+                            try:
+                                chk.setCheckState(Qt.Checked)
+                                t.is_selected = True
+                                t.auto_selected = True
+                            finally:
+                                self._refreshing = False
+
+            self.tbl_raw.setSortingEnabled(was)
+            self._update_raw_buttons()
+        except Exception as e:
+            logger.debug(f"refresh_raw_statuses failed: {e}")
+
+    # ═══════════════════════════════════════════════
+    # تب ۱: پیدا کردن trade
+    # ═══════════════════════════════════════════════
+
+    def _find_raw_trade_for_row(self, row: int) -> Optional[TradeRecord]:
+        if row < 0 or row >= self.tbl_raw.rowCount():
+            return None
+
+        chk = self.tbl_raw.item(row, 0)
+        if chk is None:
+            return None
+        trade_id = chk.data(Qt.UserRole)
+        if trade_id:
+            for t in self._raw_trades:
+                if t.trade_id == trade_id:
+                    return t
+
+        strike_widget = self.tbl_raw.cellWidget(row, RAW_COL_STRIKE)
+        if strike_widget is not None:
+            for t in self._raw_trades:
+                widgets = getattr(t, "_inline_widgets", None)
+                if widgets and widgets.get("strike") is strike_widget:
+                    return t
+        return None
+
+    # ═══════════════════════════════════════════════
+    # تب ۱: کلیک چک‌باکس
+    # ═══════════════════════════════════════════════
+
+    def _on_raw_item_changed(self, item: QTableWidgetItem):
+        """
+        وقتی چک‌باکس تغییر کرد.
+
+        ✅ رفتار هوشمند:
+            - اگر چک‌باکس «هم‌نام» فعال و کاربر یک ردیف را تیک بزند:
+              → فقط همان ردیف + هم‌نام‌هایش تیک می‌خورند
+              → ردیف‌های هم‌نامِ نماد قبلی (اگر متفاوت باشد) از تیک خارج می‌شوند
+            - اگر کاربر تیک را بردارد:
+              → فقط همان ردیف از تیک خارج می‌شود
+        """
+        if self._refreshing:
+            return
+        if item.column() != 0:
+            return
+
+        trade_id = item.data(Qt.UserRole)
+        if not trade_id:
+            return
+
+        trade = None
+        for t in self._raw_trades:
+            if t.trade_id == trade_id:
+                trade = t
+                break
+        if trade is None:
+            return
+
+        is_now = (item.checkState() == Qt.Checked)
+        trade.is_selected = is_now
+        if trade.auto_selected and not is_now:
+            trade.auto_selected = False
+
+        if is_now and self.chk_raw_select_same.isChecked():
+            # ۱. همه‌ی هم‌نام‌های این نماد را تیک بزن
+            self._select_raw_same_symbol(trade.symbol, trade_id)
+            # ۲. ردیف‌های هم‌نامِ نمادهای دیگر را از تیک خارج کن
+            self._deselect_raw_other_symbols(trade.symbol)
+
+        self._update_raw_buttons()
+
+    def _select_raw_same_symbol(self, symbol: str, exclude_id: str):
+        """انتخاب همه‌ی ردیف‌های هم‌نام"""
+        self._refreshing = True
+        try:
+            for row in range(self.tbl_raw.rowCount()):
+                chk = self.tbl_raw.item(row, 0)
+                if chk is None:
+                    continue
+                tid = chk.data(Qt.UserRole)
+                if tid == exclude_id:
+                    continue
+
+                t = None
+                for tr in self._raw_trades:
+                    if tr.trade_id == tid:
+                        t = tr
+                        break
+                if t is None or t.symbol != symbol:
+                    continue
+
+                if chk.checkState() != Qt.Checked:
+                    chk.setCheckState(Qt.Checked)
+                    t.is_selected = True
+        finally:
+            self._refreshing = False
+
+    def _deselect_raw_other_symbols(self, keep_symbol: str):
+        """
+        لغو انتخاب ردیف‌های نمادهای دیگر.
+
+        وقتی کاربر یک نماد را انتخاب می‌کند، نمادهای قبلی
+        از تیک خارج می‌شوند تا کاربر بدون سردرگمی کار کند.
+        """
+        self._refreshing = True
+        try:
+            for row in range(self.tbl_raw.rowCount()):
+                chk = self.tbl_raw.item(row, 0)
+                if chk is None:
+                    continue
+                tid = chk.data(Qt.UserRole)
+                if not tid:
+                    continue
+
+                t = None
+                for tr in self._raw_trades:
+                    if tr.trade_id == tid:
+                        t = tr
+                        break
+                if t is None:
+                    continue
+
+                if t.symbol != keep_symbol and \
+                        chk.checkState() == Qt.Checked:
+                    chk.setCheckState(Qt.Unchecked)
+                    t.is_selected = False
+                    t.auto_selected = False
+        finally:
+            self._refreshing = False
+
+    # ═══════════════════════════════════════════════
+    # تب ۱: انتخاب همه / لغو همه
+    # ═══════════════════════════════════════════════
+
+    def _toggle_all_raw(self, state: bool):
+        """انتخاب یا لغو انتخاب همه‌ی ردیف‌های تب ۱"""
+        if not self._raw_trades:
+            return
+
+        n = len(self._raw_trades)
+        action = "انتخاب" if state else "لغو انتخاب"
+
+        if state and n > 20:
+            reply = QMessageBox.question(
+                self, f"تأیید {action}",
+                f"آیا از {action} همه‌ی {n} معامله مطمئن هستید؟",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+
+        self._refreshing = True
+        try:
+            for row in range(self.tbl_raw.rowCount()):
+                chk = self.tbl_raw.item(row, 0)
+                if chk is None:
+                    continue
+                chk.setCheckState(
+                    Qt.Checked if state else Qt.Unchecked)
+
+            for t in self._raw_trades:
+                t.is_selected = state
+                if not state:
+                    t.auto_selected = False
+        finally:
+            self._refreshing = False
+
+        self._update_raw_buttons()
+
+    def _update_raw_buttons(self):
+        n = 0
+        for row in range(self.tbl_raw.rowCount()):
+            chk = self.tbl_raw.item(row, 0)
+            if chk and chk.checkState() == Qt.Checked:
+                n += 1
+
+        self.btn_raw_delete.setEnabled(n > 0)
+        self.btn_raw_move.setEnabled(n > 0)
+        self.btn_bulk_fill.setEnabled(len(self._raw_trades) > 0)
+
+        if n > 0:
+            self.btn_raw_delete.setText(f"🗑 حذف ({n})")
+            self.btn_raw_move.setText(f"➡️ انتقال به تأیید ({n})")
+        else:
+            self.btn_raw_delete.setText("🗑 حذف")
+            self.btn_raw_move.setText("➡️ انتقال به تأیید")
+
+    # ═══════════════════════════════════════════════
+    # تب ۱: حذف
+    # ═══════════════════════════════════════════════
+
+    def _get_ticked_raw_trades(self) -> List[TradeRecord]:
+        ticked = []
+        seen = set()
+        for row in range(self.tbl_raw.rowCount()):
+            chk = self.tbl_raw.item(row, 0)
+            if chk is None or chk.checkState() != Qt.Checked:
+                continue
+            tid = chk.data(Qt.UserRole)
+            if not tid or tid in seen:
+                continue
+            seen.add(tid)
+            for t in self._raw_trades:
+                if t.trade_id == tid:
+                    ticked.append(t)
+                    break
+        return ticked
+
+    def _delete_raw_selected(self):
+        ticked = self._get_ticked_raw_trades()
+        if not ticked:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک یا چند ردیف را تیک بزنید.")
+            return
+
+        reply = QMessageBox.question(
+            self, "تأیید حذف",
+            f"⚠️ آیا از نادیده گرفتن {len(ticked)} معامله مطمئن "
+            f"هستید؟\n\n"
+            f"این معاملات از پنجره حذف می‌شوند و هرگز در برنامه "
+            f"ذخیره نخواهند شد.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        ticked_ids = {t.trade_id for t in ticked}
+        self._raw_trades = [
+            t for t in self._raw_trades
+            if t.trade_id not in ticked_ids]
+        self._all_trades = [
+            t for t in self._all_trades
+            if t.trade_id not in ticked_ids]
+
+        self._refresh_raw()
+        QMessageBox.information(
+            self, "✅ موفق",
+            f"{len(ticked)} معامله نادیده گرفته شد.")
+
+    # ═══════════════════════════════════════════════
+    # تب ۱: انتقال به تب ۲
+    # ═══════════════════════════════════════════════
+
+    def _move_raw_to_confirm(self):
+        ticked = self._get_ticked_raw_trades()
+        if not ticked:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک یا چند ردیف را تیک بزنید.")
+            return
+
+        ready = [t for t in ticked if t.is_complete]
+        not_ready = [t for t in ticked if not t.is_complete]
+
+        if not ready:
             QMessageBox.warning(
                 self, "خطا",
-                "هیچ معامله‌ای در فایل یافت نشد.\n"
-                "لطفاً ساختار فایل و کارگزاری انتخابی را بررسی کنید.")
+                f"⚠️ هیچ‌کدام از {len(ticked)} ردیف اطلاعات کامل "
+                f"ندارند.\n\n"
+                f"لطفاً قیمت اعمال و سررسید را پر کنید.")
             return
 
-        # پر کردن جدول پیش‌نمایش
-        self._refresh_preview_table()
+        if not_ready:
+            reply = QMessageBox.question(
+                self, "هشدار",
+                f"⚠️ از {len(ticked)} ردیف، {len(not_ready)} ناقص "
+                f"هستند.\n\n"
+                f"فقط {len(ready)} ردیف کامل منتقل شود؟",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
 
-        self.stack.setCurrentIndex(STEP_PREVIEW)
-        self._update_navigation()
+        reply2 = QMessageBox.question(
+            self, "تأیید انتقال",
+            f"{len(ready)} معامله به تب «تأیید موقعیت‌ها» منتقل "
+            f"می‌شود.\n\n"
+            f"این معاملات از تب «معاملات خام» حذف می‌شوند.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply2 != QMessageBox.Yes:
+            return
 
-    # -----------------------------------------------------
-    # اجرای Commit نهایی
-    # -----------------------------------------------------
+        ready_ids = {t.trade_id for t in ready}
+        self._raw_trades = [
+            t for t in self._raw_trades
+            if t.trade_id not in ready_ids]
+
+        for t in ready:
+            t.is_selected = False
+            t.auto_selected = False
+            self._confirm_trades.append(t)
+
+        self._refresh_raw()
+        self._refresh_confirm()
+
+        QMessageBox.information(
+            self, "✅ موفق",
+            f"{len(ready)} معامله به تب «تأیید موقعیت‌ها» منتقل شد.")
+
+    # ═══════════════════════════════════════════════
+    # تب ۲: Refresh
+    # ═══════════════════════════════════════════════
+
+    def _refresh_confirm(self):
+        self._refreshing = True
+        try:
+            self.tbl_confirm.setSortingEnabled(False)
+            self.tbl_confirm.setRowCount(0)
+
+            for t in self._confirm_trades:
+                row = self.tbl_confirm.rowCount()
+                self.tbl_confirm.insertRow(row)
+                self._fill_confirm_row(row, t)
+
+            self.tbl_confirm.setSortingEnabled(True)
+
+            n = len(self._confirm_trades)
+            self.lbl_confirm_info.setText(
+                f"✅ تأیید موقعیت‌ها ({n} معامله)")
+        finally:
+            self._refreshing = False
+
+        self._update_confirm_buttons()
+
+    def _fill_confirm_row(self, row: int, t: TradeRecord):
+        # ✓
+        chk = QTableWidgetItem()
+        chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+        chk.setCheckState(Qt.Checked if t.is_selected else Qt.Unchecked)
+        chk.setData(Qt.UserRole, t.trade_id)
+        self.tbl_confirm.setItem(row, 0, chk)
+
+        # تاریخ / ساعت
+        self.tbl_confirm.setItem(row, 1,
+            SortableItem(t.raw_date or "—", t.raw_date or ""))
+        self.tbl_confirm.setItem(row, 2,
+            SortableItem(t.raw_time or "—", t.raw_time or ""))
+
+        # سمت
+        side_item = SortableItem(
+            t.side.label_fa, 0 if t.is_buy else 1)
+        side_item.setTextAlignment(Qt.AlignCenter)
+        side_item.setForeground(
+            QColor(Theme.PROFIT if t.is_buy else Theme.LOSS))
+        self.tbl_confirm.setItem(row, 3, side_item)
+
+        # نماد
+        self.tbl_confirm.setItem(row, 4,
+            SortableItem(t.symbol, t.symbol))
+
+        # نوع
+        kind_text, kind_order = "—", 99
+        if t.is_option:
+            if t.is_call:
+                kind_text, kind_order = "CALL", 1
+            else:
+                kind_text, kind_order = "PUT", 2
+        elif t.is_stock:
+            kind_text, kind_order = "سهم", 3
+        self.tbl_confirm.setItem(row, 5,
+            SortableItem(kind_text, kind_order))
+
+        # تعداد
+        qty_item = SortableItem(fmt_int(t.quantity), t.quantity)
+        qty_item.setTextAlignment(Qt.AlignCenter)
+        self.tbl_confirm.setItem(row, 6, qty_item)
+
+        # قیمت
+        pr_item = SortableItem(fmt_money(t.price), t.price)
+        pr_item.setTextAlignment(Qt.AlignCenter)
+        self.tbl_confirm.setItem(row, 7, pr_item)
+
+        # strike
+        sp_val = t.strike_price or 0
+        sp_item = SortableItem(
+            fmt_money(sp_val) if t.strike_price else "—", sp_val)
+        sp_item.setTextAlignment(Qt.AlignCenter)
+        self.tbl_confirm.setItem(row, 8, sp_item)
+
+        # سررسید
+        exp_item = SortableItem(
+            t.expiry_date or "—", t.expiry_date or "")
+        exp_item.setTextAlignment(Qt.AlignCenter)
+        self.tbl_confirm.setItem(row, 9, exp_item)
+
+        # ComboBox نوع بستن
+        self._install_confirm_close_combo(row, t)
+
+    def _install_confirm_close_combo(self, row: int, t: TradeRecord):
+        """ComboBox نوع بستن"""
+        combo = QComboBox()
+        combo.addItem("— انتخاب کنید —", "")
+        for code, label in CLOSE_OPTIONS:
+            combo.addItem(label, code)
+
+        idx = combo.findData(t.close_reason)
+        if idx > 0:
+            combo.setCurrentIndex(idx)
+
+        combo.setProperty("trade_id", t.trade_id)
+        combo.currentIndexChanged.connect(
+            lambda _, c=combo, tr=t:
+                self._on_confirm_close_changed(c, tr))
+        self.tbl_confirm.setCellWidget(row, CONFIRM_COL_CLOSE, combo)
+
+    def _on_confirm_close_changed(self, combo: QComboBox,
+                                    t: TradeRecord):
+        code = combo.currentData()
+        if not code:
+            return
+
+        # ─── نادیده بگیر ───
+        if code == "skip":
+            reply = QMessageBox.question(
+                self, "تأیید نادیده گرفتن",
+                f"⚠️ آیا از نادیده گرفتن این معامله مطمئن هستید؟\n\n"
+                f"{t.side.label_fa} {t.symbol} ({t.raw_date})",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                combo.blockSignals(True)
+                idx = combo.findData(t.close_reason)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+                combo.blockSignals(False)
+                return
+
+            if t in self._confirm_trades:
+                self._confirm_trades.remove(t)
+            if t in self._all_trades:
+                self._all_trades.remove(t)
+            self._refresh_confirm()
+            return
+
+        t.close_reason = code
+        t.user_chosen_reason = True
+
+        self._update_confirm_buttons()
+
+    def _on_confirm_item_changed(self, item: QTableWidgetItem):
+        """
+        وقتی چک‌باکس تغییر کرد.
+
+        ✅ رفتار هوشمند:
+            - اگر چک‌باکس «هم‌نام» فعال و کاربر یک ردیف را تیک بزند:
+              → فقط همان ردیف + هم‌نام‌هایش تیک می‌خورند
+              → ردیف‌های هم‌نامِ نماد قبلی (اگر متفاوت باشد) از تیک خارج می‌شوند
+            - اگر کاربر تیک را بردارد:
+              → فقط همان ردیف از تیک خارج می‌شود
+        """
+        if self._refreshing:
+            return
+        if item.column() != 0:
+            return
+
+        tid = item.data(Qt.UserRole)
+        if not tid:
+            return
+
+        trade = None
+        for t in self._confirm_trades:
+            if t.trade_id == tid:
+                trade = t
+                break
+        if trade is None:
+            return
+
+        is_now = (item.checkState() == Qt.Checked)
+        trade.is_selected = is_now
+        if trade.auto_selected and not is_now:
+            trade.auto_selected = False
+
+        if is_now and self.chk_confirm_select_same.isChecked():
+            # ۱. همه‌ی هم‌نام‌های این نماد را تیک بزن
+            self._select_confirm_same_symbol(trade.symbol, tid)
+            # ۲. ردیف‌های هم‌نامِ نمادهای دیگر را از تیک خارج کن
+            self._deselect_confirm_other_symbols(trade.symbol)
+
+        self._update_confirm_buttons()
+
+    def _select_confirm_same_symbol(self, symbol: str, exclude_id: str):
+        """انتخاب همه‌ی ردیف‌های هم‌نام"""
+        self._refreshing = True
+        try:
+            for row in range(self.tbl_confirm.rowCount()):
+                chk = self.tbl_confirm.item(row, 0)
+                if chk is None:
+                    continue
+                tid = chk.data(Qt.UserRole)
+                if tid == exclude_id:
+                    continue
+
+                trade = None
+                for tr in self._confirm_trades:
+                    if tr.trade_id == tid:
+                        trade = tr
+                        break
+                if trade is None or trade.symbol != symbol:
+                    continue
+
+                if chk.checkState() != Qt.Checked:
+                    chk.setCheckState(Qt.Checked)
+                    trade.is_selected = True
+        finally:
+            self._refreshing = False
+
+    def _deselect_confirm_other_symbols(self, keep_symbol: str):
+        """
+        لغو انتخاب ردیف‌های نمادهای دیگر.
+
+        وقتی کاربر یک نماد را انتخاب می‌کند، نمادهای قبلی
+        از تیک خارج می‌شوند تا کاربر بدون سردرگمی کار کند.
+        """
+        self._refreshing = True
+        try:
+            for row in range(self.tbl_confirm.rowCount()):
+                chk = self.tbl_confirm.item(row, 0)
+                if chk is None:
+                    continue
+                tid = chk.data(Qt.UserRole)
+                if not tid:
+                    continue
+
+                trade = None
+                for tr in self._confirm_trades:
+                    if tr.trade_id == tid:
+                        trade = tr
+                        break
+                if trade is None:
+                    continue
+
+                if trade.symbol != keep_symbol and \
+                        chk.checkState() == Qt.Checked:
+                    chk.setCheckState(Qt.Unchecked)
+                    trade.is_selected = False
+                    trade.auto_selected = False
+        finally:
+            self._refreshing = False
+
+    def _get_ticked_confirm_trades(self) -> List[TradeRecord]:
+        ticked = []
+        seen = set()
+        for row in range(self.tbl_confirm.rowCount()):
+            chk = self.tbl_confirm.item(row, 0)
+            if chk is None or chk.checkState() != Qt.Checked:
+                continue
+            tid = chk.data(Qt.UserRole)
+            if not tid or tid in seen:
+                continue
+            seen.add(tid)
+            for t in self._confirm_trades:
+                if t.trade_id == tid:
+                    ticked.append(t)
+                    break
+        return ticked
+
+    def _update_confirm_buttons(self):
+        ticked = self._get_ticked_confirm_trades()
+        n = len(ticked)
+        self.btn_confirm_move.setEnabled(n > 0)
+        self.btn_confirm_back.setEnabled(n > 0)
+
+        if n > 0:
+            self.btn_confirm_move.setText(
+                f"➡️ انتقال به گروه‌بندی ({n})")
+            self.btn_confirm_back.setText(f"↩️ بازگشت ({n})")
+        else:
+            self.btn_confirm_move.setText("➡️ انتقال به گروه‌بندی")
+            self.btn_confirm_back.setText("↩️ بازگشت به معاملات خام")
+
+    # ═══════════════════════════════════════════════
+    # تب ۲: انتخاب همه / لغو همه
+    # ═══════════════════════════════════════════════
+
+    def _toggle_all_confirm(self, state: bool):
+        """انتخاب یا لغو انتخاب همه‌ی ردیف‌های تب ۲"""
+        if not self._confirm_trades:
+            return
+
+        n = len(self._confirm_trades)
+        action = "انتخاب" if state else "لغو انتخاب"
+
+        if state and n > 20:
+            reply = QMessageBox.question(
+                self, f"تأیید {action}",
+                f"آیا از {action} همه‌ی {n} معامله مطمئن هستید؟",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+
+        self._refreshing = True
+        try:
+            for row in range(self.tbl_confirm.rowCount()):
+                chk = self.tbl_confirm.item(row, 0)
+                if chk is None:
+                    continue
+                chk.setCheckState(
+                    Qt.Checked if state else Qt.Unchecked)
+
+            for t in self._confirm_trades:
+                t.is_selected = state
+                if not state:
+                    t.auto_selected = False
+        finally:
+            self._refreshing = False
+
+        self._update_confirm_buttons()
+
+    # ═══════════════════════════════════════════════
+    # تب ۲: بازگشت
+    # ═══════════════════════════════════════════════
+
+    def _move_confirm_back_to_raw(self):
+        ticked = self._get_ticked_confirm_trades()
+        if not ticked:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک یا چند ردیف را تیک بزنید.")
+            return
+
+        reply = QMessageBox.question(
+            self, "تأیید بازگشت",
+            f"{len(ticked)} معامله به تب «معاملات خام» برگردانده "
+            f"می‌شوند.\n\n"
+            f"نوع بستن آن‌ها پاک می‌شود.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        ticked_ids = {t.trade_id for t in ticked}
+        self._confirm_trades = [
+            t for t in self._confirm_trades
+            if t.trade_id not in ticked_ids]
+
+        for t in ticked:
+            t.is_selected = False
+            t.auto_selected = False
+            t.close_reason = ""
+            t.user_chosen_reason = False
+            self._raw_trades.append(t)
+
+        self._refresh_raw()
+        self._refresh_confirm()
+
+        QMessageBox.information(
+            self, "✅ موفق",
+            f"{len(ticked)} معامله به تب «معاملات خام» بازگشت.")
+
+    # ═══════════════════════════════════════════════
+    # تب ۲: انتقال به تب ۳
+    # ═══════════════════════════════════════════════
+
+    def _move_confirm_to_group(self):
+        ticked = self._get_ticked_confirm_trades()
+        if not ticked:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک یا چند ردیف را تیک بزنید.")
+            return
+
+        # ─── چک نوع بستن ───
+        no_reason = [
+            t for t in ticked
+            if not t.close_reason or t.close_reason == ""
+        ]
+        if no_reason:
+            names = "\n".join(
+                f"  • {t.side.label_fa} {t.symbol} ({t.raw_date})"
+                for t in no_reason[:10])
+            if len(no_reason) > 10:
+                names += f"\n  ... و {len(no_reason) - 10} مورد دیگر"
+
+            QMessageBox.warning(
+                self, "خطا",
+                f"❌ {len(no_reason)} معامله نوع بستن مشخص ندارند.\n\n"
+                f"لطفاً قبل از انتقال، نوع بستن همه‌ی ردیف‌های "
+                f"تیک‌خورده را تعیین کنید:\n\n{names}")
+            return
+
+        reply = QMessageBox.question(
+            self, "تأیید انتقال",
+            f"{len(ticked)} معامله به تب «گروه‌بندی استراتژی‌ها» "
+            f"منتقل می‌شود.\n\n"
+            f"این معاملات از تب «تأیید موقعیت‌ها» حذف می‌شوند.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        ticked_ids = {t.trade_id for t in ticked}
+        self._confirm_trades = [
+            t for t in self._confirm_trades
+            if t.trade_id not in ticked_ids]
+
+        for t in ticked:
+            t.is_selected = False
+            t.auto_selected = False
+
+            pos = self._trade_to_position(t)
+            if pos:
+                pos.group_id = ""
+                self._group_positions.append(pos)
+
+        self._refresh_confirm()
+        self._refresh_group()
+
+        QMessageBox.information(
+            self, "✅ موفق",
+            f"{len(ticked)} موقعیت به تب «گروه‌بندی» منتقل شد.")
+
+    # ═══════════════════════════════════════════════
+    # تبدیل trade → StrategyPosition
+    # ═══════════════════════════════════════════════
+
+    def _trade_to_position(
+        self, t: TradeRecord
+    ) -> Optional[StrategyPosition]:
+        leg = OptionLeg(
+            symbol=t.symbol,
+            is_option=t.is_option,
+            option_kind=t.option_kind or OptionType.STOCK,
+            leg_type=t.side,
+            strike_price=t.strike_price or 0.0,
+            contract_size=t.effective_contract_size,
+            quantity=t.quantity,
+            entry_price=t.price,
+            current_price=t.price,
+            expiry_date=t.expiry_date or "",
+            ins_code=t.ins_code or "",
+            ins_code_ua=t.ins_code_ua or "",
+            open_date=t.raw_date,
+            open_time=t.raw_time,
+            trade_time=t.raw_time,
+            source="excel_import",
+            trade_ref=t.trade_id,
+            needs_review=t.needs_review,
+            close_reason=t.close_reason,
+        )
+        leg.entry_fee = PositionPnLCalculator.calculate_leg_entry_fee(leg)
+
+        status = PositionStatus.OPEN
+        if t.close_reason == CLOSE_REASON_OFFSET:
+            leg.close_price = t.close_price or 0.0
+            leg.close_fee = (
+                PositionPnLCalculator.calculate_leg_close_fee(
+                    leg, leg.close_price))
+            leg.close_date = t.close_date
+            status = PositionStatus.CLOSED
+        elif t.close_reason == CLOSE_REASON_EXERCISE:
+            leg.close_price = t.close_price or 0.0
+            leg.close_fee = 0.0
+            status = PositionStatus.EXERCISED
+        elif t.close_reason == CLOSE_REASON_CASH_SETTLE:
+            leg.close_price = t.close_price or 0.0
+            leg.close_fee = 0.0
+            status = PositionStatus.CASH_SETTLED
+        elif t.close_reason == CLOSE_REASON_DEFAULTED:
+            leg.close_price = t.close_price or 0.0
+            status = PositionStatus.DEFAULTED
+        elif t.close_reason == CLOSE_REASON_YOU_DEFAULTED:
+            leg.close_price = t.close_price or 0.0
+            status = PositionStatus.YOU_DEFAULTED
+        elif t.close_reason == CLOSE_REASON_OPEN:
+            status = PositionStatus.OPEN
+
+        from position_saver.importer.suggest import (
+            suggest_strategy_name)
+        sname = suggest_strategy_name([t]) or ""
+
+        usym = t.underlying_symbol or t.symbol
+        if t.is_option and not t.underlying_symbol:
+            usym = infer_underlying_symbol(t.symbol)
+
+        pos = StrategyPosition(
+            strategy_name=sname,
+            strategy_type="",
+            broker_name=self._broker,
+            underlying_symbol=usym,
+            execution_date=t.raw_date,
+            expiry_date=t.expiry_date or "",
+            status=status,
+            legs=[leg],
+            alert_target_roi=self._settings.default_alert_roi,
+            source="excel_import",
+            needs_review=t.needs_review,
+            close_reason=t.close_reason,
+        )
+
+        if status != PositionStatus.OPEN:
+            pos.close_date = t.close_date or t.raw_date
+
+        return pos
+
+    # ═══════════════════════════════════════════════
+    # تب ۳: Refresh
+    # ═══════════════════════════════════════════════
+
+    def _refresh_group(self):
+        self._refreshing = True
+        try:
+            # پاکسازی layout
+            while self.groups_layout.count() > 1:
+                item = self.groups_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+
+            # ─── گروه‌های تشکیل‌شده ───
+            for group in self._groups:
+                card = self._build_group_card(group)
+                self.groups_layout.insertWidget(
+                    self.groups_layout.count() - 1, card)
+
+            # ─── بدون گروه ───
+            ungrouped = [
+                p for p in self._group_positions
+                if not p.group_id
+            ]
+            if ungrouped:
+                card = self._build_ungrouped_card(ungrouped)
+                self.groups_layout.insertWidget(
+                    self.groups_layout.count() - 1, card)
+
+            # ─── آمار ───
+            n_pos = len(self._group_positions)
+            n_groups = len(self._groups)
+            n_ungrouped = len(ungrouped)
+
+            self.lbl_group_info.setText(
+                f"📁 موقعیت‌ها: {n_pos}  |  گروه‌ها: {n_groups}  |  "
+                f"بدون گروه: {n_ungrouped}")
+        finally:
+            self._refreshing = False
+
+        self._update_group_buttons()
+
+    def _build_ungrouped_card(
+        self, positions: List[StrategyPosition]
+    ) -> QWidget:
+        """کارت «بدون استراتژی»"""
+        card = QFrame()
+        card.setObjectName("card")
+        card.setStyleSheet(
+            f"QFrame#card {{ background-color: {Theme.CARD}; "
+            f"border: 1px solid {Theme.BORDER}; "
+            f"border-radius: 6px; }}")
+
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
+
+        title = QLabel(
+            f"📁 بدون استراتژی ({len(positions)} موقعیت)")
+        set_tone(title, "warn", big=True)
+        lay.addWidget(title)
+
+        table = QTableWidget(0, 6)
+        table.setHorizontalHeaderLabels([
+            "✓", "نماد", "لگ", "تعداد", "ورود", "وضعیت"])
+        h = table.horizontalHeader()
+        h.setSectionResizeMode(QHeaderView.Interactive)
+        h.setStretchLastSection(True)
+        table.setColumnWidth(0, 36)
+        table.setColumnWidth(1, 100)
+        table.setColumnWidth(2, 160)
+        table.setColumnWidth(3, 60)
+        table.setColumnWidth(4, 90)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setDefaultSectionSize(26)
+        table.verticalHeader().setVisible(False)
+
+        for pos in positions:
+            row = table.rowCount()
+            table.insertRow(row)
+
+            chk = QTableWidgetItem()
+            chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            chk.setCheckState(Qt.Unchecked)
+            chk.setData(Qt.UserRole, pos.position_id)
+            table.setItem(row, 0, chk)
+
+            table.setItem(row, 1, QTableWidgetItem(
+                pos.underlying_symbol or "—"))
+
+            leg_text = "—"
+            if pos.legs:
+                leg = pos.legs[0]
+                leg_text = f"{leg.leg_type.label_fa} {leg.symbol}"
+            table.setItem(row, 2, QTableWidgetItem(leg_text))
+
+            qty = pos.legs[0].quantity if pos.legs else 0
+            table.setItem(row, 3, QTableWidgetItem(fmt_int(qty)))
+
+            entry = pos.legs[0].entry_price if pos.legs else 0
+            table.setItem(row, 4, QTableWidgetItem(fmt_money(entry)))
+
+            status_item = QTableWidgetItem(pos.status.label_fa)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(row, 5, status_item)
+
+        h_table = min(180, 26 * len(positions) + 30)
+        table.setFixedHeight(h_table)
+        lay.addWidget(table)
+
+        return card
+
+    def _build_group_card(self, group: StrategyGroup) -> QWidget:
+        """کارت یک گروه"""
+        positions = [
+            p for p in self._group_positions
+            if p.position_id in group.position_ids
+        ]
+
+        card = QFrame()
+        card.setObjectName("card")
+        card.setStyleSheet(
+            f"QFrame#card {{ background-color: {Theme.CARD}; "
+            f"border: 2px solid {Theme.PROFIT}; "
+            f"border-radius: 6px; }}")
+
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setSpacing(6)
+
+        title = QLabel(
+            f"📁 {group.label_fa} ({len(positions)} موقعیت)")
+        set_tone(title, "profit", big=True)
+        header.addWidget(title)
+
+        type_label = QLabel(f"نوع: {group.strategy_type or 'سفارشی'}")
+        set_tone(type_label, "muted")
+        header.addWidget(type_label)
+        header.addStretch()
+
+        total_pnl = group.total_live_pnl(self._group_positions)
+        pnl_label = QLabel(
+            f"💰 PnL: {fmt_money(total_pnl)} {CURRENCY}")
+        if total_pnl > 0:
+            set_tone(pnl_label, "profit", big=True)
+        elif total_pnl < 0:
+            set_tone(pnl_label, "loss", big=True)
+        else:
+            set_tone(pnl_label, "muted", big=True)
+        header.addWidget(pnl_label)
+
+        lay.addLayout(header)
+
+        table = QTableWidget(0, 6)
+        table.setHorizontalHeaderLabels([
+            "✓", "نماد", "لگ", "تعداد", "ورود", "وضعیت"])
+        h = table.horizontalHeader()
+        h.setSectionResizeMode(QHeaderView.Interactive)
+        h.setStretchLastSection(True)
+        table.setColumnWidth(0, 36)
+        table.setColumnWidth(1, 100)
+        table.setColumnWidth(2, 160)
+        table.setColumnWidth(3, 60)
+        table.setColumnWidth(4, 90)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setDefaultSectionSize(26)
+        table.verticalHeader().setVisible(False)
+
+        for pos in positions:
+            row = table.rowCount()
+            table.insertRow(row)
+
+            chk = QTableWidgetItem()
+            chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            chk.setCheckState(Qt.Unchecked)
+            chk.setData(Qt.UserRole, pos.position_id)
+            table.setItem(row, 0, chk)
+
+            table.setItem(row, 1, QTableWidgetItem(
+                pos.underlying_symbol or "—"))
+
+            leg_text = "—"
+            if pos.legs:
+                leg = pos.legs[0]
+                leg_text = f"{leg.leg_type.label_fa} {leg.symbol}"
+            table.setItem(row, 2, QTableWidgetItem(leg_text))
+
+            qty = pos.legs[0].quantity if pos.legs else 0
+            table.setItem(row, 3, QTableWidgetItem(fmt_int(qty)))
+
+            entry = pos.legs[0].entry_price if pos.legs else 0
+            table.setItem(row, 4, QTableWidgetItem(fmt_money(entry)))
+
+            status_item = QTableWidgetItem(pos.status.label_fa)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            table.setItem(row, 5, status_item)
+
+        h_table = min(180, 26 * len(positions) + 30)
+        table.setFixedHeight(h_table)
+        lay.addWidget(table)
+
+        return card
+
+    def _update_group_buttons(self):
+        n_pos = len(self._group_positions)
+        n_ungrouped = sum(
+            1 for p in self._group_positions if not p.group_id)
+
+        self.btn_group_new.setEnabled(n_ungrouped > 0)
+
+        all_grouped = (n_pos > 0 and n_ungrouped == 0)
+        self.btn_commit.setEnabled(all_grouped)
+
+        if n_pos == 0:
+            self.btn_commit.setText("✅ ارسال (بدون موقعیت)")
+        elif not all_grouped:
+            self.btn_commit.setText(
+                f"✅ ارسال ({n_ungrouped} بدون گروه)")
+        else:
+            self.btn_commit.setText("✅ ارسال به برنامه و ذخیره")
+
+    # ═══════════════════════════════════════════════
+    # تب ۳: تعریف استراتژی
+    # ═══════════════════════════════════════════════
+
+    def _create_new_strategy(self):
+        """تعریف استراتژی جدید"""
+        selected = self._get_ticked_group_positions()
+        if not selected:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک یا چند موقعیت بدون گروه را تیک بزنید.")
+            return
+
+        pseudo_trades = [self._position_to_pseudo_trade(p)
+                         for p in selected]
+
+        try:
+            dlg = StrategyDialog(self, trades=pseudo_trades)
+        except Exception as e:
+            logger.exception(f"StrategyDialog failed: {e}")
+            QMessageBox.critical(self, "خطا",
+                f"خطا در باز کردن دیالوگ استراتژی:\n{e}")
+            return
+
+        try:
+            if not dlg.exec():
+                return
+            result = dlg.get_result()
+            if not result:
+                return
+
+            strategy_type = result.get("strategy_type", "")
+            display_name = result.get("display_name", "")
+
+            group = StrategyGroup(
+                strategy_type=strategy_type,
+                display_name=display_name,
+                position_ids=[p.position_id for p in selected],
+                created_at=today_jalali(),
+                alert_target_roi=self._settings.default_alert_roi,
+            )
+            self._groups.append(group)
+
+            for p in selected:
+                p.group_id = group.group_id
+                p.strategy_type = strategy_type
+                p.strategy_name = display_name
+                if self._settings.default_alert_roi > 0:
+                    p.alert_target_roi = self._settings.default_alert_roi
+
+            self._refresh_group()
+
+            QMessageBox.information(
+                self, "✅ موفق",
+                f"استراتژی «{display_name}» برای "
+                f"{len(selected)} موقعیت تشکیل شد.")
+        finally:
+            dlg.deleteLater()
+
+    def _position_to_pseudo_trade(self, pos: StrategyPosition):
+        """تبدیل StrategyPosition به یک شیء شبیه TradeRecord"""
+        class PseudoTrade:
+            pass
+
+        p = PseudoTrade()
+        if pos.legs:
+            leg = pos.legs[0]
+            p.trade_id = leg.trade_ref or pos.position_id
+            p.raw_date = leg.open_date or pos.execution_date
+            p.raw_time = leg.open_time or ""
+            p.symbol = leg.symbol
+            p.side = leg.leg_type
+            p.quantity = leg.quantity
+            p.price = leg.entry_price
+            p.option_kind = leg.option_kind
+            p.strike_price = leg.strike_price
+            p.expiry_date = leg.expiry_date
+            p.is_option = leg.is_option
+            p.is_call = leg.is_call
+            p.is_put = leg.is_put
+            p.is_stock = leg.is_stock
+            p.effective_contract_size = leg.effective_contract_size
+            p.close_reason = leg.close_reason
+        else:
+            p.trade_id = pos.position_id
+            p.raw_date = pos.execution_date
+            p.raw_time = ""
+            p.symbol = pos.underlying_symbol
+            p.side = LegType.BUY
+            p.quantity = 0
+            p.price = 0
+            p.option_kind = OptionType.STOCK
+            p.strike_price = 0
+            p.expiry_date = pos.expiry_date
+            p.is_option = False
+            p.is_call = False
+            p.is_put = False
+            p.is_stock = True
+            p.effective_contract_size = 1
+            p.close_reason = pos.close_reason
+
+        return p
+
+    def _get_ticked_group_positions(self) -> List[StrategyPosition]:
+        """پیدا کردن موقعیت‌های تیک‌خورده در تب ۳"""
+        ticked_ids = set()
+        for table in self.groups_container.findChildren(QTableWidget):
+            for row in range(table.rowCount()):
+                chk = table.item(row, 0)
+                if chk and chk.checkState() == Qt.Checked:
+                    pid = chk.data(Qt.UserRole)
+                    if pid:
+                        ticked_ids.add(pid)
+
+        return [p for p in self._group_positions
+                if p.position_id in ticked_ids and not p.group_id]
+
+    # ═══════════════════════════════════════════════
+    # تب ۳: عملیات
+    # ═══════════════════════════════════════════════
+
+    def _get_ticked_group_ids(self) -> List[str]:
+        """پیدا کردن group_id های تیک‌خورده در تب ۳"""
+        ticked_group_ids = set()
+        for table in self.groups_container.findChildren(QTableWidget):
+            for row in range(table.rowCount()):
+                chk = table.item(row, 0)
+                if chk and chk.checkState() == Qt.Checked:
+                    pid = chk.data(Qt.UserRole)
+                    if pid:
+                        for g in self._groups:
+                            if pid in g.position_ids:
+                                ticked_group_ids.add(g.group_id)
+                                break
+        return list(ticked_group_ids)
+
+    def _get_ticked_group_positions_all(self) -> List[StrategyPosition]:
+        """پیدا کردن همه‌ی position های تیک‌خورده (گروه‌بندی‌شده یا بدون گروه)"""
+        ticked_ids = set()
+        for table in self.groups_container.findChildren(QTableWidget):
+            for row in range(table.rowCount()):
+                chk = table.item(row, 0)
+                if chk and chk.checkState() == Qt.Checked:
+                    pid = chk.data(Qt.UserRole)
+                    if pid:
+                        ticked_ids.add(pid)
+
+        return [p for p in self._group_positions
+                if p.position_id in ticked_ids]
+
+    def _ungroup_selected(self):
+        """جدا کردن position های تیک‌خورده از گروه‌ها"""
+        ticked_ids = set()
+        for table in self.groups_container.findChildren(QTableWidget):
+            for row in range(table.rowCount()):
+                chk = table.item(row, 0)
+                if chk and chk.checkState() == Qt.Checked:
+                    pid = chk.data(Qt.UserRole)
+                    if pid:
+                        ticked_ids.add(pid)
+
+        if not ticked_ids:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک یا چند موقعیت را تیک بزنید.")
+            return
+
+        # جدا کردن
+        affected_groups = set()
+        for pos in self._group_positions:
+            if pos.position_id in ticked_ids and pos.group_id:
+                affected_groups.add(pos.group_id)
+                pos.group_id = ""
+                pos.strategy_type = ""
+
+        # حذف گروه‌های خالی
+        self._groups = [
+            g for g in self._groups if g.position_ids
+        ]
+        # به‌روزرسانی position_ids در گروه‌ها
+        for g in self._groups:
+            g.position_ids = [
+                pid for pid in g.position_ids
+                if pid not in ticked_ids
+            ]
+
+        # حذف گروه‌های خالی بعد از به‌روزرسانی
+        self._groups = [
+            g for g in self._groups if g.position_ids
+        ]
+
+        self._refresh_group()
+        QMessageBox.information(
+            self, "✅ موفق",
+            f"{len(ticked_ids)} موقعیت از گروه جدا شد.")
+
+    def _delete_group(self):
+        """حذف گروه‌های انتخاب‌شده (position ها حفظ می‌شوند)"""
+        ticked_group_ids = self._get_ticked_group_ids()
+
+        if not ticked_group_ids:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک یا چند گروه را تیک بزنید.")
+            return
+
+        reply = QMessageBox.question(
+            self, "تأیید حذف گروه",
+            f"آیا از حذف {len(ticked_group_ids)} گروه مطمئن "
+            f"هستید؟\n\n"
+            f"⚠️ موقعیت‌ها حذف نمی‌شوند، فقط به «بدون استراتژی» "
+            f"برمی‌گردند.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        # حذف گروه‌ها
+        for gid in ticked_group_ids:
+            # پاک کردن group_id از position ها
+            for pos in self._group_positions:
+                if pos.group_id == gid:
+                    pos.group_id = ""
+                    pos.strategy_type = ""
+
+        # حذف گروه‌ها از لیست
+        self._groups = [
+            g for g in self._groups
+            if g.group_id not in ticked_group_ids
+        ]
+
+        self._refresh_group()
+        QMessageBox.information(
+            self, "✅ موفق",
+            f"{len(ticked_group_ids)} گروه حذف شد.")
+
+    def _split_selected_position(self):
+        """شکستن موقعیت انتخاب‌شده به قطعات"""
+        selected = self._get_ticked_group_positions_all()
+
+        if len(selected) != 1:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً فقط یک موقعیت را برای شکستن انتخاب کنید.")
+            return
+
+        pos = selected[0]
+
+        # بررسی: تک‌لگی
+        if len(pos.legs) != 1:
+            QMessageBox.warning(
+                self, "خطا",
+                "فقط موقعیت‌های تک‌لگی قابل شکستن هستند.")
+            return
+
+        # بررسی: qty > 1
+        if pos.legs[0].quantity <= 1:
+            QMessageBox.warning(
+                self, "خطا",
+                "موقعیت باید حداقل 2 عدد داشته باشد.")
+            return
+
+        # باز کردن دیالوگ
+        from position_saver.ui.split_position_dialog import (
+            SplitPositionDialog)
+        dlg = SplitPositionDialog(self, position=pos)
+        try:
+            if not dlg.exec():
+                return
+
+            quantities = dlg.get_quantities()
+            reasons = dlg.get_reasons()
+
+            # انجام split
+            try:
+                pieces = pos.split_position(quantities)
+            except ValueError as e:
+                QMessageBox.critical(self, "خطا", str(e))
+                return
+
+            # اضافه کردن strategy_type به هر قطعه
+            for piece, reason in zip(pieces, reasons):
+                if reason:
+                    piece.strategy_type = reason
+
+            # حذف position اصلی
+            if pos in self._group_positions:
+                self._group_positions.remove(pos)
+
+            # اگر در گروه بود، از گروه حذف کن
+            for g in self._groups:
+                if pos.position_id in g.position_ids:
+                    g.position_ids.remove(pos.position_id)
+                    break
+
+            # حذف گروه‌های خالی
+            self._groups = [
+                g for g in self._groups if g.position_ids
+            ]
+
+            # اضافه کردن قطعات
+            for p in pieces:
+                self._group_positions.append(p)
+
+            self._refresh_group()
+            QMessageBox.information(
+                self, "✅ موفق",
+                f"موقعیت به {len(pieces)} قطعه شکسته شد.")
+        finally:
+            dlg.deleteLater()
+
+    def _merge_selected_positions(self):
+        """ادغام موقعیت‌های انتخاب‌شده"""
+        selected = self._get_ticked_group_positions_all()
+
+        if len(selected) < 2:
+            QMessageBox.information(
+                self, "اطلاع",
+                "حداقل دو موقعیت برای ادغام لازم است.")
+            return
+
+        reply = QMessageBox.question(
+            self, "تأیید ادغام",
+            f"آیا از ادغام {len(selected)} موقعیت مطمئن هستید؟\n\n"
+            f"⚠️ همه باید همان نماد، strike، expiry، "
+            f"entry_price و جهت باشند.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        # انجام merge
+        try:
+            merged = StrategyPosition.merge_positions(selected)
+        except ValueError as e:
+            QMessageBox.critical(self, "خطا", str(e))
+            return
+
+        # حذف position های قدیمی
+        for p in selected:
+            if p in self._group_positions:
+                self._group_positions.remove(p)
+            # از گروه‌ها هم حذف کن
+            for g in self._groups:
+                if p.position_id in g.position_ids:
+                    g.position_ids.remove(p.position_id)
+
+        # حذف گروه‌های خالی
+        self._groups = [
+            g for g in self._groups if g.position_ids
+        ]
+
+        # اضافه کردن merged
+        self._group_positions.append(merged)
+
+        self._refresh_group()
+        QMessageBox.information(
+            self, "✅ موفق",
+            f"{len(selected)} موقعیت ادغام شد.")
+
+
+    def _get_ticked_group_cards(self) -> List[StrategyGroup]:
+        """پیدا کردن گروه‌های تیک‌خورده از میان کارت‌ها"""
+        ticked_group_ids = set()
+        for table in self.groups_container.findChildren(QTableWidget):
+            for row in range(table.rowCount()):
+                chk = table.item(row, 0)
+                if chk and chk.checkState() == Qt.Checked:
+                    # پیدا کردن group از روی position_id
+                    pid = chk.data(Qt.UserRole)
+                    if pid:
+                        for g in self._groups:
+                            if pid in g.position_ids:
+                                ticked_group_ids.add(g.group_id)
+                                break
+        return [g for g in self._groups
+                if g.group_id in ticked_group_ids]
+
+    # ═══════════════════════════════════════════════
+    # تب ۳: بازگشت
+    # ═══════════════════════════════════════════════
+
+    def _move_group_back_to_confirm(self):
+        QMessageBox.information(
+            self, "اطلاع",
+            "برای بازگشت، باید همه‌ی گروه‌ها را حذف کنید.")
+
+    # ═══════════════════════════════════════════════
+    # Net Position Dialog
+    # ═══════════════════════════════════════════════
+
+    def _open_net_position_dialog(self, from_tab: str = "raw"):
+        """باز کردن دیالوگ تحلیل ترتیب زمانی"""
+        if not self._all_trades:
+            QMessageBox.information(
+                self, "اطلاع",
+                "هیچ معامله‌ای بارگذاری نشده است.")
+            return
+
+        symbol = None
+
+        if from_tab == "raw":
+            ticked = self._get_ticked_raw_trades()
+        elif from_tab == "confirm":
+            ticked = self._get_ticked_confirm_trades()
+        else:
+            ticked = []
+
+        if ticked:
+            symbols = list({t.symbol for t in ticked})
+            if len(symbols) > 1:
+                QMessageBox.warning(
+                    self, "خطا",
+                    f"شما {len(symbols)} نماد مختلف انتخاب کرده‌اید.\n"
+                    f"لطفاً فقط یک نماد انتخاب کنید.")
+                return
+            symbol = symbols[0]
+        else:
+            if from_tab == "raw" and self._raw_trades:
+                symbol = self._raw_trades[0].symbol
+            elif from_tab == "confirm" and self._confirm_trades:
+                symbol = self._confirm_trades[0].symbol
+
+        if not symbol:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک ردیف را تیک بزنید.")
+            return
+
+        symbol_trades = [
+            t for t in self._all_trades if t.symbol == symbol
+        ]
+
+        if not symbol_trades:
+            return
+
+        dlg = NetPositionDialog(
+            self, trades=symbol_trades, symbol=symbol)
+        try:
+            dlg.exec()
+        finally:
+            dlg.deleteLater()
+
+    # ═══════════════════════════════════════════════
+    # Bulk Fill
+    # ═══════════════════════════════════════════════
+
+    def _open_bulk_fill_dialog(self):
+        if not self._raw_trades:
+            return
+
+        by_symbol: Dict[str, List[TradeRecord]] = {}
+        for t in self._raw_trades:
+            by_symbol.setdefault(t.symbol, []).append(t)
+
+        if not by_symbol:
+            QMessageBox.information(self, "اطلاع",
+                "هیچ ردیفی وجود ندارد.")
+            return
+
+        symbols = sorted(by_symbol.keys())
+        if len(symbols) == 1:
+            chosen = symbols[0]
+        else:
+            items = [f"{s} ({len(by_symbol[s])} ردیف)"
+                     for s in symbols]
+            choice, ok = QInputDialog.getItem(
+                self, "انتخاب نماد",
+                f"کدام نماد را می‌خواهید پر کنید؟ ({len(symbols)} نماد)",
+                items, 0, False)
+            if not ok:
+                return
+            chosen = symbols[items.index(choice)]
+
+        symbol_trades = by_symbol[chosen]
+        initial_info = get_symbol_info(chosen) or {}
+
+        from position_saver.ui.symbol_fill_dialog import (
+            SymbolFillDialog)
+        dlg = SymbolFillDialog(
+            self, symbol=chosen,
+            trades=symbol_trades, initial_info=initial_info)
+
+        try:
+            if not dlg.exec():
+                return
+            result = dlg.get_result()
+            if not result:
+                return
+
+            save_symbol_info(
+                symbol=chosen,
+                strike_price=result["strike_price"],
+                expiry_date=result["expiry_date"],
+                contract_size=result["contract_size"],
+                underlying_symbol=result["underlying_symbol"],
+            )
+
+            applied = 0
+            self._syncing = True
+            try:
+                for t in symbol_trades:
+                    if not t.strike_price:
+                        t.strike_price = result["strike_price"]
+                    if not t.expiry_date:
+                        t.expiry_date = result["expiry_date"]
+                    if t.contract_size <= 0:
+                        t.contract_size = result["contract_size"]
+                    if not t.underlying_symbol:
+                        t.underlying_symbol = result["underlying_symbol"]
+
+                    t.user_edited = True
+                    t.needs_review = not t.is_complete
+                    applied += 1
+            finally:
+                self._syncing = False
+
+            self._refresh_raw()
+            QMessageBox.information(
+                self, "✅ موفق",
+                f"اطلاعات به {applied} ردیف نماد «{chosen}» "
+                f"اعمال شد.")
+        finally:
+            dlg.deleteLater()
+
+    def _show_symbol_memory(self):
+        from position_saver.importer.symbol_memory import (
+            get_all, clear_all)
+        memory = get_all()
+
+        if not memory:
+            QMessageBox.information(
+                self, "حافظه‌ی نماد",
+                "حافظه خالی است.")
+            return
+
+        lines = [f"📋 {len(memory)} نماد ذخیره‌شده:\n"]
+        for symbol, info in sorted(memory.items()):
+            strike = info.get("strike_price", "—")
+            expiry = info.get("expiry_date", "—")
+            if isinstance(strike, (int, float)):
+                strike = f"{int(strike):,}"
+            lines.append(
+                f"  • {symbol}  →  strike={strike}  expiry={expiry}")
+
+        text = "\n".join(lines[:50])
+        if len(memory) > 50:
+            text += f"\n\n... و {len(memory) - 50} نماد دیگر"
+
+        reply = QMessageBox.question(
+            self, "حافظه‌ی نماد",
+            text + "\n\nآیا می‌خواهید حافظه را پاک کنید؟",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            reply2 = QMessageBox.warning(
+                self, "تأیید حذف",
+                f"آیا از پاک کردن همه‌ی {len(memory)} نماد "
+                f"اطمینان دارید؟",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply2 == QMessageBox.Yes:
+                clear_all()
+                self._refresh_raw()
+                QMessageBox.information(self, "موفق", "حافظه پاک شد.")
+
+    # ═══════════════════════════════════════════════
+    # Commit نهایی
+    # ═══════════════════════════════════════════════
 
     def _commit_import(self):
-        """ثبت نهایی در positions_data.json"""
-        if not self._import_result:
+        if not self._group_positions:
+            QMessageBox.warning(self, "اطلاع",
+                "هیچ موقعیتی برای ذخیره وجود ندارد.")
             return
 
-        try:
-            positions = self._build_positions()
-        except Exception as e:
-            logger.exception(f"Build positions failed: {e}")
-            QMessageBox.critical(
-                self, "خطا", f"خطا در ساخت موقعیت‌ها:\n{e}")
-            return
-
-        if not positions and not self._import_result.closed_lots:
+        ungrouped = [
+            p for p in self._group_positions if not p.group_id
+        ]
+        if ungrouped:
             QMessageBox.warning(
-                self, "اطلاع",
-                "هیچ موقعیتی برای ثبت وجود ندارد.")
+                self, "خطا",
+                f"❌ {len(ungrouped)} موقعیت هنوز گروه‌بندی "
+                f"نشده‌اند.\n\n"
+                f"برای ذخیره، همه‌ی موقعیت‌ها باید گروه‌بندی "
+                f"شوند.")
             return
 
-        # ذخیره در storage
+        reply = QMessageBox.question(
+            self, "تأیید ذخیره",
+            f"{len(self._group_positions)} موقعیت در "
+            f"{len(self._groups)} گروه ذخیره می‌شود.\n\n"
+            f"آیا مطمئن هستید؟",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
         try:
-            existing = self.storage.load_positions()
-            all_positions = existing + positions
-            ok = self.storage.save_positions(all_positions)
-            if not ok:
-                QMessageBox.critical(
-                    self, "خطا", "ذخیره‌سازی ناموفق بود.")
+            existing_positions = self.storage.load_positions()
+        except Exception as e:
+            logger.exception(f"Load failed: {e}")
+            QMessageBox.critical(self, "خطا",
+                f"بارگذاری ناموفق:\n{e}")
+            return
+
+        all_pos = existing_positions + self._group_positions
+
+        try:
+            if not self.storage.save_positions(all_pos):
+                QMessageBox.critical(self, "خطا",
+                    "ذخیره‌سازی موقعیت‌ها ناموفق بود.")
                 return
         except Exception as e:
-            logger.exception(f"Save positions failed: {e}")
-            QMessageBox.critical(
-                self, "خطا", f"خطا در ذخیره‌سازی:\n{e}")
+            logger.exception(f"Save failed: {e}")
+            QMessageBox.critical(self, "خطا",
+                f"خطا در ذخیره‌سازی:\n{e}")
             return
 
-        # ذخیره‌ی batch
+        try:
+            existing_groups = self.storage.load_groups()
+            all_groups = existing_groups + self._groups
+            if not self.storage.save_groups(all_groups):
+                logger.warning("Save groups failed")
+        except Exception as e:
+            logger.warning(f"Save groups failed: {e}")
+
         try:
             batch = ImportBatch(
                 broker=self._broker,
                 source_file=self._file_path,
-                n_trades=self._import_result.n_trades,
-                n_positions_open=len(positions),
-                n_positions_closed=self._import_result.n_closed_lots,
-                n_needs_review=len(
-                    self._import_result.incomplete_trades),
-                position_ids=[p.position_id for p in positions],
+                n_trades=len(self._all_trades),
+                n_positions_open=sum(
+                    1 for p in self._group_positions
+                    if p.is_open),
+                n_positions_closed=sum(
+                    1 for p in self._group_positions
+                    if p.is_closed),
+                n_needs_review=0,
+                n_duplicates=0,
+                position_ids=[
+                    p.position_id for p in self._group_positions],
             )
             self.storage.save_import_batch(batch.to_dict())
         except Exception as e:
             logger.warning(f"Save batch failed: {e}")
 
+        for p in self._group_positions:
+            for leg in p.legs:
+                if leg.strike_price and leg.expiry_date:
+                    try:
+                        save_symbol_info(
+                            symbol=leg.symbol,
+                            strike_price=leg.strike_price,
+                            expiry_date=leg.expiry_date,
+                            contract_size=leg.contract_size,
+                            option_kind=leg.option_kind,
+                            underlying_symbol=leg.ins_code_ua,
+                            ins_code=leg.ins_code,
+                        )
+                    except Exception:
+                        pass
+
         QMessageBox.information(
             self, "✅ موفق",
             f"ایمپورت با موفقیت انجام شد.\n\n"
-            f"موقعیت‌های ثبت‌شده: {len(positions)}\n"
-            f"معاملات بسته‌شده: {self._import_result.n_closed_lots}")
+            f"موقعیت‌های ذخیره‌شده: {len(self._group_positions)}\n"
+            f"گروه‌ها: {len(self._groups)}\n"
+            f"نمادها در حافظه: {get_symbol_memory_count()}")
 
         self.accept()
 
-    def _build_positions(self) -> List[StrategyPosition]:
-        """
-        ساخت StrategyPosition از ImportResult.
-
-        منطق:
-            - هر lot باز = یک موقعیت OPEN
-            - هر lot بسته = یک موقعیت CLOSED
-        """
-        positions: List[StrategyPosition] = []
-        today = today_jalali()
-
-        # پردازش lot های باز
-        for lot in self._import_result.open_lots:
-            pos = self._build_position_from_lot(
-                lot, status=PositionStatus.OPEN)
-            if pos:
-                positions.append(pos)
-
-        # پردازش lot های بسته
-        for lot in self._import_result.closed_lots:
-            pos = self._build_position_from_lot(
-                lot, status=PositionStatus.CLOSED)
-            if pos:
-                positions.append(pos)
-
-        return positions
-
-    def _build_position_from_lot(
-        self, lot: MatchedLot, status: PositionStatus
-    ) -> Optional[StrategyPosition]:
-        """ساخت یک موقعیت از یک lot"""
-        if not lot.open_trade:
-            return None
-
-        open_t = lot.open_trade
-        close_t = lot.close_trade
-
-        # ساخت Leg ورود
-        entry_leg = OptionLeg(
-            symbol=open_t.symbol,
-            is_option=open_t.is_option,
-            option_kind=open_t.option_kind,
-            leg_type=open_t.side,
-            strike_price=open_t.strike_price or 0.0,
-            contract_size=open_t.effective_contract_size,
-            quantity=open_t.quantity,
-            entry_price=open_t.price,
-            current_price=open_t.price,
-            expiry_date=open_t.expiry_date or "",
-            ins_code=open_t.ins_code or "",
-            open_date=open_t.raw_date,
-            open_time=open_t.raw_time,
-            trade_time=open_t.raw_time,
-            source="excel_import",
-            trade_ref=open_t.trade_id,
-            needs_review=open_t.needs_review,
-        )
-        entry_leg.entry_fee = \
-            PositionPnLCalculator.calculate_leg_entry_fee(entry_leg)
-
-        # اگر lot بسته شده، leg خروج بساز
-        if close_t is not None:
-            # close_price روی همان leg ورود ست می‌شود
-            entry_leg.close_price = close_t.price
-            entry_leg.close_fee = \
-                PositionPnLCalculator.calculate_leg_close_fee(
-                    entry_leg, close_t.price)
-            entry_leg.close_date = close_t.raw_date
-            entry_leg.close_time = close_t.raw_time
-            entry_leg.close_trade_ref = close_t.trade_id
-
-            # محاسبه‌ی PnL محقق‌شده
-            try:
-                temp_pos = StrategyPosition(
-                    strategy_name="temp",
-                    broker_name=self._broker,
-                    underlying_symbol=open_t.underlying_symbol,
-                    execution_date=open_t.raw_date,
-                    expiry_date=open_t.expiry_date or "",
-                    status=PositionStatus.CLOSED,
-                    legs=[entry_leg],
-                )
-                rpnl, _ = PositionPnLCalculator.calculate_realized_pnl(
-                    temp_pos)
-                entry_leg.realized_pnl = rpnl
-            except Exception:
-                pass
-
-        # نام استراتژی
-        strategy_name = self._suggest_for_leg(entry_leg)
-
-        # expiry موقعیت
-        position_expiry = open_t.expiry_date or ""
-
-        pos = StrategyPosition(
-            strategy_name=strategy_name,
-            broker_name=self._broker,
-            underlying_symbol=open_t.underlying_symbol,
-            execution_date=open_t.raw_date,
-            expiry_date=position_expiry,
-            status=status,
-            legs=[entry_leg],
-            alert_target_roi=self._settings.default_alert_roi,
-            source="excel_import",
-            needs_review=open_t.needs_review,
-        )
-
-        if close_t is not None:
-            pos.close_date = close_t.raw_date
-            if open_t.option_kind and open_t.is_option:
-                # قیمت پایانی سهم پایه در لحظه بستن
-                pos.underlying_price_at_close = 0.0
-
-        return pos
-
-    def _suggest_for_leg(self, leg: OptionLeg) -> str:
-        """پیشنهاد نام استراتژی برای یک لگ"""
-        from position_saver.importer.suggest import suggest_strategy_name
-        from position_saver.importer.schemas import TradeRecord
-        t = TradeRecord(
-            symbol=leg.symbol,
-            side=leg.leg_type,
-            quantity=leg.quantity,
-            price=leg.entry_price,
-            option_kind=leg.option_kind,
-            strike_price=leg.strike_price,
-            contract_size=leg.contract_size,
-        )
-        s = suggest_strategy_name([t])
-        if s:
-            return s
-        # fallback
-        if leg.is_call and leg.leg_type == LegType.BUY:
-            return "Long Call"
-        if leg.is_put and leg.leg_type == LegType.BUY:
-            return "Long Put"
-        return "Imported"
-
-    # =====================================================
-    # API عمومی
-    # =====================================================
+    # ═══════════════════════════════════════════════
+    # API
+    # ═══════════════════════════════════════════════
 
     def get_result(self) -> Optional[ImportResult]:
-        """نتیجه‌ی ایمپورت (برای استفاده‌ی خارجی)"""
-        return self._import_result
+        return self._result
 
 
-__all__ = ["ImportWizardDialog"]
+__all__ = ["ImportWizardDialog", "SortableItem"]

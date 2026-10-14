@@ -1,7 +1,20 @@
 # position_saver/ui/main_widget.py
 # -*- coding: utf-8 -*-
 
-"""ویجت اصلی مدیریت موقعیت‌های استراتژی آپشن."""
+"""
+ویجت اصلی مدیریت موقعیت‌ها و گروه‌های استراتژی آپشن.
+
+معماری سه‌سطحی:
+    - OptionLeg:       معامله‌ی خام
+    - StrategyPosition: واحد معاملاتی (Lot)
+    - StrategyGroup:   ماسک گروه‌بندی استراتژی
+
+تب‌ها:
+    - 📁 گروه‌ها (جدید)
+    - 🟢 فعال
+    - ⚠️ نیازمند تعیین تکلیف
+    - 📜 تاریخچه
+"""
 
 import re
 import logging
@@ -22,7 +35,7 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QColor, QKeySequence, QShortcut
 
 from position_saver.models import (
-    StrategyPosition, PositionStatus,
+    StrategyPosition, StrategyGroup, PositionStatus,
 )
 from position_saver.storage import PositionStorage
 from position_saver.pnl_calculator import PositionPnLCalculator
@@ -54,13 +67,18 @@ DAY_WARN_THRESHOLD = 7
 DAY_CRITICAL_THRESHOLD = 3
 ACTIONS_BAR_HEIGHT = 40
 
+TAB_GROUPS = 0
+TAB_ACTIVE = 1
+TAB_PENDING = 2
+TAB_HISTORY = 3
+
 
 # ═════════════════════════════════════════════════════
-# آیتم جدول با سورت عددی
+# SortableItem
 # ═════════════════════════════════════════════════════
 
 class SortableItem(QTableWidgetItem):
-    """آیتم جدول با قابلیت سورت بر اساس مقدار سفارشی"""
+    """آیتم جدول با سورت عددی"""
 
     def __init__(self, display_text: str, sort_value: Any = None):
         super().__init__(str(display_text))
@@ -85,9 +103,16 @@ class SortableItem(QTableWidgetItem):
 # ═════════════════════════════════════════════════════
 
 class PositionSaverWidget(QWidget):
-    """ویجت اصلی مدیریت موقعیت‌های استراتژی آپشن"""
+    """
+    ویجت اصلی مدیریت موقعیت‌ها و گروه‌های استراتژی.
 
-    # ─── ستون‌ها (source اضافه شد) ───
+    شامل:
+        - ۴ تب: گروه‌ها / فعال / نیازمند تعیین تکلیف / تاریخچه
+        - نمایش گروه‌ها با PnL تجمیعی
+        - پایش لحظه‌ای آلرت‌های position و group
+    """
+
+    # ─── ستون‌های جدول position ───
     COL_ID = 0
     COL_STRATEGY = 1
     COL_BROKER = 2
@@ -103,6 +128,21 @@ class PositionSaverWidget(QWidget):
     COL_SOURCE = 12
     N_COLS = 13
 
+    # ─── ستون‌های جدول group ───
+    GCOL_ID = 0
+    GCOL_NAME = 1
+    GCOL_TYPE = 2
+    GCOL_NUM_POS = 3
+    GCOL_OPEN_POS = 4
+    GCOL_CLOSED_POS = 5
+    GCOL_LIVE_PNL = 6
+    GCOL_REALIZED_PNL = 7
+    GCOL_TOTAL_PNL = 8
+    GCOL_ROI = 9
+    GCOL_STATUS = 10
+    GCOL_CREATED = 11
+    N_GROUP_COLS = 12
+
     def __init__(
         self,
         parent: Optional[QWidget] = None,
@@ -112,20 +152,31 @@ class PositionSaverWidget(QWidget):
         super().__init__(parent)
 
         self.storage = storage if storage is not None else PositionStorage()
+
+        # ─── state اصلی ───
         self.positions: List[StrategyPosition] = []
+        self.groups: List[StrategyGroup] = []
+
+        # ─── state ترد ───
         self._monitor_started = False
         self._expired_alerted = set()
         self._last_success_time: Optional[datetime] = None
         self._market_snapshot = None
+        self._group_alerted = set()    # ✅ گروه‌های آلرت‌شده
 
         self.setObjectName("PositionSaver")
 
-        # ترد پس‌زمینه
+        # ─── ترد پس‌زمینه ───
         self.monitor_thread = LivePositionMonitorThread(
             self.storage, check_interval=10)
-        self.monitor_thread.prices_updated.connect(self.on_prices_updated)
-        self.monitor_thread.alerts_found.connect(self.on_alerts_found)
-        self.monitor_thread.expired_found.connect(self.on_expired_found)
+        self.monitor_thread.prices_updated.connect(
+            self.on_prices_updated)
+        self.monitor_thread.alerts_found.connect(
+            self.on_alerts_found)
+        self.monitor_thread.group_alerts_found.connect(
+            self.on_group_alerts_found)          # ✅ جدید
+        self.monitor_thread.expired_found.connect(
+            self.on_expired_found)
         self.monitor_thread.connection_status.connect(
             self.on_connection_status)
 
@@ -163,9 +214,12 @@ class PositionSaverWidget(QWidget):
         QShortcut(QKeySequence("Ctrl+N"), self, self.add_position)
         QShortcut(QKeySequence("Delete"), self, self.delete_position)
         QShortcut(QKeySequence("F5"), self, self.manual_refresh_data)
-        QShortcut(QKeySequence("Ctrl+B"), self, self.send_positions_to_bale)
+        QShortcut(QKeySequence("Ctrl+B"), self,
+                  self.send_positions_to_bale)
         QShortcut(QKeySequence("Ctrl+E"), self, self.export_to_excel)
         QShortcut(QKeySequence("Ctrl+I"), self, self.import_from_excel)
+        QShortcut(QKeySequence("Ctrl+G"), self,
+                  self.create_group_from_selection)  # ✅ جدید
 
     # ═══════════════════════════════════════════════════
     # نوار وضعیت
@@ -191,29 +245,43 @@ class PositionSaverWidget(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(10)
 
         main_layout.addLayout(self._build_toolbar())
 
         self.tabs = QTabWidget()
 
+        # ─── تب ۱: گروه‌ها ───
+        self.tab_groups, self.lbl_sum_groups, self.lbl_empty_groups = \
+            self._build_groups_tab()
+        self.tabs.addTab(self.tab_groups, "📁 گروه‌ها")
+
+        # ─── تب ۲: فعال ───
         self.tab_active, self.lbl_sum_active, self.lbl_empty_active = \
             self._build_table_tab("active")
         self.tabs.addTab(self.tab_active, "🟢 فعال")
 
+        # ─── تب ۳: نیازمند تعیین تکلیف ───
         self.tab_pending, self.lbl_sum_pending, self.lbl_empty_pending = \
             self._build_table_tab("pending")
         self.tabs.addTab(self.tab_pending, "⚠️ نیازمند تعیین تکلیف")
 
+        # ─── تب ۴: تاریخچه ───
         self.tab_history, self.lbl_sum_history, self.lbl_empty_history = \
             self._build_table_tab("history")
         self.tabs.addTab(self.tab_history, "📜 تاریخچه")
 
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         main_layout.addWidget(self.tabs, 1)
 
         self.summary_frame = self._build_summary_panel()
         main_layout.addWidget(self.summary_frame)
+
+    def _on_tab_changed(self, idx: int):
+        """به‌روزرسانی جدول هنگام تعویض تب"""
+        if idx == TAB_GROUPS:
+            self._populate_groups_table()
 
     # ═══════════════════════════════════════════════════
     # پنل کارت‌های خلاصه
@@ -243,6 +311,11 @@ class PositionSaverWidget(QWidget):
 
         self.card_count = self._make_card("موقعیت‌های فعال", "0")
         layout.addWidget(self.card_count)
+        layout.addWidget(self._make_separator())
+
+        # ✅ کارت گروه‌ها
+        self.card_groups = self._make_card("گروه‌های باز", "0")
+        layout.addWidget(self.card_groups)
         layout.addWidget(self._make_separator())
 
         self.card_nearest = self._make_card("نزدیک‌ترین سررسید", "—")
@@ -306,7 +379,18 @@ class PositionSaverWidget(QWidget):
 
         tb.addSpacing(12)
 
-        # ✅ دکمه‌ی ایمپورت پیشرفته (Wizard جدید)
+        # ✅ دکمه‌ی تعریف گروه
+        self.btn_create_group = QPushButton("📁 تعریف گروه")
+        self.btn_create_group.clicked.connect(
+            self.create_group_from_selection)
+        self.btn_create_group.setToolTip(
+            "تعریف گروه استراتژی از موقعیت‌های انتخاب‌شده (Ctrl+G)")
+        set_kind(self.btn_create_group, "primary")
+        tb.addWidget(self.btn_create_group)
+
+        tb.addSpacing(12)
+
+        # ✅ دکمه‌ی ایمپورت اکسل
         self.btn_import = QPushButton("📥 ایمپورت اکسل")
         self.btn_import.clicked.connect(self.import_from_excel)
         self.btn_import.setToolTip("ایمپورت اکسل کارگزاری (Ctrl+I)")
@@ -317,11 +401,8 @@ class PositionSaverWidget(QWidget):
         self.btn_export.setToolTip("خروجی به اکسل (Ctrl+E)")
         tb.addWidget(self.btn_export)
 
-        # ✅ دکمه‌ی تاریخچه‌ی ایمپورت
         self.btn_import_history = QPushButton("📋 تاریخچه ایمپورت")
         self.btn_import_history.clicked.connect(self.show_import_history)
-        self.btn_import_history.setToolTip(
-            "مشاهده و بازگردانی ایمپورت‌های قبلی")
         tb.addWidget(self.btn_import_history)
 
         tb.addSpacing(12)
@@ -354,7 +435,114 @@ class PositionSaverWidget(QWidget):
         return tb
 
     # ═══════════════════════════════════════════════════
-    # تب‌ها
+    # ✅ تب گروه‌ها
+    # ═══════════════════════════════════════════════════
+
+    def _build_groups_tab(self) -> Tuple[QWidget, QLabel, QLabel]:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        # ─── نوار ابزار گروه ───
+        actions_bar = QWidget()
+        actions_bar.setFixedHeight(ACTIONS_BAR_HEIGHT)
+        ab = QHBoxLayout(actions_bar)
+        ab.setContentsMargins(0, 0, 0, 0)
+        ab.setSpacing(6)
+
+        self.btn_group_edit = QPushButton("✏️ ویرایش گروه")
+        self.btn_group_edit.clicked.connect(self.edit_group)
+        ab.addWidget(self.btn_group_edit)
+
+        self.btn_group_delete = QPushButton("🗑 حذف گروه")
+        self.btn_group_delete.clicked.connect(self.delete_group)
+        set_kind(self.btn_group_delete, "danger")
+        ab.addWidget(self.btn_group_delete)
+
+        self.btn_group_dissolve = QPushButton("✂️ بازکردن گروه")
+        self.btn_group_dissolve.clicked.connect(self.dissolve_group)
+        ab.addWidget(self.btn_group_dissolve)
+
+        ab.addSpacing(12)
+
+        self.btn_group_offset = QPushButton("🔁 آفست گروه")
+        self.btn_group_offset.clicked.connect(self.offset_group)
+        set_kind(self.btn_group_offset, "primary")
+        ab.addWidget(self.btn_group_offset)
+
+        ab.addSpacing(12)
+
+        self.btn_group_view = QPushButton("📊 مشاهده‌ی جزئیات")
+        self.btn_group_view.clicked.connect(self.view_group_details)
+        ab.addWidget(self.btn_group_view)
+
+        ab.addStretch()
+        layout.addWidget(actions_bar)
+
+        # ─── جدول گروه‌ها ───
+        table = QTableWidget(0, self.N_GROUP_COLS)
+        table.setHorizontalHeaderLabels([
+            "شناسه", "نام گروه", "نوع استراتژی",
+            "تعداد موقعیت", "باز", "بسته",
+            "سود/زیان باز", "سود/زیان محقق",
+            "مجموع سود/زیان", "ROI", "وضعیت", "تاریخ ایجاد",
+        ])
+
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(False)
+        header.setDefaultAlignment(Qt.AlignCenter)
+
+        table.setSortingEnabled(True)
+        table.setAlternatingRowColors(True)
+        table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setWordWrap(False)
+        table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
+        table.setColumnHidden(self.GCOL_ID, True)
+
+        table.setColumnWidth(self.GCOL_NAME, 180)
+        table.setColumnWidth(self.GCOL_TYPE, 140)
+        table.setColumnWidth(self.GCOL_NUM_POS, 90)
+        table.setColumnWidth(self.GCOL_OPEN_POS, 60)
+        table.setColumnWidth(self.GCOL_CLOSED_POS, 60)
+        table.setColumnWidth(self.GCOL_LIVE_PNL, 130)
+        table.setColumnWidth(self.GCOL_REALIZED_PNL, 130)
+        table.setColumnWidth(self.GCOL_TOTAL_PNL, 140)
+        table.setColumnWidth(self.GCOL_ROI, 90)
+        table.setColumnWidth(self.GCOL_STATUS, 110)
+        table.setColumnWidth(self.GCOL_CREATED, 100)
+
+        table.setContextMenuPolicy(Qt.CustomContextMenu)
+        table.customContextMenuRequested.connect(
+            lambda pos, t=table: self._show_group_context_menu(t, pos))
+
+        layout.addWidget(table, 1)
+
+        # ─── نوار جمع ───
+        lbl_sum = QLabel("جمع: —")
+        lbl_sum.setStyleSheet(
+            f"color: {Theme.MUTED}; font-size: 11px; "
+            f"padding: 6px 10px; background-color: {Theme.CARD}; "
+            f"border: 1px solid {Theme.BORDER}; border-radius: 4px;")
+        layout.addWidget(lbl_sum)
+
+        lbl_empty = QLabel(
+            "📭 هنوز گروهی تعریف نشده است\n\n"
+            "برای تعریف گروه، از تب «فعال» یا «تاریخچه»، "
+            "موقعیت‌ها را انتخاب کرده و روی «📁 تعریف گروه» کلیک کنید.")
+        lbl_empty.setAlignment(Qt.AlignCenter)
+        lbl_empty.setStyleSheet(
+            f"color: {Theme.MUTED}; font-size: 14px; padding: 40px;")
+        lbl_empty.setVisible(False)
+        layout.addWidget(lbl_empty)
+
+        return container, lbl_sum, lbl_empty
+
+    # ═══════════════════════════════════════════════════
+    # تب position (فعال / pending / history)
     # ═══════════════════════════════════════════════════
 
     def _build_table_tab(self, tab_kind: str) -> Tuple[QWidget, QLabel, QLabel]:
@@ -389,7 +577,6 @@ class PositionSaverWidget(QWidget):
         table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
         table.setColumnHidden(self.COL_ID, True)
 
-        # عرض ستون‌ها
         table.setColumnWidth(self.COL_STRATEGY, 120)
         table.setColumnWidth(self.COL_BROKER, 100)
         table.setColumnWidth(self.COL_UNDERLYING, 75)
@@ -435,14 +622,25 @@ class PositionSaverWidget(QWidget):
         if tab_kind == "active":
             self.btn_offset = QPushButton("🔁 آفست (بستن موقعیت باز)")
             self.btn_offset.clicked.connect(self.offset_position)
-            self.btn_offset.setToolTip("بستن موقعیت باز با معامله معکوس")
+            self.btn_offset.setToolTip(
+                "بستن موقعیت باز با معامله معکوس")
             set_kind(self.btn_offset, "primary")
             layout.addWidget(self.btn_offset)
+
+            layout.addSpacing(12)
+
+            # ✅ دکمه‌ی تعریف گروه از position های انتخاب‌شده
+            self.btn_group_from_active = QPushButton(
+                "📁 تعریف گروه از انتخاب")
+            self.btn_group_from_active.clicked.connect(
+                self.create_group_from_selection)
+            layout.addWidget(self.btn_group_from_active)
 
         elif tab_kind == "pending":
             self.btn_cash_settle = QPushButton("📌 تسویه نقدی / نکول")
             self.btn_cash_settle.clicked.connect(self.settle_cash)
-            self.btn_cash_settle.setToolTip("ثبت تسویه نقدی یا نکول CALL")
+            self.btn_cash_settle.setToolTip(
+                "ثبت تسویه نقدی یا نکول CALL")
             set_kind(self.btn_cash_settle, "primary")
             layout.addWidget(self.btn_cash_settle)
 
@@ -461,7 +659,7 @@ class PositionSaverWidget(QWidget):
 
         elif tab_kind == "history":
             lbl_hint = QLabel(
-                "ℹ️ این تب فقط برای مشاهده تاریخچه است — "
+                "ℹ️ این تب برای مشاهده‌ی تاریخچه است — "
                 "موقعیت‌های بسته‌شده، اعمال‌شده، تسویه‌شده و نکول‌شده")
             lbl_hint.setStyleSheet(
                 f"color: {Theme.MUTED}; font-size: 11px; "
@@ -472,11 +670,20 @@ class PositionSaverWidget(QWidget):
             lbl_hint.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             layout.addWidget(lbl_hint)
 
+            layout.addSpacing(12)
+
+            # ✅ امکان تعریف گروه از history
+            self.btn_group_from_history = QPushButton(
+                "📁 تعریف گروه از انتخاب")
+            self.btn_group_from_history.clicked.connect(
+                self.create_group_from_selection)
+            layout.addWidget(self.btn_group_from_history)
+
         layout.addStretch()
         return w
 
     # ═══════════════════════════════════════════════════
-    # منوی راست‌کلیک
+    # منوی راست‌کلیک — تب position
     # ═══════════════════════════════════════════════════
 
     def _show_context_menu(self, table: QTableWidget, pos):
@@ -493,7 +700,7 @@ class PositionSaverWidget(QWidget):
 
         action_edit = action_delete = None
         action_offset = action_settle = action_exercise = None
-        action_close = action_bale = None
+        action_close = action_bale = action_group = None
 
         if has_selection:
             menu.addSeparator()
@@ -503,12 +710,18 @@ class PositionSaverWidget(QWidget):
             menu.addSeparator()
 
             idx = self.tabs.currentIndex()
-            if idx == 0:
+            if idx == TAB_ACTIVE:
                 action_offset = menu.addAction("🔁 آفست")
-            elif idx == 1:
+            elif idx == TAB_PENDING:
                 action_settle = menu.addAction("📌 تسویه/نکول")
                 action_exercise = menu.addAction("🏦 اعمال فیزیکی")
                 action_close = menu.addAction("✏️ بستن دستی")
+
+            menu.addSeparator()
+
+            # ✅ تعریف گروه
+            action_group = menu.addAction("📁 تعریف گروه از انتخاب")
+            action_group.setShortcut("Ctrl+G")
 
             menu.addSeparator()
             action_bale = menu.addAction("📨 ارسال به بله")
@@ -533,8 +746,38 @@ class PositionSaverWidget(QWidget):
             self.settle_exercise()
         elif action_close and chosen == action_close:
             self.close_manually()
+        elif action_group and chosen == action_group:
+            self.create_group_from_selection()
         elif action_bale and chosen == action_bale:
             self.send_positions_to_bale()
+
+    # ═══════════════════════════════════════════════════
+    # منوی راست‌کلیک — تب گروه‌ها
+    # ═══════════════════════════════════════════════════
+
+    def _show_group_context_menu(self, table: QTableWidget, pos):
+        has_selection = bool(table.selectedIndexes())
+        menu = QMenu(self)
+
+        action_view = menu.addAction("📊 مشاهده‌ی جزئیات")
+        action_edit = menu.addAction("✏️ ویرایش نام و نوع")
+        action_offset = menu.addAction("🔁 آفست گروه")
+        menu.addSeparator()
+        action_dissolve = menu.addAction("✂️ بازکردن گروه")
+        action_delete = menu.addAction("🗑 حذف گروه")
+
+        chosen = menu.exec(table.viewport().mapToGlobal(pos))
+
+        if chosen == action_view:
+            self.view_group_details()
+        elif chosen == action_edit:
+            self.edit_group()
+        elif chosen == action_offset:
+            self.offset_group()
+        elif chosen == action_dissolve:
+            self.dissolve_group()
+        elif chosen == action_delete:
+            self.delete_group()
 
     # ═══════════════════════════════════════════════════
     # فیلترها
@@ -555,7 +798,8 @@ class PositionSaverWidget(QWidget):
         ]
 
     def _get_pending_positions(self) -> List[StrategyPosition]:
-        return [p for p in self.positions if self._is_pending_settlement(p)]
+        return [p for p in self.positions
+                if self._is_pending_settlement(p)]
 
     def _get_history_positions(self) -> List[StrategyPosition]:
         return [p for p in self.positions
@@ -585,8 +829,8 @@ class PositionSaverWidget(QWidget):
 
     def toggle_auto_refresh(self, checked: bool):
         self.monitor_thread.set_auto_refresh(checked)
-        self._show_status("دریافت خودکار " +
-                          ("فعال" if checked else "غیرفعال"))
+        self._show_status(
+            "دریافت خودکار " + ("فعال" if checked else "غیرفعال"))
 
     def change_timer_interval(self, value: int):
         self.monitor_thread.set_interval(value)
@@ -615,13 +859,30 @@ class PositionSaverWidget(QWidget):
 
     @Slot(list)
     def on_alerts_found(self, alerts: list):
-        # ✅ ارسال — علامت‌گذاری alert_sent در live_monitor انجام می‌شود
+        """آلرت‌های position"""
         for alert in alerts:
             self.monitor_thread.send_bale_alert(alert)
 
         if alerts:
             self.refresh_all_tabs()
-            self._show_status(f"✅ {len(alerts)} هشدار ارسال شد")
+            self._show_status(
+                f"✅ {len(alerts)} هشدار موقعیت ارسال شد")
+
+    # ✅ جدید: آلرت‌های گروه
+    @Slot(list)
+    def on_group_alerts_found(self, alerts: list):
+        """آلرت‌های گروه استراتژی"""
+        for alert in alerts:
+            self.monitor_thread.send_group_bale_alert(alert)
+            # ذخیره‌ی group_id برای جلوگیری از آلرت تکراری
+            gid = alert.get("group_id", "")
+            if gid:
+                self._group_alerted.add(gid)
+
+        if alerts:
+            self.refresh_all_tabs()
+            self._show_status(
+                f"✅ {len(alerts)} هشدار گروه ارسال شد", 8000)
 
     @Slot(list)
     def on_expired_found(self, position_ids: list):
@@ -658,14 +919,185 @@ class PositionSaverWidget(QWidget):
 
     def load_data(self):
         self.positions = self.storage.load_positions()
+        try:
+            self.groups = self.storage.load_groups()
+        except Exception as e:
+            logger.warning(f"Load groups failed: {e}")
+            self.groups = []
         self.refresh_all_tabs()
 
     def refresh_all_tabs(self):
+        self._populate_groups_table()
         self._populate_table(self.tab_active, self._get_active_positions())
         self._populate_table(self.tab_pending, self._get_pending_positions())
         self._populate_table(self.tab_history, self._get_history_positions())
         self._update_tab_badges()
         self._update_summary()
+
+    # ═══════════════════════════════════════════════════
+    # پر کردن جدول گروه‌ها
+    # ═══════════════════════════════════════════════════
+
+    def _populate_groups_table(self):
+        """پر کردن جدول گروه‌ها"""
+        table = self.tab_groups.findChild(QTableWidget)
+        if table is None:
+            return
+
+        # حفظ انتخاب و اسکرول
+        selected_ids = set()
+        for idx in table.selectedIndexes():
+            id_item = table.item(idx.row(), self.GCOL_ID)
+            if id_item:
+                selected_ids.add(id_item.text())
+
+        scroll_pos = table.verticalScrollBar().value()
+        sort_col = table.horizontalHeader().sortIndicatorSection()
+        sort_order = table.horizontalHeader().sortIndicatorOrder()
+
+        table.setSortingEnabled(False)
+        table.setRowCount(0)
+
+        for group in self.groups:
+            row = table.rowCount()
+            table.insertRow(row)
+            self._fill_group_row(table, row, group)
+
+        if selected_ids:
+            for r in range(table.rowCount()):
+                id_item = table.item(r, self.GCOL_ID)
+                if id_item and id_item.text() in selected_ids:
+                    table.selectRow(r)
+
+        table.verticalScrollBar().setValue(scroll_pos)
+        table.setSortingEnabled(True)
+        if sort_col > 0:
+            table.sortItems(sort_col, sort_order)
+
+        self._update_groups_summary()
+
+    def _fill_group_row(self, table: QTableWidget, row: int,
+                         group: StrategyGroup):
+        """پر کردن یک ردیف جدول گروه"""
+        # ─── محاسبات ───
+        live_pnl = group.total_live_pnl(self.positions)
+        realized = group.total_realized_pnl(self.positions)
+        total_pnl = live_pnl + realized
+        open_cost = group.total_open_cost(self.positions)
+
+        roi = (total_pnl / open_cost * 100.0) if open_cost > 0 else 0.0
+
+        # ─── شمارش ───
+        pos_ids = set(group.position_ids)
+        group_positions = [
+            p for p in self.positions if p.position_id in pos_ids
+        ]
+        n_pos = len(group_positions)
+        n_open = sum(1 for p in group_positions if p.is_open)
+        n_closed = sum(1 for p in group_positions if p.is_closed)
+
+        # ─── وضعیت گروه ───
+        if n_open == 0 and n_closed > 0:
+            status_text = "🟢 کاملاً بسته"
+            status_color = Theme.MUTED
+        elif n_open > 0:
+            status_text = f"🟡 {n_open} باز"
+            status_color = Theme.WARN
+        else:
+            status_text = "⚪ خالی"
+            status_color = Theme.MUTED
+
+        if group.alert_sent:
+            status_text = "🎯 " + status_text
+
+        # ─── ستون‌ها ───
+        table.setItem(row, self.GCOL_ID,
+                      self._make_text_item(group.group_id))
+        table.setItem(row, self.GCOL_NAME,
+                      self._make_text_item(group.label_fa))
+        table.setItem(row, self.GCOL_TYPE,
+                      self._make_text_item(
+                          group.strategy_type or "سفارشی"))
+        table.setItem(row, self.GCOL_NUM_POS,
+                      self._make_number_item(
+                          str(n_pos), float(n_pos)))
+        table.setItem(row, self.GCOL_OPEN_POS,
+                      self._make_number_item(
+                          str(n_open), float(n_open)))
+        table.setItem(row, self.GCOL_CLOSED_POS,
+                      self._make_number_item(
+                          str(n_closed), float(n_closed)))
+
+        # PnL ها
+        table.setItem(row, self.GCOL_LIVE_PNL,
+                      self._make_number_item(
+                          fmt_money(live_pnl), live_pnl,
+                          self._tone_color(pnl_tone(live_pnl))))
+
+        table.setItem(row, self.GCOL_REALIZED_PNL,
+                      self._make_number_item(
+                          fmt_money(realized), realized,
+                          self._tone_color(pnl_tone(realized))))
+
+        table.setItem(row, self.GCOL_TOTAL_PNL,
+                      self._make_number_item(
+                          fmt_money(total_pnl), total_pnl,
+                          self._tone_color(pnl_tone(total_pnl))))
+
+        table.setItem(row, self.GCOL_ROI,
+                      self._make_number_item(
+                          fmt_pct(roi, digits=1),
+                          roi,
+                          self._tone_color(pnl_tone(roi))))
+
+        table.setItem(row, self.GCOL_STATUS,
+                      self._make_text_item(status_text, status_color))
+
+        table.setItem(row, self.GCOL_CREATED,
+                      self._make_text_item(group.created_at or "—"))
+
+    def _update_groups_summary(self):
+        """نوار جمع گروه‌ها"""
+        labels = self.tab_groups.findChildren(QLabel)
+        if len(labels) < 2:
+            return
+
+        lbl_sum = labels[0]
+        lbl_empty = labels[1]
+        table = self.tab_groups.findChild(QTableWidget)
+
+        if not self.groups:
+            if table:
+                table.setVisible(False)
+            lbl_sum.setVisible(False)
+            lbl_empty.setVisible(True)
+            return
+
+        if table:
+            table.setVisible(True)
+        lbl_empty.setVisible(False)
+        lbl_sum.setVisible(True)
+
+        total_live = 0.0
+        total_realized = 0.0
+
+        for g in self.groups:
+            total_live += g.total_live_pnl(self.positions)
+            total_realized += g.total_realized_pnl(self.positions)
+
+        total = total_live + total_realized
+
+        lbl_sum.setText(
+            f"جمع: {len(self.groups)} گروه  |  "
+            f"سود/زیان باز: {fmt_money(total_live)} {CURRENCY}  |  "
+            f"محقق‌شده: {fmt_money(total_realized)} {CURRENCY}  |  "
+            f"مجموع: {fmt_money(total)} {CURRENCY}")
+
+        color = self._tone_color(pnl_tone(total))
+        lbl_sum.setStyleSheet(
+            f"color: {color}; font-size: 11px; padding: 6px 10px; "
+            f"background-color: {Theme.CARD}; "
+            f"border: 1px solid {Theme.BORDER}; border-radius: 4px;")
 
     # ═══════════════════════════════════════════════════
     # ساخت آیتم‌ها
@@ -689,7 +1121,7 @@ class PositionSaverWidget(QWidget):
         return item
 
     # ═══════════════════════════════════════════════════
-    # پر کردن جدول
+    # پر کردن جدول position
     # ═══════════════════════════════════════════════════
 
     def _populate_table(self, container: QWidget,
@@ -698,7 +1130,6 @@ class PositionSaverWidget(QWidget):
         if table is None:
             return
 
-        # حفظ انتخاب و اسکرول
         selected_ids = set()
         for idx in table.selectedIndexes():
             id_item = table.item(idx.row(), self.COL_ID)
@@ -741,7 +1172,7 @@ class PositionSaverWidget(QWidget):
             f"{l.leg_type.label_fa}: {l.symbol}" for l in pos.legs
         ])
 
-        # ✅ روز مانده — سورت عددی
+        # ─── روز مانده ───
         days_left = self._calc_days_left(pos.expiry_date)
         if days_left is None:
             days_text = "—"
@@ -756,11 +1187,24 @@ class PositionSaverWidget(QWidget):
             days_color = self._days_color(days_left)
             days_sort_val = float(days_left)
 
-        # ستون‌ها
+        # ─── ستون‌ها ───
         table.setItem(row, self.COL_ID,
                       self._make_text_item(pos.position_id))
+
+        # ✅ نمایش نام نمایشی + گروه
+        strategy_text = pos.strategy_name
+        if pos.has_group:
+            group = next(
+                (g for g in self.groups
+                 if g.group_id == pos.group_id), None)
+            if group:
+                strategy_text = (
+                    f"{group.label_fa} | {pos.strategy_name}"
+                    if pos.strategy_name else group.label_fa)
+
         table.setItem(row, self.COL_STRATEGY,
-                      self._make_text_item(pos.strategy_name))
+                      self._make_text_item(strategy_text))
+
         table.setItem(row, self.COL_BROKER,
                       self._make_text_item(pos.broker_name or "—"))
         table.setItem(row, self.COL_UNDERLYING,
@@ -770,7 +1214,7 @@ class PositionSaverWidget(QWidget):
         table.setItem(row, self.COL_EXPIRY_DATE,
                       self._make_text_item(pos.expiry_date))
 
-        # ✅ روز مانده — عددی
+        # روز مانده — عددی
         days_item = SortableItem(days_text, days_sort_val)
         days_item.setToolTip(days_text)
         days_item.setForeground(QColor(days_color))
@@ -787,7 +1231,7 @@ class PositionSaverWidget(QWidget):
                                   digits=1, signed=False),
                           pos.target_roi_maturity))
 
-        # سود/زیان
+        # ─── سود/زیان ───
         if pos.status == PositionStatus.OPEN:
             if self._is_pending_settlement(pos):
                 pnl_text = "⚠️ منقضی - تسویه کنید"
@@ -805,28 +1249,33 @@ class PositionSaverWidget(QWidget):
             pnl_text = fmt_pnl(realized_pnl, realized_roi)
             pnl_item = SortableItem(pnl_text, float(realized_pnl))
             pnl_item.setToolTip(
-                f"سود/زیان محقق‌شده: {fmt_money(realized_pnl)} {CURRENCY}")
+                f"سود/زیان محقق‌شده: {fmt_money(realized_pnl)} "
+                f"{CURRENCY}")
             pnl_item.setForeground(
                 QColor(self._tone_color(pnl_tone(realized_pnl))))
 
         table.setItem(row, self.COL_LIVE_PNL, pnl_item)
 
-        # وضعیت
+        # ─── وضعیت ───
         status_text = pos.status.label_fa
         status_color = self._status_color(pos.status.value)
+
         if self._is_pending_settlement(pos):
             status_text = "⚠️ منقضی (تعیین تکلیف)"
             status_color = Theme.WARN
 
-        # ✅ نشانگر needs_review
         if pos.needs_review or pos.has_incomplete_legs:
             status_text = "⚠️ " + status_text
             status_color = Theme.WARN
 
+        # ✅ نشانگر گروه
+        if pos.has_group:
+            status_text = "📁 " + status_text
+
         table.setItem(row, self.COL_STATUS,
                       self._make_text_item(status_text, status_color))
 
-        # ✅ ستون منبع
+        # ─── منبع ───
         source_text = "📥 ایمپورت" if pos.source == "excel_import" \
             else "✏️ دستی"
         source_color = Theme.PRIMARY if pos.source == "excel_import" \
@@ -877,7 +1326,7 @@ class PositionSaverWidget(QWidget):
             return None
 
     # ═══════════════════════════════════════════════════
-    # جمع و حالت خالی
+    # جمع و حالت خالی — position
     # ═══════════════════════════════════════════════════
 
     def _update_tab_summary(self, container: QWidget,
@@ -904,7 +1353,8 @@ class PositionSaverWidget(QWidget):
             if pos.status == PositionStatus.OPEN:
                 pnl, _ = PositionPnLCalculator.calculate_live_pnl(pos)
             else:
-                pnl, _ = PositionPnLCalculator.calculate_realized_pnl(pos)
+                pnl, _ = \
+                    PositionPnLCalculator.calculate_realized_pnl(pos)
             cost = PositionPnLCalculator.calculate_net_entry_cost(pos)
             if self._is_pending_settlement(pos):
                 continue
@@ -930,6 +1380,7 @@ class PositionSaverWidget(QWidget):
         sum_open = 0.0
         sum_realized = 0.0
         active_count = 0
+        open_groups = 0
         nearest_days = None
 
         for pos in self.positions:
@@ -944,8 +1395,14 @@ class PositionSaverWidget(QWidget):
                     if nearest_days is None or days < nearest_days:
                         nearest_days = days
             else:
-                pnl, _ = PositionPnLCalculator.calculate_realized_pnl(pos)
+                pnl, _ = \
+                    PositionPnLCalculator.calculate_realized_pnl(pos)
                 sum_realized += pnl
+
+        # ─── شمارش گروه‌های باز ───
+        for g in self.groups:
+            if g.has_any_open(self.positions):
+                open_groups += 1
 
         total = sum_open + sum_realized
 
@@ -953,12 +1410,20 @@ class PositionSaverWidget(QWidget):
             self.card_open_pnl, f"{fmt_money(sum_open)} {CURRENCY}",
             pnl_tone(sum_open))
         self._set_card_value(
-            self.card_realized_pnl, f"{fmt_money(sum_realized)} {CURRENCY}",
+            self.card_realized_pnl,
+            f"{fmt_money(sum_realized)} {CURRENCY}",
             pnl_tone(sum_realized))
         self._set_card_value(
             self.card_total_pnl, f"{fmt_money(total)} {CURRENCY}",
             pnl_tone(total))
-        self._set_card_value(self.card_count, str(active_count), "primary")
+        self._set_card_value(
+            self.card_count, str(active_count), "primary")
+
+        # ✅ کارت گروه‌ها
+        self._set_card_value(
+            self.card_groups,
+            f"{open_groups} / {len(self.groups)}",
+            "primary")
 
         if nearest_days is None:
             self._set_card_value(self.card_nearest, "—", "muted")
@@ -970,7 +1435,7 @@ class PositionSaverWidget(QWidget):
                                  f"{nearest_days} روز", tone)
 
     # ═══════════════════════════════════════════════════
-    # CRUD
+    # عملیات CRUD — Position
     # ═══════════════════════════════════════════════════
 
     def _current_table(self) -> Optional[QTableWidget]:
@@ -986,6 +1451,18 @@ class PositionSaverWidget(QWidget):
 
         rows = sorted(set(idx.row() for idx in table.selectedIndexes()))
         positions, seen = [], set()
+
+        # اگر تب گروه‌ها فعال است، از گروه پیدا می‌کنیم
+        if self.tabs.currentIndex() == TAB_GROUPS:
+            group = self._get_selected_group()
+            if group:
+                pos_ids = set(group.position_ids)
+                return [
+                    p for p in self.positions
+                    if p.position_id in pos_ids
+                ]
+            return []
+
         for row in rows:
             id_item = table.item(row, self.COL_ID)
             if id_item is None:
@@ -1003,6 +1480,26 @@ class PositionSaverWidget(QWidget):
     def _get_selected_position(self) -> Optional[StrategyPosition]:
         p = self._get_selected_positions()
         return p[0] if p else None
+
+    def _get_selected_group(self) -> Optional[StrategyGroup]:
+        """پیدا کردن گروه انتخاب‌شده در تب گروه‌ها"""
+        table = self.tab_groups.findChild(QTableWidget)
+        if table is None:
+            return None
+
+        rows = sorted(set(idx.row() for idx in table.selectedIndexes()))
+        if not rows:
+            return None
+
+        id_item = table.item(rows[0], self.GCOL_ID)
+        if id_item is None:
+            return None
+
+        gid = id_item.text()
+        for g in self.groups:
+            if g.group_id == gid:
+                return g
+        return None
 
     def add_position(self):
         snapshot = self._get_market_snapshot()
@@ -1025,7 +1522,8 @@ class PositionSaverWidget(QWidget):
         if pos.status != PositionStatus.OPEN:
             QMessageBox.warning(
                 self, "خطا",
-                f"این موقعیت «{pos.status.label_fa}» است و قابل ویرایش نیست.")
+                f"این موقعیت «{pos.status.label_fa}» است "
+                f"و قابل ویرایش نیست.")
             return
 
         snapshot = self._get_market_snapshot()
@@ -1052,14 +1550,394 @@ class PositionSaverWidget(QWidget):
             QMessageBox.Yes | QMessageBox.No)
 
         if reply == QMessageBox.Yes:
-            self.positions = [p for p in self.positions
-                              if p.position_id != pos.position_id]
+            self.positions = [
+                p for p in self.positions
+                if p.position_id != pos.position_id
+            ]
             self.storage.save_positions(self.positions)
             self.refresh_all_tabs()
-            self._show_status(f"🗑 موقعیت {pos.position_id} حذف شد")
+            self._show_status(
+                f"🗑 موقعیت {pos.position_id} حذف شد")
 
     # ═══════════════════════════════════════════════════
-    # ✅ ایمپورت اکسل — Wizard جدید
+    # ✅ عملیات CRUD — Group
+    # ═══════════════════════════════════════════════════
+
+    def create_group_from_selection(self):
+        """
+        تعریف گروه استراتژی از موقعیت‌های انتخاب‌شده.
+
+        جریان:
+            ۱. کاربر چند position را انتخاب می‌کند
+            ۲. StrategyDialog باز می‌شود
+            ۳. اعتبارسنجی ترکیب
+            ۴. گروه تشکیل می‌شود
+        """
+        positions = self._get_selected_positions()
+        if not positions:
+            QMessageBox.information(
+                self, "اطلاع",
+                "لطفاً ابتدا یک یا چند موقعیت را انتخاب کنید.")
+            return
+
+        # ─── چک: موقعیت‌ها نباید قبلاً در گروه باشند ───
+        already_grouped = [p for p in positions if p.has_group]
+        if already_grouped:
+            reply = QMessageBox.question(
+                self, "هشدار",
+                f"⚠️ {len(already_grouped)} موقعیت قبلاً در گروه "
+                f"دیگری هستند.\n\n"
+                f"آیا می‌خواهید آن‌ها را از گروه قبلی جدا کرده و "
+                f"به گروه جدید اضافه کنید؟",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+
+        # ─── تبدیل به pseudo-trades برای StrategyDialog ───
+        pseudo_trades = [
+            self._position_to_pseudo_trade(p)
+            for p in positions
+        ]
+
+        # ─── باز کردن StrategyDialog ───
+        try:
+            from position_saver.ui.strategy_dialog import (
+                StrategyDialog)
+            dlg = StrategyDialog(self, trades=pseudo_trades)
+        except Exception as e:
+            logger.exception(f"StrategyDialog failed: {e}")
+            QMessageBox.critical(
+                self, "خطا",
+                f"خطا در باز کردن دیالوگ استراتژی:\n{e}")
+            return
+
+        try:
+            if not dlg.exec():
+                return
+            result = dlg.get_result()
+            if not result:
+                return
+
+            strategy_type = result.get("strategy_type", "")
+            display_name = result.get("display_name", "")
+
+            # ─── ساخت گروه ───
+            group = StrategyGroup(
+                strategy_type=strategy_type,
+                display_name=display_name,
+                position_ids=[p.position_id for p in positions],
+                created_at=jdatetime.date.today().strftime("%Y/%m/%d"),
+            )
+
+            # ─── حذف از گروه‌های قبلی ───
+            for old_group in self.groups:
+                for p in positions:
+                    if p.position_id in old_group.position_ids:
+                        old_group.position_ids.remove(p.position_id)
+
+            # ─── حذف گروه‌های خالی ───
+            self.groups = [
+                g for g in self.groups if g.position_ids
+            ]
+
+            # ─── اضافه کردن گروه جدید ───
+            self.groups.append(group)
+
+            # ─── به‌روزرسانی position ها ───
+            for p in positions:
+                p.group_id = group.group_id
+                p.strategy_type = strategy_type
+                if display_name:
+                    p.strategy_name = display_name
+
+            # ─── ذخیره ───
+            self.storage.save_positions(self.positions)
+            self.storage.save_groups(self.groups)
+
+            self.refresh_all_tabs()
+
+            QMessageBox.information(
+                self, "✅ موفق",
+                f"گروه «{display_name}» با {len(positions)} موقعیت "
+                f"تشکیل شد.")
+        finally:
+            dlg.deleteLater()
+
+    def _position_to_pseudo_trade(self, pos: StrategyPosition):
+        """تبدیل StrategyPosition به یک شیء شبیه TradeRecord"""
+        class PseudoTrade:
+            pass
+
+        p = PseudoTrade()
+        if pos.legs:
+            leg = pos.legs[0]
+            p.trade_id = leg.trade_ref or pos.position_id
+            p.raw_date = leg.open_date or pos.execution_date
+            p.raw_time = leg.open_time or ""
+            p.symbol = leg.symbol
+            p.side = leg.leg_type
+            p.quantity = leg.quantity
+            p.price = leg.entry_price
+            p.option_kind = leg.option_kind
+            p.strike_price = leg.strike_price
+            p.expiry_date = leg.expiry_date
+            p.is_option = leg.is_option
+            p.is_call = leg.is_call
+            p.is_put = leg.is_put
+            p.is_stock = leg.is_stock
+            p.effective_contract_size = leg.effective_contract_size
+            p.close_reason = leg.close_reason
+        else:
+            p.trade_id = pos.position_id
+            p.raw_date = pos.execution_date
+            p.raw_time = ""
+            p.symbol = pos.underlying_symbol
+            p.side = None
+            p.quantity = 0
+            p.price = 0
+            p.option_kind = None
+            p.strike_price = 0
+            p.expiry_date = pos.expiry_date
+            p.is_option = False
+            p.is_call = False
+            p.is_put = False
+            p.is_stock = True
+            p.effective_contract_size = 1
+            p.close_reason = pos.close_reason
+
+        return p
+
+    def edit_group(self):
+        """ویرایش نام و نوع گروه"""
+        group = self._get_selected_group()
+        if group is None:
+            self._show_status("⚠️ ابتدا یک گروه را انتخاب کنید")
+            return
+
+        # ─── جمع‌آوری position های گروه ───
+        group_positions = [
+            p for p in self.positions
+            if p.position_id in group.position_ids
+        ]
+
+        if not group_positions:
+            QMessageBox.warning(
+                self, "خطا",
+                "این گروه خالی است.")
+            return
+
+        # ─── تبدیل به pseudo-trades ───
+        pseudo_trades = [
+            self._position_to_pseudo_trade(p)
+            for p in group_positions
+        ]
+
+        # ─── باز کردن StrategyDialog ───
+        try:
+            from position_saver.ui.strategy_dialog import (
+                StrategyDialog)
+            dlg = StrategyDialog(self, trades=pseudo_trades)
+            # پیش‌انتخاب نوع استراتژی فعلی
+            idx = dlg.cmb_strategy.findData(group.strategy_type)
+            if idx >= 0:
+                dlg.cmb_strategy.setCurrentIndex(idx)
+            dlg.txt_display_name.setText(group.display_name)
+        except Exception as e:
+            logger.exception(f"StrategyDialog failed: {e}")
+            return
+
+        try:
+            if not dlg.exec():
+                return
+            result = dlg.get_result()
+            if not result:
+                return
+
+            strategy_type = result.get("strategy_type", "")
+            display_name = result.get("display_name", "")
+
+            group.strategy_type = strategy_type
+            group.display_name = display_name
+
+            # ─── به‌روزرسانی position ها ───
+            for p in group_positions:
+                p.strategy_type = strategy_type
+                if display_name:
+                    p.strategy_name = display_name
+
+            self.storage.save_groups(self.groups)
+            self.storage.save_positions(self.positions)
+            self.refresh_all_tabs()
+
+            self._show_status(
+                f"✅ گروه «{display_name}» ویرایش شد")
+        finally:
+            dlg.deleteLater()
+
+    def delete_group(self):
+        """حذف گروه (بدون حذف position ها)"""
+        group = self._get_selected_group()
+        if group is None:
+            self._show_status("⚠️ ابتدا یک گروه را انتخاب کنید")
+            return
+
+        reply = QMessageBox.question(
+            self, "تأیید حذف گروه",
+            f"آیا از حذف گروه زیر اطمینان دارید؟\n\n"
+            f"نام: {group.label_fa}\n"
+            f"تعداد موقعیت‌ها: {group.num_positions}\n\n"
+            f"⚠️ موقعیت‌ها حذف نمی‌شوند، فقط از گروه خارج می‌شوند.",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        # ─── حذف گروه ───
+        self.groups = [
+            g for g in self.groups if g.group_id != group.group_id
+        ]
+
+        # ─── پاک کردن group_id از position ها ───
+        for p in self.positions:
+            if p.group_id == group.group_id:
+                p.group_id = ""
+                p.strategy_type = ""
+
+        self.storage.save_groups(self.groups)
+        self.storage.save_positions(self.positions)
+        self.refresh_all_tabs()
+
+        self._show_status(f"🗑 گروه «{group.label_fa}» حذف شد")
+
+    def dissolve_group(self):
+        """بازکردن گروه (همان حذف گروه است)"""
+        self.delete_group()
+
+    def view_group_details(self):
+        """مشاهده‌ی جزئیات گروه (نمایش position ها)"""
+        group = self._get_selected_group()
+        if group is None:
+            self._show_status("⚠️ ابتدا یک گروه را انتخاب کنید")
+            return
+
+        # ─── ساخت پیام ───
+        group_positions = [
+            p for p in self.positions
+            if p.position_id in group.position_ids
+        ]
+
+        lines = [
+            f"📁 گروه: {group.label_fa}",
+            f"🏷 نوع: {group.strategy_type or 'سفارشی'}",
+            f"📅 تاریخ ایجاد: {group.created_at}",
+            "",
+            f"📊 موقعیت‌ها ({len(group_positions)}):",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+
+        for i, p in enumerate(group_positions, 1):
+            legs_str = " | ".join(
+                f"{l.leg_type.label_fa}: {l.symbol}"
+                for l in p.legs
+            )
+            live_pnl, _ = \
+                PositionPnLCalculator.calculate_live_pnl(p)
+            lines.append(
+                f"{i}. {p.position_id}")
+            lines.append(f"   {legs_str}")
+            lines.append(
+                f"   وضعیت: {p.status.label_fa} | "
+                f"PnL: {fmt_money(live_pnl)}")
+
+        # ─── خلاصه ───
+        total_live = group.total_live_pnl(self.positions)
+        total_realized = group.total_realized_pnl(self.positions)
+        total = total_live + total_realized
+        open_cost = group.total_open_cost(self.positions)
+        roi = (total / open_cost * 100.0) if open_cost > 0 else 0.0
+
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append(f"💰 سود/زیان باز: {fmt_money(total_live)}")
+        lines.append(f"💰 سود/زیان محقق: {fmt_money(total_realized)}")
+        lines.append(f"📈 مجموع: {fmt_money(total)}")
+        lines.append(f"📊 ROI: {fmt_pct(roi, digits=1)}")
+        lines.append(f"💼 هزینه‌ی باز: {fmt_money(open_cost)}")
+
+        QMessageBox.information(
+            self, f"جزئیات گروه — {group.label_fa}",
+            "\n".join(lines))
+
+    def offset_group(self):
+        """آفست کل گروه (بستن همه‌ی position های باز)"""
+        group = self._get_selected_group()
+        if group is None:
+            self._show_status("⚠️ ابتدا یک گروه را انتخاب کنید")
+            return
+
+        group_positions = [
+            p for p in self.positions
+            if p.position_id in group.position_ids and p.is_open
+        ]
+
+        if not group_positions:
+            QMessageBox.information(
+                self, "اطلاع",
+                "این گروه هیچ موقعیت بازی ندارد.")
+            return
+
+        # ─── محاسبه‌ی PnL لحظه‌ای ───
+        total_live = group.total_live_pnl(self.positions)
+        total_realized = group.total_realized_pnl(self.positions)
+        total = total_live + total_realized
+        open_cost = group.total_open_cost(self.positions)
+        roi = (total / open_cost * 100.0) if open_cost > 0 else 0.0
+
+        # ─── تأیید ───
+        reply = QMessageBox.question(
+            self, "تأیید آفست گروه",
+            f"آیا از آفست کل گروه زیر مطمئن هستید؟\n\n"
+            f"📁 نام: {group.label_fa}\n"
+            f"📊 موقعیت‌های باز: {len(group_positions)}\n\n"
+            f"💰 سود/زیان لحظه‌ای: {fmt_money(total)} {CURRENCY}\n"
+            f"📈 ROI: {fmt_pct(roi, digits=1)}\n"
+            f"💼 هزینه‌ی باز: {fmt_money(open_cost)}",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        # ─── آفست هر position ───
+        closed_count = 0
+        for pos in group_positions:
+            try:
+                # آفست: close_price = current_price
+                for leg in pos.legs:
+                    if leg.is_open:
+                        cp = (leg.current_price
+                              if leg.current_price > 0
+                              else leg.entry_price)
+                        leg.close_price = float(cp)
+                        leg.close_fee = (
+                            PositionPnLCalculator
+                            .calculate_leg_close_fee(leg, float(cp))
+                        )
+
+                pos.status = PositionStatus.CLOSED
+                pos.close_date = (
+                    jdatetime.date.today().strftime("%Y/%m/%d"))
+                pos.close_reason = "offset"
+                closed_count += 1
+            except Exception as e:
+                logger.exception(f"Offset position failed: {e}")
+
+        # ─── ذخیره ───
+        self.storage.save_positions(self.positions)
+        self.refresh_all_tabs()
+
+        QMessageBox.information(
+            self, "✅ موفق",
+            f"{closed_count} موقعیت گروه «{group.label_fa}» آفست شد.")
+
+    # ═══════════════════════════════════════════════════
+    # Import / Export
     # ═══════════════════════════════════════════════════
 
     def import_from_excel(self):
@@ -1078,7 +1956,8 @@ class PositionSaverWidget(QWidget):
         try:
             if dlg.exec():
                 self.load_data()
-                self._show_status("✅ ایمپورت اکسل انجام شد", 8000)
+                self._show_status(
+                    "✅ ایمپورت اکسل انجام شد", 8000)
         finally:
             dlg.deleteLater()
 
@@ -1087,121 +1966,13 @@ class PositionSaverWidget(QWidget):
         dlg = ImportHistoryDialog(parent=self, storage=self.storage)
         try:
             if dlg.exec():
-                # ممکن است کاربر batch ای را بازگردانی کرده باشد
                 self.load_data()
                 self._show_status("تاریخچه به‌روز شد")
         finally:
             dlg.deleteLater()
 
-    # ═══════════════════════════════════════════════════
-    # آفست
-    # ═══════════════════════════════════════════════════
-
-    def offset_position(self):
-        pos = self._get_selected_position()
-        if pos is None:
-            self._show_status("⚠️ ابتدا یک موقعیت را انتخاب کنید")
-            return
-        if pos.status != PositionStatus.OPEN:
-            QMessageBox.warning(
-                self, "خطا",
-                f"وضعیت «{pos.status.label_fa}» است. "
-                f"فقط موقعیت‌های باز قابل آفست هستند.")
-            return
-        if self._is_pending_settlement(pos):
-            QMessageBox.warning(
-                self, "خطا",
-                "این موقعیت منقضی شده است.\n"
-                "برای تسویه به تب «نیازمند تعیین تکلیف» بروید.")
-            return
-
-        dlg = OffsetDialog(self, pos)
-        try:
-            if not dlg.exec():
-                return
-            result = dlg.get_result()
-            if not result:
-                return
-
-            for i, leg in enumerate(pos.legs):
-                cp = result["close_prices"][i]
-                leg.close_price = float(cp)
-                leg.close_fee = \
-                    PositionPnLCalculator.calculate_leg_close_fee(
-                        leg, float(cp))
-
-            pos.status = PositionStatus.CLOSED
-            pos.close_date = jdatetime.date.today().strftime("%Y/%m/%d")
-
-            self.storage.save_positions(self.positions)
-            self.refresh_all_tabs()
-
-            pnl = result["realized_pnl"]
-            roi = result["realized_roi"]
-            self._show_status(
-                f"✅ {pos.position_id} آفست شد — "
-                f"سود/زیان: {fmt_money(pnl)} {CURRENCY} "
-                f"({fmt_pct(roi, digits=2)})", 8000)
-        finally:
-            dlg.deleteLater()
-
-    # ═══════════════════════════════════════════════════
-    # ارسال به بله
-    # ═══════════════════════════════════════════════════
-
-    def send_positions_to_bale(self):
-        positions = self._get_selected_positions()
-        if not positions:
-            self._show_status("⚠️ ابتدا یک یا چند موقعیت انتخاب کنید")
-            return
-
-        if not self.monitor_thread.notifier.is_configured:
-            QMessageBox.warning(
-                self, "خطا",
-                "تنظیمات بله کامل نیست.\n"
-                "لطفاً bot_token و chat_id را در user_settings.json "
-                "بررسی کنید.")
-            return
-
-        n = len(positions)
-        if n == 1:
-            msg = (f"آیا گزارش موقعیت زیر به بله ارسال شود؟\n\n"
-                   f"شناسه: {positions[0].position_id}\n"
-                   f"استراتژی: {positions[0].strategy_name}")
-        else:
-            ids = "\n".join(f"  • {p.position_id} ({p.strategy_name})"
-                            for p in positions[:10])
-            if n > 10:
-                ids += f"\n  ... و {n - 10} مورد دیگر"
-            msg = f"آیا گزارش {n} موقعیت زیر ارسال شود؟\n\n{ids}"
-
-        if QMessageBox.question(
-                self, "تأیید ارسال", msg,
-                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
-            return
-
-        success = 0
-        for pos in positions:
-            try:
-                if self.monitor_thread.send_position_report(pos):
-                    success += 1
-            except Exception as e:
-                logger.exception(f"Bale send error: {e}")
-
-        if success == n:
-            self._show_status(f"✅ همه {success} موقعیت ارسال شدند")
-        elif success > 0:
-            self._show_status(f"⚠️ {success} از {n} ارسال شد")
-        else:
-            QMessageBox.critical(
-                self, "خطا",
-                f"❌ ارسال هیچ‌کدام از {n} موفق نبود.")
-
-    # ═══════════════════════════════════════════════════
-    # خروجی اکسل
-    # ═══════════════════════════════════════════════════
-
     def export_to_excel(self):
+        """خروجی اکسل (positions + groups)"""
         if not self.positions:
             self._show_status("⚠️ موقعیتی برای خروجی وجود ندارد")
             return
@@ -1221,13 +1992,15 @@ class PositionSaverWidget(QWidget):
             history = self._get_history_positions()
 
             with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+                # ─── Positions ───
                 if active:
                     df = PositionStorage.positions_to_dataframe(active)
                     df.to_excel(writer, sheet_name="Active_Positions",
                                 index=False)
                 else:
                     pd.DataFrame(columns=["پیام"]).to_excel(
-                        writer, sheet_name="Active_Positions", index=False)
+                        writer, sheet_name="Active_Positions",
+                        index=False)
 
                 if history:
                     df = PositionStorage.positions_to_dataframe(history)
@@ -1235,11 +2008,20 @@ class PositionSaverWidget(QWidget):
                                 index=False)
                 else:
                     pd.DataFrame(columns=["پیام"]).to_excel(
-                        writer, sheet_name="Closed_Positions", index=False)
+                        writer, sheet_name="Closed_Positions",
+                        index=False)
+
+                # ✅ Groups
+                if self.groups:
+                    df_g = PositionStorage.groups_to_dataframe(
+                        self.groups, self.positions)
+                    if df_g is not None:
+                        df_g.to_excel(
+                            writer, sheet_name="Groups", index=False)
 
             self._show_status(
                 f"✅ اکسل ذخیره شد — باز: {len(active)} | "
-                f"بسته: {len(history)}", 8000)
+                f"بسته: {len(history)} | گروه: {len(self.groups)}", 8000)
 
         except ImportError as e:
             QMessageBox.critical(
@@ -1248,6 +2030,110 @@ class PositionSaverWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(
                 self, "خطا", f"خطا در ذخیره اکسل:\n{e}")
+
+    # ═══════════════════════════════════════════════════
+    # ارسال به بله
+    # ═══════════════════════════════════════════════════
+
+    def send_positions_to_bale(self):
+        positions = self._get_selected_positions()
+        if not positions:
+            self._show_status("⚠️ ابتدا یک یا چند موقعیت انتخاب کنید")
+            return
+
+        if not self.monitor_thread.notifier.is_configured:
+            QMessageBox.warning(
+                self, "خطا",
+                "تنظیمات بله کامل نیست.")
+            return
+
+        n = len(positions)
+        if n == 1:
+            msg = (f"آیا گزارش موقعیت زیر به بله ارسال شود؟\n\n"
+                   f"شناسه: {positions[0].position_id}\n"
+                   f"استراتژی: {positions[0].strategy_name}")
+        else:
+            ids = "\n".join(
+                f"  • {p.position_id} ({p.strategy_name})"
+                for p in positions[:10])
+            if n > 10:
+                ids += f"\n  ... و {n - 10} مورد دیگر"
+            msg = f"آیا گزارش {n} موقعیت زیر ارسال شود؟\n\n{ids}"
+
+        if QMessageBox.question(
+                self, "تأیید ارسال", msg,
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+
+        success = 0
+        for pos in positions:
+            try:
+                if self.monitor_thread.send_position_report(pos):
+                    success += 1
+            except Exception as e:
+                logger.exception(f"Bale send error: {e}")
+
+        if success == n:
+            self._show_status(
+                f"✅ همه {success} موقعیت ارسال شدند")
+        elif success > 0:
+            self._show_status(f"⚠️ {success} از {n} ارسال شد")
+        else:
+            QMessageBox.critical(
+                self, "خطا",
+                f"❌ ارسال هیچ‌کدام از {n} موفق نبود.")
+
+    # ═══════════════════════════════════════════════════
+    # آفست تک‌position
+    # ═══════════════════════════════════════════════════
+
+    def offset_position(self):
+        pos = self._get_selected_position()
+        if pos is None:
+            self._show_status("⚠️ ابتدا یک موقعیت را انتخاب کنید")
+            return
+        if pos.status != PositionStatus.OPEN:
+            QMessageBox.warning(
+                self, "خطا",
+                f"وضعیت «{pos.status.label_fa}» است.")
+            return
+        if self._is_pending_settlement(pos):
+            QMessageBox.warning(
+                self, "خطا",
+                "این موقعیت منقضی شده است.")
+            return
+
+        dlg = OffsetDialog(self, pos)
+        try:
+            if not dlg.exec():
+                return
+            result = dlg.get_result()
+            if not result:
+                return
+
+            for i, leg in enumerate(pos.legs):
+                cp = result["close_prices"][i]
+                leg.close_price = float(cp)
+                leg.close_fee = \
+                    PositionPnLCalculator.calculate_leg_close_fee(
+                        leg, float(cp))
+
+            pos.status = PositionStatus.CLOSED
+            pos.close_date = (
+                jdatetime.date.today().strftime("%Y/%m/%d"))
+            pos.close_reason = "offset"
+
+            self.storage.save_positions(self.positions)
+            self.refresh_all_tabs()
+
+            pnl = result["realized_pnl"]
+            roi = result["realized_roi"]
+            self._show_status(
+                f"✅ {pos.position_id} آفست شد — "
+                f"سود/زیان: {fmt_money(pnl)} {CURRENCY} "
+                f"({fmt_pct(roi, digits=2)})", 8000)
+        finally:
+            dlg.deleteLater()
 
     # ═══════════════════════════════════════════════════
     # تسویه / نکول / اعمال / بستن
@@ -1268,7 +2154,8 @@ class PositionSaverWidget(QWidget):
                 return
             mode = result.get("mode")
             if mode == "cash":
-                self._apply_cash_settlement(pos, result.get("amount", 0))
+                self._apply_cash_settlement(
+                    pos, result.get("amount", 0))
             elif mode in ("default", "you_default"):
                 self._apply_default_settlement(pos, result)
         finally:
@@ -1282,10 +2169,11 @@ class PositionSaverWidget(QWidget):
         if not any(l.is_call for l in pos.legs):
             QMessageBox.warning(
                 self, "خطا",
-                "این موقعیت CALL ندارد.\nنکول فقط برای CALL معنا دارد.")
+                "این موقعیت CALL ندارد.")
             return
 
-        dlg = CashSettlementDialog(self, pos, default_mode="default")
+        dlg = CashSettlementDialog(
+            self, pos, default_mode="default")
         try:
             if not dlg.exec():
                 return
@@ -1295,15 +2183,18 @@ class PositionSaverWidget(QWidget):
             if result.get("mode") in ("default", "you_default"):
                 self._apply_default_settlement(pos, result)
             else:
-                self._apply_cash_settlement(pos, result.get("amount", 0))
+                self._apply_cash_settlement(
+                    pos, result.get("amount", 0))
         finally:
             dlg.deleteLater()
 
-    def _apply_cash_settlement(self, pos: StrategyPosition, amount: float):
-        """✅ اعمال تسویه نقدی — استفاده مستقیم از cash_settlement_amount"""
+    def _apply_cash_settlement(self, pos: StrategyPosition,
+                                amount: float):
+        """اعمال تسویه نقدی"""
         pos.cash_settlement_amount = float(amount)
         pos.status = PositionStatus.CASH_SETTLED
         pos.close_date = jdatetime.date.today().strftime("%Y/%m/%d")
+        pos.close_reason = "cash_settle"
 
         self.storage.save_positions(self.positions)
         self.refresh_all_tabs()
@@ -1311,8 +2202,9 @@ class PositionSaverWidget(QWidget):
             f"✅ تسویه نقدی {pos.position_id} — "
             f"مبلغ: {fmt_money(amount)} {CURRENCY}", 6000)
 
-    def _apply_default_settlement(self, pos: StrategyPosition, result: dict):
-        """✅ اعمال نکول با is_self_default"""
+    def _apply_default_settlement(self, pos: StrategyPosition,
+                                   result: dict):
+        """اعمال نکول"""
         S_T = result.get("S_T", 0)
         exercise_rate = result.get("exercise_rate", 0.0005)
         mode = result.get("mode")
@@ -1320,7 +2212,6 @@ class PositionSaverWidget(QWidget):
 
         for leg in pos.legs:
             if not leg.is_call:
-                # ✅ لگ‌های غیر CALL: اگر سهم پایه است، با S_T تسویه
                 if leg.is_stock and leg.close_price is None:
                     leg.close_price = float(S_T)
                     leg.close_fee = 0.0
@@ -1346,8 +2237,10 @@ class PositionSaverWidget(QWidget):
 
         if mode == "default":
             pos.status = PositionStatus.DEFAULTED
+            pos.close_reason = "defaulted"
         elif mode == "you_default":
             pos.status = PositionStatus.YOU_DEFAULTED
+            pos.close_reason = "you_defaulted"
 
         pos.close_date = jdatetime.date.today().strftime("%Y/%m/%d")
 
@@ -1366,7 +2259,8 @@ class PositionSaverWidget(QWidget):
         try:
             snapshot = self._get_market_snapshot()
             if snapshot is not None:
-                ua = snapshot.get_underlying_assets(pos.underlying_symbol)
+                ua = snapshot.get_underlying_assets(
+                    pos.underlying_symbol)
                 if ua is not None and hasattr(ua, 'close_price') \
                         and ua.close_price > 0:
                     S_T = float(ua.close_price)
@@ -1376,8 +2270,8 @@ class PositionSaverWidget(QWidget):
         if S_T <= 0:
             QMessageBox.warning(
                 self, "خطا",
-                f"قیمت پایانی «{pos.underlying_symbol}» در دسترس نیست.\n"
-                f"از «دریافت دستی» استفاده کنید.")
+                f"قیمت پایانی «{pos.underlying_symbol}» "
+                f"در دسترس نیست.")
             return
 
         total_intrinsic = 0.0
@@ -1389,14 +2283,16 @@ class PositionSaverWidget(QWidget):
             total_intrinsic += r["total_value"]
             details.append(
                 f"  • {leg.symbol}: "
-                + (fmt_money(r['intrinsic_per_share']) if r["is_itm"]
-                   else "OTM (صفر)"))
+                + (fmt_money(r['intrinsic_per_share'])
+                   if r["is_itm"] else "OTM (صفر)"))
 
         if QMessageBox.question(
                 self, "تأیید اعمال فیزیکی",
-                f"آیا اعمال فیزیکی {pos.position_id} را تأیید می‌کنید؟\n\n"
-                f"📊 قیمت پایانی سهم پایه: {fmt_money(S_T)}\n"
-                f"💰 ارزش ذاتی کل: {fmt_money(total_intrinsic)} {CURRENCY}\n\n"
+                f"آیا اعمال فیزیکی {pos.position_id} را "
+                f"تأیید می‌کنید؟\n\n"
+                f"📊 قیمت پایانی: {fmt_money(S_T)}\n"
+                f"💰 ارزش ذاتی کل: {fmt_money(total_intrinsic)} "
+                f"{CURRENCY}\n\n"
                 f"جزئیات:\n" + "\n".join(details),
                 QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
             return
@@ -1415,6 +2311,7 @@ class PositionSaverWidget(QWidget):
 
         pos.status = PositionStatus.EXERCISED
         pos.close_date = jdatetime.date.today().strftime("%Y/%m/%d")
+        pos.close_reason = "exercise"
 
         self.storage.save_positions(self.positions)
         self.refresh_all_tabs()
@@ -1428,7 +2325,6 @@ class PositionSaverWidget(QWidget):
             self._show_status("⚠️ یک موقعیت منقضی انتخاب کنید")
             return
 
-        # ✅ استفاده از OffsetDialog به‌جای QInputDialog ترتیبی
         dlg = OffsetDialog(self, pos)
         try:
             if not dlg.exec():
@@ -1445,7 +2341,9 @@ class PositionSaverWidget(QWidget):
                         leg, float(cp))
 
             pos.status = PositionStatus.CLOSED
-            pos.close_date = jdatetime.date.today().strftime("%Y/%m/%d")
+            pos.close_date = (
+                jdatetime.date.today().strftime("%Y/%m/%d"))
+            pos.close_reason = "offset"
 
             self.storage.save_positions(self.positions)
             self.refresh_all_tabs()
@@ -1458,12 +2356,30 @@ class PositionSaverWidget(QWidget):
     # ═══════════════════════════════════════════════════
 
     def _update_tab_badges(self):
+        """به‌روزرسانی نشان‌های تب"""
+        # pending
         pending_count = len(self._get_pending_positions())
         tab_bar = self.tabs.tabBar()
         if pending_count > 0:
             self.tabs.setTabText(
-                1, f"⚠️ نیازمند تعیین تکلیف ({pending_count})")
-            tab_bar.setTabTextColor(1, QColor(Theme.WARN))
+                TAB_PENDING,
+                f"⚠️ نیازمند تعیین تکلیف ({pending_count})")
+            tab_bar.setTabTextColor(TAB_PENDING, QColor(Theme.WARN))
         else:
-            self.tabs.setTabText(1, "⚠️ نیازمند تعیین تکلیف")
-            tab_bar.setTabTextColor(1, QColor(Theme.MUTED))
+            self.tabs.setTabText(
+                TAB_PENDING, "⚠️ نیازمند تعیین تکلیف")
+            tab_bar.setTabTextColor(TAB_PENDING, QColor(Theme.MUTED))
+
+        # groups
+        active_groups = sum(
+            1 for g in self.groups
+            if g.has_any_open(self.positions)
+        )
+        if self.groups:
+            self.tabs.setTabText(
+                TAB_GROUPS, f"📁 گروه‌ها ({len(self.groups)})")
+        else:
+            self.tabs.setTabText(TAB_GROUPS, "📁 گروه‌ها")
+
+
+__all__ = ["PositionSaverWidget", "SortableItem"]

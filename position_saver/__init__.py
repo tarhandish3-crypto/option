@@ -19,6 +19,11 @@
     set_snapshot_provider(get_market_snapshot)
     widget = create_position_saver_widget(parent=self)
     main_tabs.addTab(widget, "مدیریت موقعیت‌ها")
+
+معماری سه‌سطحی:
+    - OptionLeg: معامله‌ی خام
+    - StrategyPosition: واحد معاملاتی (Lot)
+    - StrategyGroup: ماسک گروه‌بندی استراتژی
 """
 
 
@@ -40,20 +45,18 @@ if _ROOT not in sys.path:
 # ۲. متادیتا
 # ═══════════════════════════════════════════════════
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 __author__ = "Position Saver"
-__description__ = "مدیریت، ثبت و ایمپورت موقعیت‌های استراتژی آپشن"
+__description__ = (
+    "مدیریت، ثبت و ایمپورت موقعیت‌های استراتژی آپشن — "
+    "با معماری سه‌سطحی"
+)
 
 
 # ═══════════════════════════════════════════════════
-# ۳. Importهای اصلی — همه lazy یا از ماژول‌های پایه
+# ۳. Integration Layer (از providers)
 # ═══════════════════════════════════════════════════
 
-# ⚠️ مهم: این importها را از main نگیرید چون main ممکن است
-# در حال بارگذاری باشد. به‌جایش تابع wrapper تعریف کنید.
-
-
-# ─── Providerها (بدون circular) ───
 from position_saver.providers import (
     set_snapshot_provider,
     set_bale_provider,
@@ -65,45 +68,70 @@ from position_saver.providers import (
 )
 
 
-# ─── مدل‌های داده ───
+# ═══════════════════════════════════════════════════
+# ۴. مدل‌های داده (سه‌سطحی)
+# ═══════════════════════════════════════════════════
+
 from position_saver.models import (
-    StrategyPosition,
-    OptionLeg,
+    # Enumها
     LegType,
     PositionStatus,
+    # سطح ۱
+    OptionLeg,
+    # سطح ۲
+    StrategyPosition,
+    # سطح ۳
+    StrategyGroup,
 )
 
 
-# ─── ذخیره‌سازی ───
+# ═══════════════════════════════════════════════════
+# ۵. ذخیره‌سازی
+# ═══════════════════════════════════════════════════
+
 from position_saver.storage import (
     PositionStorage,
+    # توابع کمکی
     normalize_symbol,
     clean_int,
     clean_float,
     today_jalali,
     infer_option_kind,
     infer_underlying_symbol,
+    # ثابت‌ها
     DATA_VERSION,
 )
 
 
-# ─── محاسبات ───
+# ═══════════════════════════════════════════════════
+# ۶. محاسبات
+# ═══════════════════════════════════════════════════
+
 from position_saver.pnl_calculator import PositionPnLCalculator
 
 
-# ─── State ───
+# ═══════════════════════════════════════════════════
+# ۷. State یادآور
+# ═══════════════════════════════════════════════════
+
 from position_saver.reminder_state import ReminderState
 
 
-# ─── ترد ───
+# ═══════════════════════════════════════════════════
+# ۸. ترد پس‌زمینه
+# ═══════════════════════════════════════════════════
+
 from position_saver.live_monitor import (
     LivePositionMonitorThread,
-    is_expired_date,
     BaleSendWorker,
+    is_expired_date,
 )
 
 
-# ─── تم ───
+# ═══════════════════════════════════════════════════
+# ۹. تم
+# ═══════════════════════════════════════════════════
+
 from position_saver.theme import (
     Theme,
     CURRENCY,
@@ -125,7 +153,7 @@ from position_saver.theme import (
 
 
 # ═══════════════════════════════════════════════════
-# ۴. ✅ Widget Factory — به‌صورت lazy (بدون import از main)
+# ۱۰. Widget Factory (lazy)
 # ═══════════════════════════════════════════════════
 
 def create_position_saver_widget(
@@ -150,7 +178,7 @@ def create_position_saver_widget(
 
 
 # ═══════════════════════════════════════════════════
-# ۵. UI — به‌صورت lazy (فقط در صورت نیاز)
+# ۱۱. دسترسی‌های lazy به UI
 # ═══════════════════════════════════════════════════
 
 def _get_widget_class():
@@ -166,6 +194,7 @@ def _get_dialogs():
         CashSettlementDialog,
         OffsetDialog,
         ImportHistoryDialog,
+        ExerciseTypeDialog,
         BROKER_NAMES,
         DEFAULT_BROKER,
     )
@@ -174,46 +203,87 @@ def _get_dialogs():
         "CashSettlementDialog": CashSettlementDialog,
         "OffsetDialog": OffsetDialog,
         "ImportHistoryDialog": ImportHistoryDialog,
+        "ExerciseTypeDialog": ExerciseTypeDialog,
         "BROKER_NAMES": BROKER_NAMES,
         "DEFAULT_BROKER": DEFAULT_BROKER,
     }
 
 
-# ─── ثابت‌های UI (بدون lazy — فقط از dialogs می‌آیند) ───
+# ─── ثابت‌های UI (با محافظت) ───
 try:
     from position_saver.ui.dialogs import (
         BROKER_NAMES,
         DEFAULT_BROKER,
     )
 except ImportError:
-    BROKER_NAMES = ["مفید", "خبرگان سهام", "پیشرو", "پارسیان", "سایر"]
+    BROKER_NAMES = [
+        "مفید", "خبرگان سهام", "پیشرو", "پارسیان", "سایر"]
     DEFAULT_BROKER = "مفید"
 
 
 # ═══════════════════════════════════════════════════
-# ۶. ثابت‌های مشترک
+# ۱۲. ثابت‌های مشترک
 # ═══════════════════════════════════════════════════
 
 STANDARD_STRATEGIES = PositionPnLCalculator.STANDARD_STRATEGIES
 
 
 # ═══════════════════════════════════════════════════
-# ۷. Importer — با محافظت
+# ۱۳. Importer (با محافظت)
 # ═══════════════════════════════════════════════════
 
 try:
     from position_saver.importer import (
+        # Schemas
         TradeRecord,
         MatchedLot,
         ImportSettings,
         ImportBatch,
         ImportResult,
         BrokerTemplate,
+        # close_reason constants
+        CLOSE_REASON_OPEN,
+        CLOSE_REASON_OFFSET,
+        CLOSE_REASON_EXERCISE,
+        CLOSE_REASON_CASH_SETTLE,
+        CLOSE_REASON_DEFAULTED,
+        CLOSE_REASON_YOU_DEFAULTED,
+        CLOSE_REASON_UNKNOWN,
+        CLOSE_REASON_STOCK,
+        CLOSE_REASON_INCOMPLETE,
+        CLOSE_REASON_LABELS,
+        # Symbol Map
+        SYMBOL_MAP,
+        CODE_TO_SYMBOL,
+        is_known_underlying,
+        get_underlying_ins_code,
+        get_symbol_by_ins_code,
+        is_option_symbol,
+        infer_underlying_from_option,
+        # Symbol Memory
+        get_symbol_info,
+        has_symbol,
+        save_symbol_info,
+        save_from_trade,
+        save_bulk as save_symbols_bulk,
+        get_all_symbol_memory,
+        get_symbol_memory_count,
+        clear_symbol_memory,
+        clear_all_symbol_memory,
+        export_symbol_memory,
+        import_symbol_memory,
+        # Net Position
+        compute_net_position,
+        group_by_symbol,
+        MatchInfo,
+        NetPositionResult,
+        # Core
         ImportEngine,
         ExcelParser,
         FifoMatcher,
         SnapshotEnricher,
         suggest_strategy_name,
+        # Templates
         get_default_template,
         get_all_templates,
         get_template_for_broker,
@@ -221,19 +291,59 @@ try:
         save_user_template,
     )
     _IMPORTER_AVAILABLE = True
-except ImportError:
+except ImportError as _e:
     _IMPORTER_AVAILABLE = False
+
+    # ─── placeholderها ───
     TradeRecord = None
     MatchedLot = None
     ImportSettings = None
     ImportBatch = None
     ImportResult = None
     BrokerTemplate = None
+
+    CLOSE_REASON_OPEN = "open"
+    CLOSE_REASON_OFFSET = "offset"
+    CLOSE_REASON_EXERCISE = "exercise"
+    CLOSE_REASON_CASH_SETTLE = "cash_settle"
+    CLOSE_REASON_DEFAULTED = "defaulted"
+    CLOSE_REASON_YOU_DEFAULTED = "you_defaulted"
+    CLOSE_REASON_UNKNOWN = "unknown"
+    CLOSE_REASON_STOCK = "stock"
+    CLOSE_REASON_INCOMPLETE = "incomplete"
+    CLOSE_REASON_LABELS = {}
+
+    SYMBOL_MAP = {}
+    CODE_TO_SYMBOL = {}
+    is_known_underlying = None
+    get_underlying_ins_code = None
+    get_symbol_by_ins_code = None
+    is_option_symbol = None
+    infer_underlying_from_option = None
+
+    get_symbol_info = None
+    has_symbol = None
+    save_symbol_info = None
+    save_from_trade = None
+    save_symbols_bulk = None
+    get_all_symbol_memory = None
+    get_symbol_memory_count = None
+    clear_symbol_memory = None
+    clear_all_symbol_memory = None
+    export_symbol_memory = None
+    import_symbol_memory = None
+
+    compute_net_position = None
+    group_by_symbol = None
+    MatchInfo = None
+    NetPositionResult = None
+
     ImportEngine = None
     ExcelParser = None
     FifoMatcher = None
     SnapshotEnricher = None
     suggest_strategy_name = None
+
     get_default_template = None
     get_all_templates = None
     get_template_for_broker = None
@@ -242,7 +352,7 @@ except ImportError:
 
 
 # ═══════════════════════════════════════════════════
-# ۸. Wizard — با محافظت
+# ۱۴. Wizard ایمپورت (با محافظت)
 # ═══════════════════════════════════════════════════
 
 try:
@@ -256,7 +366,31 @@ except ImportError:
 
 
 # ═══════════════════════════════════════════════════
-# ۹. __all__
+# ۱۵. دیالوگ‌های تخصصی (با محافظت)
+# ═══════════════════════════════════════════════════
+
+try:
+    from position_saver.ui.net_position_dialog import (
+        NetPositionDialog,
+    )
+    _NET_POSITION_AVAILABLE = True
+except ImportError:
+    _NET_POSITION_AVAILABLE = False
+    NetPositionDialog = None
+
+
+try:
+    from position_saver.ui.strategy_dialog import (
+        StrategyDialog,
+    )
+    _STRATEGY_DIALOG_AVAILABLE = True
+except ImportError:
+    _STRATEGY_DIALOG_AVAILABLE = False
+    StrategyDialog = None
+
+
+# ═══════════════════════════════════════════════════
+# ۱۶. __all__
 # ═══════════════════════════════════════════════════
 
 __all__ = [
@@ -275,11 +409,14 @@ __all__ = [
     "get_setting",
     "get_commission_rate",
 
-    # ─── مدل‌ها ───
-    "StrategyPosition",
-    "OptionLeg",
+    # ─── Enumها ───
     "LegType",
     "PositionStatus",
+
+    # ─── مدل‌ها (سه‌سطحی) ───
+    "OptionLeg",
+    "StrategyPosition",
+    "StrategyGroup",
 
     # ─── ذخیره‌سازی ───
     "PositionStorage",
@@ -300,11 +437,16 @@ __all__ = [
 
     # ─── ترد ───
     "LivePositionMonitorThread",
-    "is_expired_date",
     "BaleSendWorker",
+    "is_expired_date",
 
-    # ─── UI ───
+    # ─── UI — Widget ───
+    "PositionSaverWidget",
+
+    # ─── UI — دیالوگ‌ها ───
     "ImportWizardDialog",
+    "NetPositionDialog",
+    "StrategyDialog",
 
     # ─── ثابت‌های UI ───
     "BROKER_NAMES",
@@ -334,18 +476,62 @@ __all__ = [
     "set_tone",
     "set_invalid",
 
-    # ─── Importer ───
+    # ─── Importer — Schemas ───
     "TradeRecord",
     "MatchedLot",
     "ImportSettings",
     "ImportBatch",
     "ImportResult",
     "BrokerTemplate",
+
+    # ─── close_reason ───
+    "CLOSE_REASON_OPEN",
+    "CLOSE_REASON_OFFSET",
+    "CLOSE_REASON_EXERCISE",
+    "CLOSE_REASON_CASH_SETTLE",
+    "CLOSE_REASON_DEFAULTED",
+    "CLOSE_REASON_YOU_DEFAULTED",
+    "CLOSE_REASON_UNKNOWN",
+    "CLOSE_REASON_STOCK",
+    "CLOSE_REASON_INCOMPLETE",
+    "CLOSE_REASON_LABELS",
+
+    # ─── Symbol Map ───
+    "SYMBOL_MAP",
+    "CODE_TO_SYMBOL",
+    "is_known_underlying",
+    "get_underlying_ins_code",
+    "get_symbol_by_ins_code",
+    "is_option_symbol",
+    "infer_underlying_from_option",
+
+    # ─── Symbol Memory ───
+    "get_symbol_info",
+    "has_symbol",
+    "save_symbol_info",
+    "save_from_trade",
+    "save_symbols_bulk",
+    "get_all_symbol_memory",
+    "get_symbol_memory_count",
+    "clear_symbol_memory",
+    "clear_all_symbol_memory",
+    "export_symbol_memory",
+    "import_symbol_memory",
+
+    # ─── Net Position ───
+    "compute_net_position",
+    "group_by_symbol",
+    "MatchInfo",
+    "NetPositionResult",
+
+    # ─── Importer — Core ───
     "ImportEngine",
     "ExcelParser",
     "FifoMatcher",
     "SnapshotEnricher",
     "suggest_strategy_name",
+
+    # ─── Templates ───
     "get_default_template",
     "get_all_templates",
     "get_template_for_broker",
@@ -355,4 +541,6 @@ __all__ = [
     # ─── پرچم‌ها ───
     "_IMPORTER_AVAILABLE",
     "_IMPORT_WIZARD_AVAILABLE",
+    "_NET_POSITION_AVAILABLE",
+    "_STRATEGY_DIALOG_AVAILABLE",
 ]

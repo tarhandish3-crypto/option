@@ -3,6 +3,13 @@
 
 """
 قالب‌های ستون‌های اکسل کارگزاری‌ها.
+
+نکات:
+    - قالب «مفید» بر اساس فایل واقعی این کارگزاری تنظیم شده است.
+    - قالب‌های دیگر (خبرگان سهام، پیشرو، پارسیان) بر اساس نمونه‌ی واقعی
+      تنظیم نشده‌اند — به‌عنوان حدس اولیه‌اند و در صورت نیاز اصلاح می‌شوند.
+    - اگر کارگزاری ناشناخته باشد، از قالب «مفید» استفاده می‌شود.
+    - فیلد valid_statuses حذف شد چون دیگر فیلتری روی وضعیت اعمال نمی‌شود.
 """
 
 import json
@@ -16,11 +23,12 @@ from position_saver.importer.schemas import BrokerTemplate
 logger = logging.getLogger("PositionSaver.Importer.Templates")
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
 # قالب‌های پیش‌فرض
-# =====================================================
+# ═══════════════════════════════════════════════════
 
 DEFAULT_TEMPLATES: Dict[str, dict] = {
+    # ✅ تأییدشده با فایل واقعی کارگزاری مفید
     "مفید": {
         "broker_name": "مفید",
         "date_col": "تاریخ",
@@ -30,8 +38,8 @@ DEFAULT_TEMPLATES: Dict[str, dict] = {
         "qty_col": "حجم انجام شده",
         "price_col": "قیمت",
         "status_col": "وضعیت",
-        "valid_statuses": ["انجام شده"],
     },
+    # ⚠️ حدس اولیه — در صورت دریافت نمونه‌ی واقعی اصلاح شود
     "خبرگان سهام": {
         "broker_name": "خبرگان سهام",
         "date_col": "تاریخ",
@@ -41,8 +49,8 @@ DEFAULT_TEMPLATES: Dict[str, dict] = {
         "qty_col": "حجم انجام شده",
         "price_col": "قیمت",
         "status_col": "وضعیت",
-        "valid_statuses": ["انجام شده", "کامل انجام شده"],
     },
+    # ⚠️ حدس اولیه — در صورت دریافت نمونه‌ی واقعی اصلاح شود
     "پیشرو": {
         "broker_name": "پیشرو",
         "date_col": "تاریخ",
@@ -52,8 +60,8 @@ DEFAULT_TEMPLATES: Dict[str, dict] = {
         "qty_col": "تعداد",
         "price_col": "قیمت",
         "status_col": "وضعیت",
-        "valid_statuses": ["انجام شده"],
     },
+    # ⚠️ حدس اولیه — در صورت دریافت نمونه‌ی واقعی اصلاح شود
     "پارسیان": {
         "broker_name": "پارسیان",
         "date_col": "تاریخ",
@@ -63,18 +71,21 @@ DEFAULT_TEMPLATES: Dict[str, dict] = {
         "qty_col": "حجم انجام شده",
         "price_col": "قیمت",
         "status_col": "وضعیت",
-        "valid_statuses": ["انجام شده"],
     },
 }
 
+
+# ═══════════════════════════════════════════════════
+# مسیر فایل قالب‌های کاربر
+# ═══════════════════════════════════════════════════
 
 _TEMPLATES_FILE = Path(__file__).parent / "broker_templates.json"
 _user_templates_cache: Optional[Dict[str, dict]] = None
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
 # توابع اصلی
-# =====================================================
+# ═══════════════════════════════════════════════════
 
 def get_all_templates() -> Dict[str, dict]:
     """همه‌ی قالب‌ها (پیش‌فرض + کاربر)"""
@@ -89,7 +100,12 @@ def get_default_template() -> BrokerTemplate:
 
 
 def get_template_for_broker(broker_name: str) -> BrokerTemplate:
-    """قالب مخصوص یک کارگزاری"""
+    """
+    قالب مخصوص یک کارگزاری.
+
+    اگر کارگزاری ناشناخته باشد، از قالب «مفید» استفاده می‌شود
+    (چون ساختار فایل اکسل بورس ایران معمولاً مشابه است).
+    """
     if not broker_name:
         return get_default_template()
 
@@ -98,7 +114,7 @@ def get_template_for_broker(broker_name: str) -> BrokerTemplate:
 
     if data is None:
         logger.warning(
-            f"No template for '{broker_name}' — using default")
+            f"No template for '{broker_name}' — using default (مفید)")
         template = get_default_template()
         template.broker_name = broker_name
         return template
@@ -125,6 +141,10 @@ def save_user_template(template: BrokerTemplate) -> bool:
         logger.exception(f"Save template failed: {e}")
         return False
 
+
+# ═══════════════════════════════════════════════════
+# داخلی
+# ═══════════════════════════════════════════════════
 
 def _load_user_templates() -> Dict[str, dict]:
     global _user_templates_cache
