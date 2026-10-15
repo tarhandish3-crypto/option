@@ -2,15 +2,19 @@
 # -*- coding: utf-8 -*-
 
 """
-ترد پس‌زمینه‌ی پایش لحظه‌ای موقعیت‌ها و گروه‌های استراتژی.
+ترد پس‌زمینه‌ی پایش لحظه‌ای موقعیت‌ها.
 
 عملکرد:
     ۱. دریافت قیمت‌های لایو از Snapshot
     ۲. به‌روزرسانی current_price لگ‌ها
-    ۳. بررسی آلرت‌های حد سود برای موقعیت‌های باز
-    ۴. ✅ بررسی آلرت‌های حد سود برای گروه‌های استراتژی
-    ۵. بررسی موقعیت‌های منقضی
-    ۶. یادآور سررسید
+    ۳. ✅ بررسی آلرت‌های حد سود **پویا** (بر اساس target ماهانه)
+    ۴. بررسی موقعیت‌های منقضی
+    ۵. یادآور سررسید
+
+استانداردهای پیروی‌شده:
+    - TradingView Alert Engine: State-based
+    - TOS/IBKR: Alert per position, fired once
+    - برنامه‌ی اصلی OptionScanner: همخوانی محاسبات
 """
 
 import logging
@@ -27,6 +31,7 @@ from position_saver.storage import PositionStorage
 from position_saver.models import PositionStatus, LegType
 from position_saver.reminder_state import ReminderState
 from position_saver.pnl_calculator import PositionPnLCalculator
+from position_saver.shared_analytics import SharedAnalytics
 from position_saver.theme import fmt_money, fmt_pct, fmt_int
 from position_saver.providers import get_market_snapshot, get_bale_notifier
 
@@ -34,12 +39,12 @@ from position_saver.providers import get_market_snapshot, get_bale_notifier
 logger = logging.getLogger("PositionSaver.LiveMonitor")
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
 # توابع کمکی: بررسی انقضای تاریخ شمسی
-# =====================================================
+# ═══════════════════════════════════════════════════
 
 def is_expired_date(expiry_date_str: str) -> bool:
-    """بررسی منقضی شدن تاریخ شمسی"""
+    """بررسی منقضی شدن تاریخ شمسی."""
     if not expiry_date_str:
         return False
     try:
@@ -53,12 +58,13 @@ def is_expired_date(expiry_date_str: str) -> bool:
         expiry = jdatetime.date(year, month, day)
         return expiry < jdatetime.date.today()
     except Exception as e:
-        logger.warning(f"Error parsing expiry_date '{expiry_date_str}': {e}")
+        logger.warning(
+            f"Error parsing expiry_date '{expiry_date_str}': {e}")
         return False
 
 
 def _parse_jalali_date(date_str: str):
-    """تبدیل رشته تاریخ شمسی به jdatetime.date"""
+    """تبدیل رشته تاریخ شمسی به jdatetime.date."""
     if not date_str:
         return None
     try:
@@ -72,12 +78,12 @@ def _parse_jalali_date(date_str: str):
         return None
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
 # توابع کمکی: خواندن تنظیمات بله
-# =====================================================
+# ═══════════════════════════════════════════════════
 
 def _load_user_settings() -> dict:
-    """بارگذاری user_settings.json"""
+    """بارگذاری user_settings.json."""
     try:
         from config import USER_SETTINGS_PATH
         if not USER_SETTINGS_PATH.exists():
@@ -90,7 +96,7 @@ def _load_user_settings() -> dict:
 
 
 def _extract_bale(bale_dict: dict) -> Tuple[str, str]:
-    """استخراج bot_token و chat_id از دیکشنری bale"""
+    """استخراج bot_token و chat_id از دیکشنری bale."""
     if not isinstance(bale_dict, dict):
         return "", ""
 
@@ -110,7 +116,7 @@ def _extract_bale(bale_dict: dict) -> Tuple[str, str]:
 
 
 def _is_bale_enabled() -> bool:
-    """بررسی فعال بودن بله در تنظیمات"""
+    """بررسی فعال بودن بله در تنظیمات."""
     try:
         data = _load_user_settings()
         profiles = data.get("profiles", {})
@@ -129,7 +135,7 @@ def _is_bale_enabled() -> bool:
 
 
 def _get_bale_credentials() -> Tuple[str, str]:
-    """خواندن bot_token و chat_id بله"""
+    """خواندن bot_token و chat_id بله."""
     try:
         data = _load_user_settings()
         profiles = data.get("profiles", {})
@@ -171,12 +177,12 @@ def _get_bale_credentials() -> Tuple[str, str]:
         return "", ""
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
 # Fallback Notifier
-# =====================================================
+# ═══════════════════════════════════════════════════
 
 class _FallbackBaleNotifier:
-    """نسخه‌ی ساده اگر برنامه‌ی مادر notifier نداشت"""
+    """نسخه‌ی ساده اگر برنامه‌ی مادر notifier نداشت."""
 
     def __init__(self, bot_token: str = "", chat_id: str = ""):
         self.bot_token = bot_token
@@ -203,12 +209,12 @@ class _FallbackBaleNotifier:
             return False
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
 # BaleSendWorker
-# =====================================================
+# ═══════════════════════════════════════════════════
 
 class BaleSendWorker(QThread):
-    """ترد کوچک برای ارسال پیام به بله"""
+    """ترد کوچک برای ارسال پیام به بله."""
     send_finished = Signal(bool, str)  # (success, position_id)
 
     def __init__(self, notifier, message: str, position_id: str = ""):
@@ -226,9 +232,9 @@ class BaleSendWorker(QThread):
             self.send_finished.emit(False, self.position_id)
 
 
-# =====================================================
+# ═══════════════════════════════════════════════════
 # ترد پس‌زمینه اصلی
-# =====================================================
+# ═══════════════════════════════════════════════════
 
 class LivePositionMonitorThread(QThread):
     """
@@ -236,15 +242,13 @@ class LivePositionMonitorThread(QThread):
 
     Signals:
         prices_updated: قیمت‌ها به‌روز شد
-        alerts_found: آلرت‌های حد سود
-        group_alerts_found: ✅ آلرت‌های حد سود گروه‌ها
+        alerts_found: آلرت‌های حد سود پویا
         expired_found: موقعیت‌های منقضی
         connection_status: وضعیت اتصال
     """
 
     prices_updated = Signal(dict)
     alerts_found = Signal(list)
-    group_alerts_found = Signal(list)      # ✅ جدید
     expired_found = Signal(list)
     connection_status = Signal(dict)
 
@@ -269,11 +273,14 @@ class LivePositionMonitorThread(QThread):
         # شمارنده‌ی حلقه
         self._loop_count = 0
 
+        # ✅ کش آلرت‌های ارسال‌شده در این نشست
+        self._alerted_position_ids = set()
+
         logger.info(
             f"Monitor thread initialized (interval={self.check_interval}s)")
 
     def _init_bale_notifier(self):
-        """راه‌اندازی BaleNotifier"""
+        """راه‌اندازی BaleNotifier."""
         try:
             if not _is_bale_enabled():
                 logger.info("[Bale] Disabled in settings — skipping init")
@@ -367,7 +374,7 @@ class LivePositionMonitorThread(QThread):
         logger.info("Monitor thread exited")
 
     def _cleanup_finished_workers(self):
-        """پاکسازی workerهای تمام‌شده"""
+        """پاکسازی workerهای تمام‌شده."""
         before = len(self._workers)
         self._workers = [
             w for w in self._workers
@@ -402,13 +409,8 @@ class LivePositionMonitorThread(QThread):
                 message="ماژول دریافت داده در دسترس نیست")
             return
 
-        # ─── ۱. بارگذاری موقعیت‌ها و گروه‌ها ───
+        # ─── ۱. بارگذاری موقعیت‌ها ───
         positions = self.storage.load_positions()
-        try:
-            groups = self.storage.load_groups()
-        except Exception as e:
-            logger.warning(f"Load groups failed: {e}")
-            groups = []
 
         needed_symbols = set()
         open_positions = []
@@ -427,9 +429,6 @@ class LivePositionMonitorThread(QThread):
                 needed_symbols.add(leg.symbol)
                 if not leg.is_option and pos.underlying_symbol:
                     needed_symbols.add(pos.underlying_symbol)
-
-        # ─── نمادهای گروه‌ها (حتی اگر position باز نباشد) ───
-        # برای گروه‌های باز که موقعیت‌هاشان باز هستند، از قبل در needed_symbols هستند.
 
         if expired_ids:
             self.expired_found.emit(expired_ids)
@@ -510,22 +509,42 @@ class LivePositionMonitorThread(QThread):
             })
             logger.info("prices_updated emitted")
 
-        # ─── ۶. بررسی آلرت‌های position ───
+        # ─── ۶. ✅ بررسی آلرت‌های پویا ───
         self._check_and_emit_alerts(open_positions, prices)
 
-        # ─── ۷. ✅ بررسی آلرت‌های گروه ───
-        self._check_group_alerts(groups, positions, prices)
-
     # =====================================================
-    # بررسی آلرت‌های position
+    # ✅ بررسی آلرت‌های پویا
     # =====================================================
 
-    def _check_and_emit_alerts(self, positions, prices: Dict[str, float]):
-        """بررسی هشدارهای حد سود برای position های باز"""
+    def _check_and_emit_alerts(
+        self,
+        positions: List,
+        prices: Dict[str, float],
+    ):
+        """
+        بررسی هشدارهای حد سود **پویا**.
+
+        منطق (استاندارد TOS/IBKR):
+            - برای هر position باز:
+                ۱. به‌روزرسانی current_price لگ‌ها
+                ۲. محاسبه PnL و ROI لحظه‌ای
+                ۳. محاسبه‌ی آستانه‌ی پویا: target × (d / 30)
+                ۴. اگر ROI فعلی ≥ آستانه → آلرت
+            - آلرت فقط یک بار برای هر position
+        """
         triggered = []
 
         for pos in positions:
-            if pos.alert_target_roi <= 0:
+            # بررسی فعال بودن آلرت
+            if not pos.alert_enabled:
+                continue
+
+            # بررسی قبلاً ارسال شده
+            if pos.alert_sent:
+                continue
+
+            # بررسی تارگت
+            if pos.target_roi_maturity <= 0:
                 continue
 
             # اعمال قیمت‌های جدید
@@ -533,107 +552,53 @@ class LivePositionMonitorThread(QThread):
                 if leg.symbol in prices:
                     leg.current_price = prices[leg.symbol]
 
-            live_pnl, live_roi = \
-                PositionPnLCalculator.calculate_live_pnl(pos)
+            # محاسبه‌ی PnL و ROI لحظه‌ای
+            try:
+                live_pnl, live_roi = \
+                    PositionPnLCalculator.calculate_live_pnl(pos)
+            except Exception as e:
+                logger.warning(
+                    f"PnL calc failed for {pos.position_id}: {e}")
+                continue
 
-            if live_roi >= pos.alert_target_roi and not pos.alert_sent:
+            # محاسبه‌ی آستانه‌ی پویا
+            d = pos.days_elapsed()
+            D = pos.total_days()
+            threshold = SharedAnalytics.calculate_dynamic_threshold(
+                pos.target_roi_maturity, d)
+
+            # محاسبه‌ی Pace
+            pace = live_roi / threshold if threshold > 0 else 0.0
+
+            # بررسی شرط آلرت
+            if live_roi >= threshold:
                 triggered.append({
                     "position_id": pos.position_id,
                     "live_pnl": live_pnl,
                     "live_roi": live_roi,
-                    "target_roi_maturity": pos.target_roi_maturity,
-                    "alert_target_roi": pos.alert_target_roi,
+                    "threshold": threshold,
+                    "pace": pace,
+                    "target_monthly": pos.target_roi_maturity,
+                    "days_elapsed": d,
+                    "days_total": D,
+                    "days_remaining": max(0, D - d),
                     "underlying_symbol": pos.underlying_symbol,
                     "strategy_name": pos.strategy_name,
+                    "execution_date": pos.execution_date,
+                    "expiry_date": pos.expiry_date,
                 })
 
         if triggered:
-            logger.info(f"Emitting {len(triggered)} position alerts")
+            logger.info(
+                f"Emitting {len(triggered)} dynamic alerts")
             self.alerts_found.emit(triggered)
-
-    # =====================================================
-    # ✅ بررسی آلرت‌های گروه
-    # =====================================================
-
-    def _check_group_alerts(self, groups, positions, prices):
-        """
-        بررسی هشدارهای حد سود برای گروه‌های استراتژی.
-
-        منطق:
-            برای هر گروه باز:
-                ۱. به‌روزرسانی current_price لگ‌ها (قبلاً انجام شده)
-                ۲. محاسبه‌ی total_live_pnl گروه
-                ۳. محاسبه‌ی ROI گروه (نسبت به capital base)
-                ۴. اگر ROI > alert_target_roi و alert_sent=False → هشدار
-        """
-        if not groups:
-            return
-
-        # ─── ایندکس position ها بر اساس ID ───
-        pos_by_id = {p.position_id: p for p in positions}
-
-        triggered = []
-
-        for group in groups:
-            if group.alert_target_roi <= 0:
-                continue
-
-            # ─── جمع‌آوری position های این گروه ───
-            group_positions = [
-                pos_by_id[pid]
-                for pid in group.position_ids
-                if pid in pos_by_id
-            ]
-            if not group_positions:
-                continue
-
-            # ─── فقط گروه‌های با حداقل یک position باز ───
-            has_open = any(
-                p.status == PositionStatus.OPEN
-                for p in group_positions
-            )
-            if not has_open:
-                continue
-
-            # ─── محاسبه‌ی PnL لحظه‌ای گروه ───
-            total_live = group.total_live_pnl(positions)
-            total_realized = group.total_realized_pnl(positions)
-            total_pnl = total_live + total_realized
-
-            # ─── محاسبه‌ی سرمایه‌ی گروه ───
-            total_open_cost = group.total_open_cost(positions)
-            if total_open_cost <= 0:
-                # اگر همه بسته شده‌اند، ROI معنا ندارد
-                continue
-
-            group_roi = (total_pnl / total_open_cost) * 100.0
-
-            # ─── بررسی آلرت ───
-            if (group_roi >= group.alert_target_roi
-                    and not group.alert_sent):
-                triggered.append({
-                    "group_id": group.group_id,
-                    "strategy_type": group.strategy_type,
-                    "display_name": group.display_name,
-                    "num_positions": len(group_positions),
-                    "total_pnl": total_pnl,
-                    "live_pnl": total_live,
-                    "realized_pnl": total_realized,
-                    "group_roi": group_roi,
-                    "alert_target_roi": group.alert_target_roi,
-                    "open_cost": total_open_cost,
-                })
-
-        if triggered:
-            logger.info(f"Emitting {len(triggered)} group alerts")
-            self.group_alerts_found.emit(triggered)
 
     # =====================================================
     # یادآورهای سررسید
     # =====================================================
 
     def _check_expiry_reminders(self, positions):
-        """بررسی یادآورهای سررسید (۲ بار در روز، ≥ ۱ ساعت)"""
+        """بررسی یادآورهای سررسید (۲ بار در روز، ≥ ۱ ساعت)."""
         if not positions:
             return
 
@@ -682,7 +647,7 @@ class LivePositionMonitorThread(QThread):
             logger.exception(f"[Reminder] Send failed: {e}")
 
     def _build_expiry_message(self, reminders: List[Dict]) -> str:
-        """ساخت پیام یادآور سررسید"""
+        """ساخت پیام یادآور سررسید."""
         now = jdatetime.datetime.now()
         time_str = now.strftime("%Y/%m/%d, %H:%M:%S")
 
@@ -714,7 +679,6 @@ class LivePositionMonitorThread(QThread):
             lines.append(f"📅 *تاریخ سررسید:* {pos.expiry_date}")
             lines.append("")
 
-            # لنگه‌ها
             lines.append("🔗 *لنگه‌ها:*")
             for i, leg in enumerate(pos.legs, 1):
                 direction = "🟢 خرید" if leg.leg_type == LegType.BUY \
@@ -748,16 +712,24 @@ class LivePositionMonitorThread(QThread):
         return "\n".join(lines)
 
     # =====================================================
-    # پیام هشدار position
+    # ✅ پیام آلرت پویا
     # =====================================================
 
     def _build_alert_message(self, alert_info: dict) -> str:
-        """ساخت پیام هشدار حد سود position"""
+        """
+        ساخت پیام هشدار حد سود پویا.
+
+        شامل اطلاعات پویا:
+            - target ماهانه
+            - آستانه‌ی امروز
+            - Pace
+            - روزها
+        """
         now = jdatetime.datetime.now()
         time_str = now.strftime("%Y/%m/%d, %H:%M:%S")
 
         lines = []
-        lines.append("🎯 *هشدار حد سود موقعیت*")
+        lines.append("🎯 *هشدار حد سود استراتژی*")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━")
         lines.append("")
         lines.append(f"📌 *شناسه:* {alert_info['position_id']}")
@@ -766,26 +738,45 @@ class LivePositionMonitorThread(QThread):
             f"{alert_info['underlying_symbol']} | "
             f"{alert_info['strategy_name']}")
         lines.append("")
+
+        # ─── اطلاعات پویا ───
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("📊 *وضعیت پویا:*")
+        lines.append(
+            f"  • تارگت ماهانه: "
+            f"{fmt_pct(alert_info['target_monthly'], digits=1, signed=False)}")
+        lines.append(
+            f"  • آستانه‌ی امروز: "
+            f"{fmt_pct(alert_info['threshold'], digits=2, signed=False)}")
+        lines.append(
+            f"  • ROI فعلی: "
+            f"{fmt_pct(alert_info['live_roi'], digits=2)}")
+        lines.append(
+            f"  • Pace: {alert_info['pace']:.2f}x "
+            f"{'🎯' if alert_info['pace'] >= 1.0 else ''}")
+        lines.append("")
+
+        # ─── روزها ───
+        lines.append(
+            f"📅 *روزها:* {alert_info['days_elapsed']} از "
+            f"{alert_info['days_total']} "
+            f"({alert_info['days_remaining']} روز مانده)")
+        lines.append(
+            f"📆 *سررسید:* {alert_info['expiry_date']}")
+        lines.append("")
+
+        # ─── سود ───
         lines.append("━━━━━━━━━━━━━━━━━━━━━━")
         lines.append(
-            f"💰 *سود فعلی:* {fmt_pct(alert_info['live_roi'], digits=1)}")
-        lines.append(
-            f"🎯 *حد هشدار:* {alert_info['alert_target_roi']}%")
-        lines.append(
-            f"📊 *سود مورد انتظار سررسید:* "
-            f"{alert_info['target_roi_maturity']:.1f}%")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+            f"💵 *سود فعلی:* {fmt_money(alert_info['live_pnl'])}")
         lines.append("")
-        lines.append(
-            f"💵 *مبلغ سود:* {fmt_money(alert_info['live_pnl'])}")
-        lines.append("")
-        lines.append("⏱️ *آماده برای بستن موقعیت*")
+        lines.append("⏱️ *به هدف ماهانه رسید — آماده‌ی آفست*")
         lines.append(f"🕐 *زمان:* {time_str}")
 
         return "\n".join(lines)
 
     def send_bale_alert(self, alert_info: dict) -> bool:
-        """ارسال پیام هشدار position — Async"""
+        """ارسال پیام هشدار پویا — Async."""
         if not self.notifier.is_configured:
             logger.warning("[Bale] Alert not sent — not configured")
             return False
@@ -804,114 +795,34 @@ class LivePositionMonitorThread(QThread):
             return False
 
     # =====================================================
-    # ✅ پیام هشدار گروه
-    # =====================================================
-
-    def _build_group_alert_message(self, alert_info: dict) -> str:
-        """ساخت پیام هشدار گروه"""
-        now = jdatetime.datetime.now()
-        time_str = now.strftime("%Y/%m/%d, %H:%M:%S")
-
-        lines = []
-        lines.append("🎯 *هشدار حد سود استراتژی*")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("")
-        lines.append(f"📁 *نام:* {alert_info['display_name']}")
-        lines.append(
-            f"🏷 *نوع:* {alert_info['strategy_type']}")
-        lines.append(
-            f"📊 *تعداد موقعیت‌ها:* {alert_info['num_positions']}")
-        lines.append("")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append(
-            f"💰 *ROI فعلی:* "
-            f"{fmt_pct(alert_info['group_roi'], digits=1)}")
-        lines.append(
-            f"🎯 *حد هشدار:* {alert_info['alert_target_roi']}%")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("")
-        lines.append(
-            f"💵 *سود کل:* "
-            f"{fmt_money(alert_info['total_pnl'])}")
-        lines.append(
-            f"   • لایو: {fmt_money(alert_info['live_pnl'])}")
-        if alert_info['realized_pnl'] != 0:
-            lines.append(
-                f"   • محقق‌شده: "
-                f"{fmt_money(alert_info['realized_pnl'])}")
-        lines.append(
-            f"💼 *هزینه‌ی باز:* "
-            f"{fmt_money(alert_info['open_cost'])}")
-        lines.append("")
-        lines.append("⏱️ *آماده برای آفست استراتژی*")
-        lines.append(f"🕐 *زمان:* {time_str}")
-
-        return "\n".join(lines)
-
-    def send_group_bale_alert(self, alert_info: dict) -> bool:
-        """ارسال پیام هشدار گروه — Async"""
-        if not self.notifier.is_configured:
-            logger.warning("[Bale] Group alert not sent — not configured")
-            return False
-
-        try:
-            msg = self._build_group_alert_message(alert_info)
-            group_id = alert_info.get("group_id", "")
-            # از prefix برای تمایز استفاده می‌کنیم
-            worker = BaleSendWorker(
-                self.notifier, msg, f"GROUP:{group_id}")
-            worker.send_finished.connect(self._on_worker_finished)
-            self._workers.append(worker)
-            worker.start()
-            return True
-        except Exception as e:
-            logger.exception(f"Bale group alert failed: {e}")
-            return False
-
-    # =====================================================
     # Worker finished
     # =====================================================
 
     @Slot(bool, str)
     def _on_worker_finished(self, success: bool, position_id: str):
-        """پاکسازی کارگر + به‌روزرسانی alert_sent"""
+        """پاکسازی کارگر + به‌روزرسانی alert_sent."""
         if not position_id or position_id == "REMINDER":
-            # پاکسازی لیست
             self._workers = [
                 w for w in self._workers
                 if w.isRunning() or not w.isFinished()
             ]
             return
 
-        # ─── گروه ───
-        if position_id.startswith("GROUP:"):
-            group_id = position_id[len("GROUP:"):]
-            if success:
-                logger.info(
-                    f"[Bale] Group alert sent OK for {group_id}")
-                self._mark_group_alert_sent_on_disk(group_id)
-            else:
-                logger.warning(
-                    f"[Bale] Group alert FAILED for {group_id}")
-
-        # ─── position ───
+        if success:
+            logger.info(
+                f"[Bale] Alert sent OK for {position_id}")
+            self._mark_alert_sent_on_disk(position_id)
         else:
-            if success:
-                logger.info(
-                    f"[Bale] Alert sent OK for {position_id}")
-                self._mark_alert_sent_on_disk(position_id)
-            else:
-                logger.warning(
-                    f"[Bale] Alert FAILED for {position_id}")
+            logger.warning(
+                f"[Bale] Alert FAILED for {position_id}")
 
-        # پاکسازی لیست
         self._workers = [
             w for w in self._workers
             if w.isRunning() or not w.isFinished()
         ]
 
     def _mark_alert_sent_on_disk(self, position_id: str):
-        """ثبت موفقیت ارسال آلرت position"""
+        """ثبت موفقیت ارسال آلرت."""
         try:
             all_positions = self.storage.load_positions()
             changed = False
@@ -927,30 +838,12 @@ class LivePositionMonitorThread(QThread):
         except Exception as e:
             logger.exception(f"Failed to mark alert_sent: {e}")
 
-    def _mark_group_alert_sent_on_disk(self, group_id: str):
-        """✅ ثبت موفقیت ارسال آلرت گروه"""
-        try:
-            groups = self.storage.load_groups()
-            changed = False
-            for g in groups:
-                if g.group_id == group_id and not g.alert_sent:
-                    g.alert_sent = True
-                    changed = True
-                    break
-
-            if changed:
-                self.storage.save_groups(groups)
-                logger.debug(
-                    f"Group alert_sent marked for {group_id}")
-        except Exception as e:
-            logger.exception(f"Failed to mark group alert_sent: {e}")
-
     # =====================================================
     # گزارش موقعیت (ارسال دستی)
     # =====================================================
 
     def send_position_report(self, position) -> bool:
-        """ارسال گزارش position به بله (Async)"""
+        """ارسال گزارش position به بله (Async)."""
         if not self.notifier.is_configured:
             logger.warning("[Bale] Not configured — cannot send report")
             return False
@@ -968,7 +861,7 @@ class LivePositionMonitorThread(QThread):
             return False
 
     def _build_position_report(self, pos) -> str:
-        """ساخت پیام گزارش position"""
+        """ساخت پیام گزارش position."""
         now = jdatetime.datetime.now()
         time_str = now.strftime("%Y/%m/%d, %H:%M:%S")
 
@@ -1022,12 +915,27 @@ class LivePositionMonitorThread(QThread):
         lines.append("━━━━━━━━━━━━━━━━━━━━━━")
         lines.append(f"💰 *هزینه خالص ورود:* {fmt_money(net_cost)}")
 
+        # ─── آلرت پویا ───
         if pos.status == PositionStatus.OPEN:
             emoji = "🟢" if live_pnl > 0 else \
                 ("🔴" if live_pnl < 0 else "⚪")
             lines.append(
                 f"{emoji} *سود/زیان لایو:* {fmt_money(live_pnl)} "
                 f"({fmt_pct(live_roi, digits=1)})")
+
+            # اطلاعات پویا
+            if pos.target_roi_maturity > 0:
+                d = pos.days_elapsed()
+                threshold = SharedAnalytics.calculate_dynamic_threshold(
+                    pos.target_roi_maturity, d)
+                lines.append("")
+                lines.append("📊 *آلرت پویا:*")
+                lines.append(
+                    f"  • تارگت ماهانه: "
+                    f"{fmt_pct(pos.target_roi_maturity, digits=1, signed=False)}")
+                lines.append(
+                    f"  • آستانه‌ی امروز: "
+                    f"{fmt_pct(threshold, digits=2, signed=False)}")
         else:
             emoji = "🟢" if realized_pnl > 0 else \
                 ("🔴" if realized_pnl < 0 else "⚪")

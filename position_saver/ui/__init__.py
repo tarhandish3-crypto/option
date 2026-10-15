@@ -6,8 +6,10 @@
 
 شامل:
     - PositionSaverWidget: ویجت اصلی
-    - دیالوگ‌ها: ویرایش، تسویه، آفست، تاریخچه، نوع اعمال
+    - دیالوگ‌ها: ویرایش، تسویه، آفست، تاریخچه
     - دیالوگ‌های تخصصی: پر کردن نماد، تحلیل نماد، تعریف استراتژی
+    - چک استراتژی جدید
+    - گزارش‌گیری
     - Wizard ایمپورت اکسل
     - ثابت‌ها: کارگزاری‌ها، استراتژی‌های استاندارد
 """
@@ -21,42 +23,102 @@ from position_saver.ui.dialogs import (
     CashSettlementDialog,
     OffsetDialog,
     ImportHistoryDialog,
-    ExerciseTypeDialog,
+    # توابع کمکی
+    find_conflicts,
+    build_conflict_message,
     # ثابت‌ها
     BROKER_NAMES,
     DEFAULT_BROKER,
     AUTO_SWITCH_KEYBOARD,
 )
 
-from position_saver.ui.split_position_dialog import (
-    SplitPositionDialog,
-    SPLIT_REASONS,
-)
+
+# ═══════════════════════════════════════════════════
+# ۲. دیالوگ Split (با محافظت)
+# ═══════════════════════════════════════════════════
+
+try:
+    from position_saver.ui.split_position_dialog import (
+        SplitPositionDialog,
+        SPLIT_REASONS,
+    )
+    _SPLIT_DIALOG_AVAILABLE = True
+except ImportError:
+    SplitPositionDialog = None
+    SPLIT_REASONS = []
+    _SPLIT_DIALOG_AVAILABLE = False
 
 
 # ═══════════════════════════════════════════════════
-# ۲. دیالوگ‌های تخصصی
+# ۳. دیالوگ‌های تخصصی
 # ═══════════════════════════════════════════════════
 
-from position_saver.ui.symbol_fill_dialog import SymbolFillDialog
+try:
+    from position_saver.ui.symbol_fill_dialog import SymbolFillDialog
+    _SYMBOL_FILL_AVAILABLE = True
+except ImportError:
+    SymbolFillDialog = None
+    _SYMBOL_FILL_AVAILABLE = False
 
-from position_saver.ui.net_position_dialog import NetPositionDialog
+try:
+    from position_saver.ui.net_position_dialog import NetPositionDialog
+    _NET_POSITION_AVAILABLE = True
+except ImportError:
+    NetPositionDialog = None
+    _NET_POSITION_AVAILABLE = False
 
-from position_saver.ui.strategy_dialog import (
-    StrategyDialog,
-    STANDARD_STRATEGIES,
-)
+try:
+    from position_saver.ui.strategy_dialog import (
+        StrategyDialog,
+        STANDARD_STRATEGIES,
+    )
+    _STRATEGY_DIALOG_AVAILABLE = True
+except ImportError:
+    StrategyDialog = None
+    STANDARD_STRATEGIES = []
+    _STRATEGY_DIALOG_AVAILABLE = False
 
 
 # ═══════════════════════════════════════════════════
-# ۳. ویجت اصلی
+# ۴. چک استراتژی جدید
 # ═══════════════════════════════════════════════════
 
-from position_saver.ui.main_widget import PositionSaverWidget
+try:
+    from position_saver.ui.strategy_check_dialog import (
+        StrategyCheckDialog,
+    )
+    _STRATEGY_CHECK_AVAILABLE = True
+except ImportError:
+    StrategyCheckDialog = None
+    _STRATEGY_CHECK_AVAILABLE = False
 
 
 # ═══════════════════════════════════════════════════
-# ۴. Wizard ایمپورت (با محافظت)
+# ۵. گزارش‌گیری
+# ═══════════════════════════════════════════════════
+
+try:
+    from position_saver.ui.report_dialog import (
+        ReportDialog,
+        ReportFilter,
+        ReportRow,
+        ReportResult,
+        BaseReportExporter,
+        ExcelReportExporter,
+    )
+    _REPORT_AVAILABLE = True
+except ImportError:
+    ReportDialog = None
+    ReportFilter = None
+    ReportRow = None
+    ReportResult = None
+    BaseReportExporter = None
+    ExcelReportExporter = None
+    _REPORT_AVAILABLE = False
+
+
+# ═══════════════════════════════════════════════════
+# ۶. Wizard ایمپورت
 # ═══════════════════════════════════════════════════
 
 try:
@@ -70,7 +132,14 @@ except ImportError:
 
 
 # ═══════════════════════════════════════════════════
-# ۵. صادرکننده‌ها
+# ۷. ویجت اصلی (آخر — برای جلوگیری از circular)
+# ═══════════════════════════════════════════════════
+
+from position_saver.ui.main_widget import PositionSaverWidget
+
+
+# ═══════════════════════════════════════════════════
+# ۸. صادرکننده‌ها
 # ═══════════════════════════════════════════════════
 
 __all__ = [
@@ -82,7 +151,10 @@ __all__ = [
     "CashSettlementDialog",
     "OffsetDialog",
     "ImportHistoryDialog",
-    "ExerciseTypeDialog",
+
+    # ─── توابع کمکی ───
+    "find_conflicts",
+    "build_conflict_message",
 
     # ─── دیالوگ‌های تخصصی ───
     "SymbolFillDialog",
@@ -90,6 +162,17 @@ __all__ = [
     "StrategyDialog",
     "SplitPositionDialog",
     "SPLIT_REASONS",
+
+    # ─── چک استراتژی ───
+    "StrategyCheckDialog",
+
+    # ─── گزارش‌گیری ───
+    "ReportDialog",
+    "ReportFilter",
+    "ReportRow",
+    "ReportResult",
+    "BaseReportExporter",
+    "ExcelReportExporter",
 
     # ─── Wizard ───
     "ImportWizardDialog",
@@ -102,4 +185,10 @@ __all__ = [
 
     # ─── پرچم‌ها ───
     "_IMPORT_WIZARD_AVAILABLE",
+    "_STRATEGY_CHECK_AVAILABLE",
+    "_REPORT_AVAILABLE",
+    "_SPLIT_DIALOG_AVAILABLE",
+    "_SYMBOL_FILL_AVAILABLE",
+    "_NET_POSITION_AVAILABLE",
+    "_STRATEGY_DIALOG_AVAILABLE",
 ]

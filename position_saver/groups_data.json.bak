@@ -2,14 +2,14 @@
   "version": 3,
   "groups": [
     {
-      "group_id": "GRP-747526",
+      "group_id": "GRP-A76CA7",
       "strategy_type": "Long Offset",
-      "display_name": "Long Offset - ضفزر5051",
+      "display_name": "خرید ضفزر505",
       "position_ids": [
-        "POS-670C3F",
-        "POS-FC7C95"
+        "POS-BED2BB",
+        "POS-973C39"
       ],
-      "created_at": "1405/07/22",
+      "created_at": "1405/07/23",
       "notes": "",
       "alert_target_roi": 10.0,
       "alert_sent": false

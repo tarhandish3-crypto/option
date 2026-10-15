@@ -1,18 +1,25 @@
 # position_saver/pnl_calculator.py
 # -*- coding: utf-8 -*-
 
+"""
+محاسبات مالی موقعیت‌های استراتژی آپشن.
+
+استانداردهای پیروی‌شده:
+    - OCC: Payoff و Max Profit/Loss
+    - سمات: کارمزدها و مالیات
+    - برنامه‌ی اصلی OptionScanner: همخوانی کامل
+
+منابع حقیقت:
+    - SharedAnalytics: سرمایه‌ی درگیر، max_profit، target_roi
+    - PositionPnLCalculator: PnL لحظه‌ای و محقق‌شده
+"""
+
 from typing import Dict, Tuple, List
 
 from position_saver.models import (
-    LegType, OptionLeg, StrategyPosition, PositionStatus,)
-
+    LegType, OptionLeg, StrategyPosition, PositionStatus,
+)
 from position_saver.providers import get_commission_rate
-
-
-# نرخ پیش‌فرض در صورت نبود کلید در COMMISSION_DICT
-_FALLBACK_OPTION_RATE = 0.001
-_FALLBACK_STOCK_BUY_RATE = 0.003712
-_FALLBACK_STOCK_SELL_RATE = 0.0088
 
 
 # ═══════════════════════════════════════════════════
@@ -20,7 +27,7 @@ _FALLBACK_STOCK_SELL_RATE = 0.0088
 # ═══════════════════════════════════════════════════
 
 STRATEGY_REQUIREMENTS = {
-    # ─── استراتژی‌های تک‌لگ ───
+    # ─── تک‌لگ ───
     "Long Call": {
         "min": 1, "max": 1,
         "fa_name": "لانگ کال",
@@ -37,8 +44,24 @@ STRATEGY_REQUIREMENTS = {
              "min": 1, "desc": "خرید پوت"},
         ],
     },
+    "Short Call": {
+        "min": 1, "max": 1,
+        "fa_name": "شورت کال",
+        "composition": [
+            {"leg_type": "sell", "option_kind": "CALL",
+             "min": 1, "desc": "فروش کال"},
+        ],
+    },
+    "Short Put": {
+        "min": 1, "max": 1,
+        "fa_name": "شورت پوت",
+        "composition": [
+            {"leg_type": "sell", "option_kind": "PUT",
+             "min": 1, "desc": "فروش پوت"},
+        ],
+    },
 
-    # ─── استراتژی‌های اسپرد ───
+    # ─── اسپرد ───
     "Bull Call Spread": {
         "min": 2, "max": 2,
         "fa_name": "بول کال اسپرد",
@@ -72,7 +95,7 @@ STRATEGY_REQUIREMENTS = {
         ],
     },
 
-    # ─── استراتژی‌های پیچیده ───
+    # ─── پیچیده ───
     "Long Box": {
         "min": 4, "max": 4,
         "fa_name": "لانگ باکس",
@@ -111,7 +134,7 @@ STRATEGY_REQUIREMENTS = {
         "extra": "strangle",
     },
 
-    # ─── استراتژی‌های جدید (برای آفست) ───
+    # ─── آفست ───
     "Long Offset": {
         "min": 2, "max": 2,
         "fa_name": "آفست لانگ",
@@ -143,83 +166,109 @@ STRATEGY_REQUIREMENTS = {
 }
 
 
+# ═══════════════════════════════════════════════════
+# کلاس اصلی
+# ═══════════════════════════════════════════════════
+
 class PositionPnLCalculator:
     """
     محاسبه‌گر سود/زیان موقعیت‌های استراتژی آپشن.
 
     نکات کلیدی:
-        - calculate_realized_pnl: لگ‌های close_price=None به عنوان
-          «باز» در نظر گرفته می‌شوند.
-        - calculate_live_pnl: کارمزد خروج برآوردی را لحاظ می‌کند.
-        - مبنای ROI: دبیت = هزینه خالص، کردیت = حداکثر زیان.
-        - calculate_call_default: کارمزد اعمال یک بار حساب می‌شود.
-        - تسویه نقدی: از cash_settlement_amount مستقیم استفاده می‌کند.
+        - calculate_live_pnl: از SharedAnalytics استفاده می‌کند.
+        - calculate_realized_pnl: از SharedAnalytics استفاده می‌کند.
+        - مبنای ROI: SharedAnalytics.calculate_capital_base (OCC + سمات).
+        - calculate_call_default: مطابق ضوابط بورس تهران.
+        - تسویه نقدی: از cash_settlement_amount مستقیم.
         - validate_strategy: اعتبارسنجی ترکیب لگ‌ها.
     """
 
     # =====================================================
-    # ابزارهای کمکی
-    # =====================================================
-
-    @staticmethod
-    def _contract_size(leg: OptionLeg) -> int:
-        """اندازه قرارداد واقعی"""
-        return leg.effective_contract_size
-
-    @classmethod
-    def _fee_rate(cls, leg: OptionLeg, is_buy: bool) -> float:
-        """نرخ کارمزد بر اساس نوع دارایی و سمت معامله"""
-        if leg.is_option:
-            market, asset_type = "tse", "option"
-        else:
-            market, asset_type = "tse", "stock"
-
-        try:
-            rate = get_commission_rate(market, asset_type, is_buy)
-        except Exception:
-            rate = None
-
-        if rate is None:
-            if leg.is_option:
-                rate = _FALLBACK_OPTION_RATE
-            else:
-                rate = _FALLBACK_STOCK_BUY_RATE if is_buy \
-                    else _FALLBACK_STOCK_SELL_RATE
-
-        return float(rate)
-
-    # =====================================================
-    # کارمزدها
+    # کارمزد (Delegate به SharedAnalytics)
     # =====================================================
 
     @classmethod
     def calculate_leg_entry_fee(cls, leg: OptionLeg) -> float:
-        """کارمزد ورود یک لنگه"""
-        is_buy = (leg.leg_type == LegType.BUY)
-        rate = cls._fee_rate(leg, is_buy)
-        cs = cls._contract_size(leg)
-        notional = leg.quantity * leg.entry_price * cs
-        return notional * rate
+        """کارمزد ورود یک لنگه."""
+        from position_saver.shared_analytics import SharedAnalytics
+        return SharedAnalytics.calculate_leg_entry_fee(leg)
 
     @classmethod
     def calculate_leg_close_fee(
         cls, leg: OptionLeg, close_price: float
     ) -> float:
-        """کارمزد خروج یک لنگه"""
-        if close_price is None or close_price <= 0:
-            return 0.0
-        is_buy_on_close = (leg.leg_type == LegType.SELL)
-        rate = cls._fee_rate(leg, is_buy_on_close)
-        cs = cls._contract_size(leg)
-        notional = leg.quantity * close_price * cs
-        return notional * rate
+        """کارمزد خروج یک لنگه."""
+        from position_saver.shared_analytics import SharedAnalytics
+        return SharedAnalytics.calculate_leg_close_fee(leg, close_price)
 
     @classmethod
     def _estimated_close_fee(cls, leg: OptionLeg) -> float:
-        """کارمزد خروج برآوردی"""
+        """کارمزد خروج برآوردی."""
         price = leg.current_price if leg.current_price > 0 \
             else leg.entry_price
         return cls.calculate_leg_close_fee(leg, price)
+
+    # =====================================================
+    # ✅ PnL سطح لگ — منبع واحد حقیقت
+    # =====================================================
+
+    @classmethod
+    def calculate_leg_live_pnl(cls, leg: OptionLeg) -> float:
+        """
+        PnL لحظه‌ای یک لگ.
+
+        شامل:
+            - تغییر قیمت
+            - کارمزد ورود (اگر ثبت نشده، محاسبه)
+            - کارمزد خروج برآوردی
+        """
+        if leg.is_closed:
+            return cls.calculate_leg_realized_pnl(leg)
+
+        cs = leg.effective_contract_size
+        curr_price = leg.current_price if leg.current_price > 0 \
+            else leg.entry_price
+        val_diff = (curr_price - leg.entry_price) * leg.quantity * cs
+
+        entry_fee = leg.entry_fee if leg.entry_fee > 0 \
+            else cls.calculate_leg_entry_fee(leg)
+        est_close_fee = cls._estimated_close_fee(leg)
+
+        if leg.leg_type == LegType.BUY:
+            return val_diff - entry_fee - est_close_fee
+        return -val_diff - entry_fee - est_close_fee
+
+    @classmethod
+    def calculate_leg_realized_pnl(cls, leg: OptionLeg) -> float:
+        """
+        PnL محقق‌شده‌ی یک لگ.
+
+        اگر leg.realized_pnl ست شده باشد، اولویت دارد (سازگاری).
+        """
+        if leg.realized_pnl is not None:
+            return float(leg.realized_pnl)
+
+        if not leg.is_closed:
+            return 0.0
+
+        cs = leg.effective_contract_size
+        try:
+            close_price = float(leg.close_price)
+        except (TypeError, ValueError):
+            return 0.0
+
+        price_diff = (close_price - leg.entry_price) \
+            * leg.quantity * cs
+
+        entry_fee = leg.entry_fee if leg.entry_fee > 0 \
+            else cls.calculate_leg_entry_fee(leg)
+        close_fee = leg.close_fee if leg.close_fee > 0 \
+            else cls.calculate_leg_close_fee(leg, close_price)
+        fees = entry_fee + close_fee
+
+        if leg.leg_type == LegType.BUY:
+            return price_diff - fees
+        return -price_diff - fees
 
     # =====================================================
     # هزینه خالص ورود
@@ -229,10 +278,10 @@ class PositionPnLCalculator:
     def calculate_net_entry_cost(
         cls, position: StrategyPosition
     ) -> float:
-        """هزینه خالص ورود به استراتژی"""
+        """هزینه خالص ورود (با احتساب کارمزد ورود)."""
         net_cost = 0.0
         for leg in position.legs:
-            cs = cls._contract_size(leg)
+            cs = leg.effective_contract_size
             leg_val = leg.quantity * leg.entry_price * cs
             fee = leg.entry_fee if leg.entry_fee > 0 \
                 else cls.calculate_leg_entry_fee(leg)
@@ -244,42 +293,47 @@ class PositionPnLCalculator:
         return net_cost
 
     # =====================================================
-    # حداکثر زیان — با payoff grid
+    # ✅ Capital Base — از SharedAnalytics
     # =====================================================
 
     @classmethod
-    def _payoff_at_expiry(
-        cls, position: StrategyPosition, S_T: float
+    def _get_capital_base(
+        cls, position: StrategyPosition
     ) -> float:
-        """ارزش موقعیت در سررسید به ازای S_T"""
-        total = 0.0
-        for leg in position.legs:
-            cs = cls._contract_size(leg)
-            qty = leg.quantity
+        """سرمایه‌ی درگیر — مطابق OCC و سمات."""
+        from position_saver.shared_analytics import SharedAnalytics
+        return SharedAnalytics.calculate_capital_base(position)
 
-            if leg.is_stock:
-                value = S_T * qty * 1
-            elif leg.is_call:
-                intrinsic = max(0.0, S_T - leg.strike_price)
-                value = intrinsic * qty * cs
-            elif leg.is_put:
-                intrinsic = max(0.0, leg.strike_price - S_T)
-                value = intrinsic * qty * cs
-            else:
-                value = 0.0
+    # =====================================================
+    # ✅ حداکثر سود / زیان — از SharedAnalytics
+    # =====================================================
 
-            if leg.leg_type == LegType.BUY:
-                total += value
-            else:
-                total -= value
+    @classmethod
+    def calculate_max_profit_at_expiry(
+        cls,
+        position: StrategyPosition,
+        price_target: float = None,
+    ):
+        """
+        حداکثر سود استراتژی در سررسید.
 
-        return total
+        Returns:
+            مبلغ (float) یا None اگر نامحدود.
+        """
+        from position_saver.shared_analytics import SharedAnalytics
+        target = price_target if price_target else (
+            position.price_target or None
+        )
+        return SharedAnalytics.calculate_max_profit_at_expiry(
+            position, target)
 
     @classmethod
     def calculate_max_loss_estimate(
         cls, position: StrategyPosition
     ) -> float:
-        """برآورد حداکثر زیان — با payoff grid"""
+        """برآورد حداکثر زیان — با payoff grid."""
+        from position_saver.shared_analytics import SharedAnalytics
+
         strikes = []
         for leg in position.legs:
             if leg.is_option and leg.strike_price > 0:
@@ -290,83 +344,95 @@ class PositionPnLCalculator:
         if not strikes:
             return abs(cls.calculate_net_entry_cost(position))
 
-        min_strike = min(strikes)
-        max_strike = max(strikes)
+        min_K = min(strikes)
+        max_K = max(strikes)
 
-        test_points = [
-            0.0,
-            min_strike * 0.5,
-            *strikes,
-            max_strike * 1.5,
-            max_strike * 3.0,
-            max_strike * 10.0,
-        ]
-
-        sorted_strikes = sorted(set(strikes))
-        for i in range(len(sorted_strikes) - 1):
-            mid = (sorted_strikes[i] + sorted_strikes[i + 1]) / 2
-            test_points.append(mid)
-
-        test_points = sorted(set(test_points))
+        test_points = SharedAnalytics._build_test_points(
+            strikes, min_K, max_K, None)
 
         net_entry = cls.calculate_net_entry_cost(position)
         max_loss = 0.0
         for S_T in test_points:
-            payoff = cls._payoff_at_expiry(position, S_T)
+            payoff = SharedAnalytics._payoff_at_expiry(position, S_T)
             pnl = payoff - net_entry
             if pnl < max_loss:
                 max_loss = pnl
 
         if max_loss >= 0:
             return max(abs(net_entry), 1.0)
-
         return abs(max_loss)
 
     # =====================================================
-    # مبنای سرمایه
+    # ✅ Target ROI — از SharedAnalytics
     # =====================================================
 
     @classmethod
-    def _get_capital_base(
-        cls, position: StrategyPosition
+    def calculate_monthly_target_roi(
+        cls,
+        position: StrategyPosition,
+        price_target: float = None,
     ) -> float:
-        """مبنای سرمایه برای ROI"""
-        net_cost = cls.calculate_net_entry_cost(position)
+        """
+        محاسبه‌ی ROI ماهانه‌ی هدف.
 
-        if net_cost > 0:
-            return net_cost
+        فرمول: (max_profit / capital_base) × (30 / D) × 100
 
-        max_loss = cls.calculate_max_loss_estimate(position)
-        if max_loss > 0:
-            return max_loss
+        Returns:
+            ROI ماهانه (درصد) یا 0 اگر محاسبه ممکن نبود.
+        """
+        from position_saver.shared_analytics import SharedAnalytics
 
-        return abs(net_cost) if net_cost != 0 else 1.0
+        max_profit = cls.calculate_max_profit_at_expiry(
+            position, price_target)
+        if max_profit is None or max_profit <= 0:
+            return 0.0
+
+        capital = cls._get_capital_base(position)
+        if capital <= 0:
+            return 0.0
+
+        D = position.total_days()
+        if D <= 0:
+            D = 30
+
+        return SharedAnalytics.calculate_monthly_target_roi(
+            max_profit=max_profit,
+            capital_base=capital,
+            days_to_maturity=D,
+        )
+
+    @classmethod
+    def calculate_dynamic_threshold(
+        cls,
+        position: StrategyPosition,
+    ) -> float:
+        """
+        آستانه‌ی آلرت پویا برای امروز.
+
+        فرمول: target_monthly × (d / 30)
+        """
+        from position_saver.shared_analytics import SharedAnalytics
+
+        target = position.target_roi_maturity
+        if target <= 0:
+            return 0.0
+
+        d = position.days_elapsed()
+        return SharedAnalytics.calculate_dynamic_threshold(target, d)
 
     # =====================================================
-    # PnL لایو
+    # ✅ PnL لحظه‌ای (سطح position) — Delegate به لگ
     # =====================================================
 
     @classmethod
     def calculate_live_pnl(
         cls, position: StrategyPosition
     ) -> Tuple[float, float]:
-        """محاسبه سود/زیان لایو و ROI"""
-        live_pnl = 0.0
-
-        for leg in position.legs:
-            cs = cls._contract_size(leg)
-            curr_price = leg.current_price if leg.current_price > 0 \
-                else leg.entry_price
-            val_diff = (curr_price - leg.entry_price) * \
-                leg.quantity * cs
-            entry_fee = leg.entry_fee if leg.entry_fee > 0 \
-                else cls.calculate_leg_entry_fee(leg)
-            est_close_fee = cls._estimated_close_fee(leg)
-
-            if leg.leg_type == LegType.BUY:
-                live_pnl += val_diff - entry_fee - est_close_fee
-            else:
-                live_pnl -= val_diff + entry_fee + est_close_fee
+        """محاسبه سود/زیان لایو و ROI."""
+        live_pnl = sum(
+            cls.calculate_leg_live_pnl(leg)
+            for leg in position.legs
+        )
 
         base_capital = cls._get_capital_base(position)
         live_roi = (live_pnl / base_capital) * 100.0 \
@@ -382,7 +448,7 @@ class PositionPnLCalculator:
     def calculate_realized_pnl(
         cls, position: StrategyPosition
     ) -> Tuple[float, float]:
-        """محاسبه سود/زیان محقق‌شده"""
+        """محاسبه سود/زیان محقق‌شده."""
         if position.status == PositionStatus.OPEN:
             return 0.0, 0.0
 
@@ -402,10 +468,13 @@ class PositionPnLCalculator:
         net_exit = 0.0
 
         for leg in position.legs:
-            cs = cls._contract_size(leg)
+            cs = leg.effective_contract_size
 
             if leg.close_price is not None:
-                close_price = leg.close_price
+                try:
+                    close_price = float(leg.close_price)
+                except (TypeError, ValueError):
+                    close_price = leg.entry_price
                 fee = leg.close_fee if leg.close_fee > 0 \
                     else cls.calculate_leg_close_fee(
                         leg, close_price)
@@ -432,7 +501,7 @@ class PositionPnLCalculator:
     def calculate_realized_pnl_with_details(
         cls, position: StrategyPosition
     ) -> Dict[str, float]:
-        """نسخه با جزئیات"""
+        """نسخه با جزئیات."""
         # تسویه نقدی
         if position.status == PositionStatus.CASH_SETTLED \
                 and position.cash_settlement_amount:
@@ -460,14 +529,17 @@ class PositionPnLCalculator:
         total_entry_fee = 0.0
 
         for leg in position.legs:
-            cs = cls._contract_size(leg)
+            cs = leg.effective_contract_size
 
             entry_fee = leg.entry_fee if leg.entry_fee > 0 \
                 else cls.calculate_leg_entry_fee(leg)
             total_entry_fee += entry_fee
 
             if leg.close_price is not None:
-                close_price = leg.close_price
+                try:
+                    close_price = float(leg.close_price)
+                except (TypeError, ValueError):
+                    close_price = leg.entry_price
                 fee = leg.close_fee if leg.close_fee > 0 \
                     else cls.calculate_leg_close_fee(
                         leg, close_price)
@@ -506,10 +578,9 @@ class PositionPnLCalculator:
     def calculate_exercise_intrinsic(
         cls, leg: OptionLeg, S_T: float
     ) -> float:
-        """ارزش ذاتی یک لگ آپشن"""
+        """ارزش ذاتی یک لگ آپشن."""
         if not leg.is_option:
             return S_T
-
         K = leg.strike_price
         if leg.is_call:
             return max(0.0, S_T - K)
@@ -521,9 +592,9 @@ class PositionPnLCalculator:
     def calculate_exercise_total(
         cls, leg: OptionLeg, S_T: float
     ) -> Dict[str, float]:
-        """محاسبه کل مالی اعمال فیزیکی یک لگ"""
+        """محاسبه کل مالی اعمال فیزیکی یک لگ."""
         intrinsic = cls.calculate_exercise_intrinsic(leg, S_T)
-        cs = cls._contract_size(leg)
+        cs = leg.effective_contract_size
         total_value = intrinsic * leg.quantity * cs
 
         return {
@@ -544,7 +615,7 @@ class PositionPnLCalculator:
         exercise_rate: float = 0.0,
         is_self_default: bool = False,
     ) -> Dict[str, float]:
-        """محاسبه مالی نکول یک لگ CALL"""
+        """محاسبه مالی نکول یک لگ CALL — مطابق ضوابط بورس تهران."""
         _empty = {
             "valid": False,
             "payment": 0.0,
@@ -561,7 +632,7 @@ class PositionPnLCalculator:
 
         K = leg.strike_price
         qty = leg.quantity
-        cs = cls._contract_size(leg)
+        cs = leg.effective_contract_size
 
         if qty <= 0 or cs <= 0 or S_T <= 0 or K <= 0:
             return _empty
@@ -611,7 +682,7 @@ class PositionPnLCalculator:
         position: StrategyPosition,
         close_prices: Dict[str, float],
     ) -> Dict[str, float]:
-        """محاسبه PnL محقق‌شده برای آفست"""
+        """محاسبه PnL محقق‌شده برای آفست."""
         temp = position.copy()
 
         for leg in temp.legs:
@@ -625,37 +696,14 @@ class PositionPnLCalculator:
         return cls.calculate_realized_pnl_with_details(temp)
 
     # =====================================================
-    # بررسی اعتبار قیمت‌ها
-    # =====================================================
-
-    @classmethod
-    def has_stale_prices(
-        cls, position: StrategyPosition
-    ) -> bool:
-        """آیا موقعیت لگ‌هایی با قیمت کهنه دارد؟"""
-        for leg in position.legs:
-            if leg.current_price <= 0:
-                return True
-        return False
-
-    @classmethod
-    def count_stale_legs(
-        cls, position: StrategyPosition
-    ) -> int:
-        """تعداد لگ‌های با قیمت کهنه"""
-        count = 0
-        for leg in position.legs:
-            if leg.current_price <= 0:
-                count += 1
-        return count
-
-    # =====================================================
     # پیشنهاد نام استراتژی
     # =====================================================
 
     STANDARD_STRATEGIES = [
         "Long Call",
         "Long Put",
+        "Short Call",
+        "Short Put",
         "Bull Call Spread",
         "Bear Put Spread",
         "Covered Call",
@@ -671,29 +719,29 @@ class PositionPnLCalculator:
     def suggest_strategy_name(
         cls, legs: List[OptionLeg]
     ) -> str:
-        """
-        پیشنهاد نام استراتژی بر اساس ترکیب لگ‌ها.
-
-        ترتیب اولویت:
-            1. Single Trade (تک‌لگ)
-            2. Offset (دولگ متقارن)
-            3. استراتژی‌های اسپرد
-        """
+        """پیشنهاد نام استراتژی بر اساس ترکیب لگ‌ها."""
         if not legs:
             return ""
 
         n_total = len(legs)
 
-        # ─── تک‌لگ ───
+        # تک‌لگ
         if n_total == 1:
+            leg = legs[0]
+            if leg.is_call:
+                return "Long Call" if leg.leg_type == LegType.BUY \
+                    else "Short Call"
+            if leg.is_put:
+                return "Long Put" if leg.leg_type == LegType.BUY \
+                    else "Short Put"
             return "Single Trade"
 
-        # ─── تشخیص Offset ───
+        # آفست
         offset_name = cls._detect_offset(legs)
         if offset_name:
             return offset_name
 
-        # ─── بقیه ───
+        # دسته‌بندی
         call_buys = [l for l in legs
                      if l.is_call and l.leg_type == LegType.BUY]
         call_sells = [l for l in legs
@@ -705,36 +753,29 @@ class PositionPnLCalculator:
         stock_buys = [l for l in legs
                       if l.is_stock and l.leg_type == LegType.BUY]
 
-        # ─── دولگ: Bull Call Spread ───
+        # دولگ
         if n_total == 2:
             if len(call_buys) == 1 and len(call_sells) == 1:
                 if call_buys[0].strike_price < \
                         call_sells[0].strike_price:
                     return "Bull Call Spread"
 
-            # Bear Put Spread
             if len(put_buys) == 1 and len(put_sells) == 1:
                 if put_buys[0].strike_price > \
                         put_sells[0].strike_price:
                     return "Bear Put Spread"
 
-            # Covered Call
             if len(stock_buys) == 1 and len(call_sells) == 1:
                 return "Covered Call"
 
-            # Long Straddle
             if len(call_buys) == 1 and len(put_buys) == 1:
-                if call_buys[0].strike_price == \
-                        put_buys[0].strike_price:
+                if abs(call_buys[0].strike_price
+                       - put_buys[0].strike_price) < 0.5:
                     return "Long Straddle"
-
-            # Long Strangle
-            if len(call_buys) == 1 and len(put_buys) == 1:
-                if call_buys[0].strike_price != \
-                        put_buys[0].strike_price:
+                else:
                     return "Long Strangle"
 
-        # ─── چهارلگ: Long Box ───
+        # چهارلگ: Long Box
         if n_total == 4:
             if (len(call_buys) == 1 and len(call_sells) == 1
                     and len(put_buys) == 1 and len(put_sells) == 1):
@@ -751,28 +792,16 @@ class PositionPnLCalculator:
 
     @classmethod
     def _detect_offset(cls, legs: List[OptionLeg]) -> str:
-        """
-        تشخیص آفست از ترکیب لگ‌ها.
-
-        Returns:
-            "Long Offset" یا "Short Offset" یا ""
-        """
+        """تشخیص آفست از ترکیب لگ‌ها."""
         if len(legs) != 2:
             return ""
-
-        # بررسی همان نماد
         if legs[0].symbol != legs[1].symbol:
             return ""
-
-        # بررسی همان strike
-        if abs(legs[0].strike_price - legs[1].strike_price) > 1:
+        if abs(legs[0].strike_price - legs[1].strike_price) > 0.5:
             return ""
-
-        # بررسی همان expiry
         if legs[0].expiry_date != legs[1].expiry_date:
             return ""
 
-        # بررسی جهت مخالف
         buy_count = sum(
             1 for l in legs if l.leg_type == LegType.BUY)
         sell_count = sum(
@@ -781,14 +810,12 @@ class PositionPnLCalculator:
         if buy_count != 1 or sell_count != 1:
             return ""
 
-        # کدام اول BUY بود؟
         sorted_legs = sorted(
             legs,
             key=lambda l: l.open_date or "9999/99/99")
         if sorted_legs[0].leg_type == LegType.BUY:
             return "Long Offset"
-        else:
-            return "Short Offset"
+        return "Short Offset"
 
     # =====================================================
     # اعتبارسنجی استراتژی
@@ -798,18 +825,9 @@ class PositionPnLCalculator:
     def validate_strategy(
         cls, strategy_name: str, legs: List[OptionLeg]
     ) -> Dict:
-        """
-        اعتبارسنجی ترکیب لگ‌ها با استراتژی انتخاب‌شده.
-
-        Returns:
-            dict با کلیدهای:
-                - valid: bool
-                - errors: List[str]
-                - warnings: List[str]
-        """
+        """اعتبارسنجی ترکیب لگ‌ها با استراتژی انتخاب‌شده."""
         result = {"valid": True, "errors": [], "warnings": []}
 
-        # سفارشی — همیشه معتبر
         if strategy_name in ("سفارشی", "Custom", "custom", ""):
             return result
 
@@ -823,7 +841,6 @@ class PositionPnLCalculator:
         n = len(legs)
         fa_name = req.get("fa_name", strategy_name)
 
-        # ─── تعداد لگ ───
         if n < req["min"]:
             result["valid"] = False
             result["errors"].append(
@@ -839,14 +856,12 @@ class PositionPnLCalculator:
                 f"می‌پذیرد (شما {n} لگ انتخاب کرده‌اید).")
             return result
 
-        # ─── ترکیب لگ‌ها ───
         for item in req.get("composition", []):
             count = 0
             for leg in legs:
                 match_leg_type = (
                     leg.leg_type.value == item["leg_type"])
 
-                # اگر option_kind=None باشد، همه‌ی انواع قبول
                 if item.get("option_kind") is None:
                     match_kind = True
                 else:
@@ -866,7 +881,7 @@ class PositionPnLCalculator:
         if not result["valid"]:
             return result
 
-        # ─── قوانین اضافی ───
+        # قوانین اضافی
         extra = req.get("extra")
 
         if extra == "bull_call":
@@ -901,7 +916,8 @@ class PositionPnLCalculator:
             calls = [l for l in legs if l.is_call]
             puts = [l for l in legs if l.is_put]
             if calls and puts:
-                if calls[0].strike_price != puts[0].strike_price:
+                if abs(calls[0].strike_price
+                       - puts[0].strike_price) > 0.5:
                     result["warnings"].append(
                         "در Long Straddle، قیمت اعمال Call و "
                         "Put باید یکسان باشد.")
@@ -910,47 +926,13 @@ class PositionPnLCalculator:
             calls = [l for l in legs if l.is_call]
             puts = [l for l in legs if l.is_put]
             if calls and puts:
-                if calls[0].strike_price == puts[0].strike_price:
+                if abs(calls[0].strike_price
+                       - puts[0].strike_price) < 0.5:
                     result["warnings"].append(
                         "در Long Strangle، قیمت اعمال Call و "
                         "Put باید متفاوت باشد.")
 
-        elif extra == "long_box":
-            call_buys = [l for l in legs
-                         if l.is_call
-                         and l.leg_type == LegType.BUY]
-            call_sells = [l for l in legs
-                          if l.is_call
-                          and l.leg_type == LegType.SELL]
-            put_buys = [l for l in legs
-                        if l.is_put
-                        and l.leg_type == LegType.BUY]
-            put_sells = [l for l in legs
-                         if l.is_put
-                         and l.leg_type == LegType.SELL]
-            if call_buys and call_sells and put_buys and put_sells:
-                K1_call = call_buys[0].strike_price
-                K2_call = call_sells[0].strike_price
-                K2_put = put_buys[0].strike_price
-                K1_put = put_sells[0].strike_price
-                if not (K1_call < K2_call):
-                    result["valid"] = False
-                    result["errors"].append(
-                        f"در Long Box، باید K1_call < K2_call "
-                        f"باشد ({K1_call:,.0f} < {K2_call:,.0f})")
-                if abs(K2_call - K2_put) > 1:
-                    result["warnings"].append(
-                        f"در Long Box، K2_call "
-                        f"({K2_call:,.0f}) و K2_put "
-                        f"({K2_put:,.0f}) باید یکسان باشند.")
-                if abs(K1_call - K1_put) > 1:
-                    result["warnings"].append(
-                        f"در Long Box، K1_call "
-                        f"({K1_call:,.0f}) و K1_put "
-                        f"({K1_put:,.0f}) باید یکسان باشند.")
-
         elif extra == "offset":
-            # بررسی همان نماد
             symbols = set(l.symbol for l in legs)
             if len(symbols) > 1:
                 result["valid"] = False
@@ -959,7 +941,6 @@ class PositionPnLCalculator:
                     f"باشند (شما {len(symbols)} نماد دارید).")
                 return result
 
-            # بررسی همان strike
             strikes = set(
                 l.strike_price for l in legs if l.is_option)
             if len(strikes) > 1:
@@ -969,7 +950,6 @@ class PositionPnLCalculator:
                     f"قیمت اعمال داشته باشند.")
                 return result
 
-            # بررسی همان expiry
             expiries = set(
                 l.expiry_date for l in legs
                 if l.is_option and l.expiry_date)
@@ -979,7 +959,7 @@ class PositionPnLCalculator:
                     f"در آفست، همه‌ی لگ‌ها باید همان "
                     f"تاریخ سررسید داشته باشند.")
 
-        # ─── بررسی یکسان بودن سررسید (عمومی) ───
+        # بررسی یکسان بودن سررسید (عمومی)
         if extra != "offset":
             expiries = set()
             for leg in legs:
@@ -990,15 +970,15 @@ class PositionPnLCalculator:
                     f"لگ‌ها سررسید متفاوت دارند: "
                     f"{', '.join(sorted(expiries))}.")
 
-        # ─── بررسی یکسان بودن سهم پایه ───
-        import re
+        # بررسی یکسان بودن سهم پایه
+        import re as _re
         underlyings = set()
         for leg in legs:
             if leg.is_option and leg.symbol:
                 s = leg.symbol
                 if s.startswith(("ض", "ط")):
                     s = s[1:]
-                m = re.match(r'([^\d]+)', s)
+                m = _re.match(r'([^\d]+)', s)
                 if m:
                     underlyings.add(m.group(1))
         if len(underlyings) > 1:
@@ -1008,3 +988,89 @@ class PositionPnLCalculator:
                 f"{', '.join(sorted(underlyings))}.")
 
         return result
+
+    # =====================================================
+    # ✅ آلرت پویا — چک نهایی
+    # =====================================================
+
+    @classmethod
+    def check_dynamic_alert(
+        cls, position: StrategyPosition
+    ) -> Dict:
+        """
+        بررسی شرط آلرت پویا برای یک position.
+
+        Returns:
+            {
+                "should_alert": bool,
+                "current_roi": float,
+                "threshold": float,
+                "pace": float,
+                "days_elapsed": int,
+                "days_total": int,
+                "target_monthly": float,
+                "reason": str,
+            }
+        """
+        from position_saver.shared_analytics import SharedAnalytics
+
+        result = {
+            "should_alert": False,
+            "current_roi": 0.0,
+            "threshold": 0.0,
+            "pace": 0.0,
+            "days_elapsed": 0,
+            "days_total": 0,
+            "target_monthly": 0.0,
+            "reason": "",
+        }
+
+        # بررسی فعال بودن
+        if not position.alert_enabled:
+            result["reason"] = "آلرت غیرفعال است"
+            return result
+
+        if position.alert_sent:
+            result["reason"] = "آلرت قبلاً ارسال شده"
+            return result
+
+        if position.target_roi_maturity <= 0:
+            result["reason"] = "تارگت تنظیم نشده"
+            return result
+
+        # محاسبه PnL لایو
+        live_pnl, live_roi = cls.calculate_live_pnl(position)
+        result["current_roi"] = round(live_roi, 3)
+
+        # روزها
+        d = position.days_elapsed()
+        D = position.total_days()
+        result["days_elapsed"] = d
+        result["days_total"] = D
+        result["target_monthly"] = position.target_roi_maturity
+
+        # آستانه
+        threshold = SharedAnalytics.calculate_dynamic_threshold(
+            position.target_roi_maturity, d)
+        result["threshold"] = round(threshold, 3)
+
+        # Pace
+        if threshold > 0:
+            pace = live_roi / threshold
+            result["pace"] = round(pace, 3)
+
+        # بررسی شرط
+        if live_roi >= threshold:
+            result["should_alert"] = True
+            result["reason"] = (
+                f"ROI فعلی {live_roi:.2f}% ≥ آستانه "
+                f"{threshold:.2f}%")
+        else:
+            result["reason"] = (
+                f"ROI فعلی {live_roi:.2f}% < آستانه "
+                f"{threshold:.2f}%")
+
+        return result
+
+
+__all__ = ["PositionPnLCalculator", "STRATEGY_REQUIREMENTS"]

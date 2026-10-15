@@ -13,8 +13,6 @@
         - سهم → STOCK
         - ناقص → INCOMPLETE
         - کامل → UNKNOWN (کاربر در تب تکمیل‌شده تعیین می‌کند)
-
-هیچ تصمیم خودکاری درباره‌ی OFFSET/EXERCISE/... گرفته نمی‌شود.
 """
 
 import logging
@@ -82,7 +80,6 @@ class SnapshotEnricher:
 
     def _enrich_one(self, trade: TradeRecord, snapshot):
         """پر کردن یک trade"""
-        # ─── تشخیص نوع نماد ───
         if trade.option_kind is None:
             if is_option_symbol(trade.symbol):
                 trade.option_kind = (
@@ -95,7 +92,6 @@ class SnapshotEnricher:
             else:
                 self._try_detect_from_snapshot(trade, snapshot)
 
-        # ─── مسیر بر اساس نوع ───
         if trade.is_option:
             self._enrich_option(trade, snapshot)
         elif trade.is_stock:
@@ -103,26 +99,13 @@ class SnapshotEnricher:
         else:
             self._enrich_unknown(trade)
 
-        # ─── اگر هنوز ناقص است → حافظه ───
         if trade.is_incomplete and not trade.is_stock:
             self._try_fill_from_memory(trade)
 
-        # ─── نهایی‌سازی close_reason ───
         self._finalize_close_reason(trade)
 
-    # ═══════════════════════════════════════════════
-    # نهایی‌سازی close_reason (ساده)
-    # ═══════════════════════════════════════════════
-
     def _finalize_close_reason(self, trade: TradeRecord):
-        """
-        تعیین close_reason پیش‌فرض ساده.
-
-        قاعده:
-            - سهم پایه → STOCK
-            - ناقص → INCOMPLETE
-            - آپشن کامل → UNKNOWN (کاربر در تب تکمیل‌شده تصمیم می‌گیرد)
-        """
+        """تعیین close_reason پیش‌فرض"""
         if trade.is_stock:
             trade.close_reason = CLOSE_REASON_STOCK
             return
@@ -131,7 +114,6 @@ class SnapshotEnricher:
             trade.close_reason = CLOSE_REASON_INCOMPLETE
             return
 
-        # آپشن کامل — کاربر تصمیم می‌گیرد
         if trade.close_reason in ("", CLOSE_REASON_INCOMPLETE):
             trade.close_reason = CLOSE_REASON_UNKNOWN
 
@@ -141,17 +123,14 @@ class SnapshotEnricher:
 
     def _enrich_option(self, trade: TradeRecord, snapshot):
         """Enrich یک آپشن"""
-        # نام سهم پایه از پیشوند
         if not trade.underlying_symbol:
             trade.underlying_symbol = infer_underlying_from_option(
                 trade.symbol)
 
-        # ins_code_ua از SYMBOL_MAP
         if not trade.ins_code_ua and trade.underlying_symbol:
             trade.ins_code_ua = get_underlying_ins_code(
                 trade.underlying_symbol)
 
-        # lookup در Snapshot
         if snapshot is not None:
             contract = None
             try:
@@ -162,11 +141,9 @@ class SnapshotEnricher:
             if contract is not None:
                 self._fill_from_contract(trade, contract)
 
-        # اگر بعد از Snapshot هنوز ناقص است → حافظه
         if not trade.is_complete:
             self._try_fill_from_memory(trade)
 
-        # به‌روزرسانی وضعیت
         trade.needs_review = not trade.is_complete
 
         if trade.needs_review:
@@ -176,9 +153,7 @@ class SnapshotEnricher:
                     "قرارداد در Snapshot و حافظه پیدا نشد")
 
     def _fill_from_contract(self, trade: TradeRecord, contract):
-        """
-        پر کردن از قرارداد Snapshot با fallback روی نام‌های محتمل.
-        """
+        """پر کردن از قرارداد Snapshot با fallback روی نام‌های محتمل."""
         try:
             # ─── strike_price ───
             if not trade.strike_price or trade.strike_price <= 0:
@@ -283,12 +258,7 @@ class SnapshotEnricher:
     # ═══════════════════════════════════════════════
 
     def _try_fill_from_memory(self, trade: TradeRecord) -> bool:
-        """
-        تلاش برای پر کردن فیلدهای ناقص از حافظه‌ی نماد.
-
-        Returns:
-            True اگر حداقل یک فیلد پر شد
-        """
+        """تلاش برای پر کردن فیلدهای ناقص از حافظه‌ی نماد."""
         try:
             info = get_symbol_info(trade.symbol)
         except Exception as e:
@@ -300,7 +270,6 @@ class SnapshotEnricher:
 
         filled = False
 
-        # ─── strike ───
         if not trade.strike_price and info.get("strike_price"):
             try:
                 trade.strike_price = float(info["strike_price"])
@@ -308,13 +277,11 @@ class SnapshotEnricher:
             except (TypeError, ValueError):
                 pass
 
-        # ─── expiry ───
         if not trade.expiry_date and info.get("expiry_date"):
             trade.expiry_date = self._normalize_date(
                 str(info["expiry_date"]))
             filled = True
 
-        # ─── contract_size ───
         if trade.contract_size <= 0 and info.get("contract_size"):
             try:
                 trade.contract_size = int(info["contract_size"])
@@ -322,22 +289,18 @@ class SnapshotEnricher:
             except (TypeError, ValueError):
                 pass
 
-        # ─── underlying_symbol ───
         if not trade.underlying_symbol and info.get("underlying_symbol"):
             trade.underlying_symbol = str(info["underlying_symbol"])
             filled = True
 
-        # ─── ins_code ───
         if not trade.ins_code and info.get("ins_code"):
             trade.ins_code = str(info["ins_code"])
             filled = True
 
-        # ─── ins_code_ua ───
         if not trade.ins_code_ua and info.get("ins_code_ua"):
             trade.ins_code_ua = str(info["ins_code_ua"])
             filled = True
 
-        # ─── option_kind ───
         if trade.option_kind is None and info.get("option_kind"):
             try:
                 trade.option_kind = OptionType[info["option_kind"]]
@@ -370,7 +333,6 @@ class SnapshotEnricher:
         if not trade.ins_code_ua:
             trade.ins_code_ua = get_underlying_ins_code(trade.symbol)
 
-        # سهم نیازی به strike/expiry ندارد
         trade.strike_price = None
         trade.expiry_date = ""
         trade.contract_size = 1
@@ -398,7 +360,6 @@ class SnapshotEnricher:
         if snapshot is None:
             return
 
-        # آیا سهم پایه است؟
         try:
             ua = snapshot.get_underlying_assets(trade.symbol)
             if ua is not None:
@@ -407,7 +368,6 @@ class SnapshotEnricher:
         except Exception:
             pass
 
-        # آیا آپشن است؟
         try:
             opt = snapshot.get_options_by_symbol(trade.symbol)
             if opt is not None:
@@ -442,31 +402,4 @@ class SnapshotEnricher:
         return f"{y:04d}/{mo:02d}/{d:02d}"
 
 
-# ═══════════════════════════════════════════════════
-# توابع کمکی قدیمی (برای backward compatibility)
-# ═══════════════════════════════════════════════════
-
-def infer_option_kind_from_symbol(symbol: str) -> Optional[OptionType]:
-    """حدس نوع اختیار از پیشوند نماد"""
-    if not symbol:
-        return None
-    s = str(symbol).strip()
-    if s.startswith("ض"):
-        return OptionType.CALL
-    if s.startswith("ط"):
-        return OptionType.PUT
-    if is_known_underlying(s):
-        return OptionType.STOCK
-    return None
-
-
-def infer_underlying_from_symbol(symbol: str) -> str:
-    """حدس نماد پایه از نماد اختیار"""
-    return infer_underlying_from_option(symbol)
-
-
-__all__ = [
-    "SnapshotEnricher",
-    "infer_option_kind_from_symbol",
-    "infer_underlying_from_symbol",
-]
+__all__ = ["SnapshotEnricher"]

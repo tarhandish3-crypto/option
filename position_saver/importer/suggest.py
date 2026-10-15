@@ -7,7 +7,7 @@
 فقط پیشنهاد — هیچ تصمیم قطعی نمی‌گیرد.
 """
 
-from typing import List
+from typing import List, Optional
 
 from position_saver.models import LegType, OptionLeg
 from position_saver.pnl_calculator import PositionPnLCalculator
@@ -38,7 +38,7 @@ def suggest_strategy_name(trades: List) -> str:
         return ""
 
 
-def _to_leg(item) -> OptionLeg | None:
+def _to_leg(item) -> Optional[OptionLeg]:
     """
     تبدیل هر شیء (TradeRecord یا OptionLeg) به OptionLeg.
 
@@ -47,11 +47,9 @@ def _to_leg(item) -> OptionLeg | None:
     if item is None:
         return None
 
-    # اگر از قبل OptionLeg است
     if isinstance(item, OptionLeg):
         return item
 
-    # TradeRecord → OptionLeg
     try:
         return OptionLeg(
             symbol=getattr(item, "symbol", ""),

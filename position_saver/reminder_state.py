@@ -3,9 +3,12 @@
 
 """
 مدیریت state ارسال یادآورهای سررسید.
-- حداکثر ۲ یادآور در روز
-- فاصله حداقل ۱ ساعت بین یادآورها
-- ذخیره در فایل JSON ماندگار
+
+استانداردها:
+    - حداکثر ۲ یادآور در روز
+    - فاصله حداقل ۱ ساعت بین یادآورها
+    - ذخیره در فایل JSON ماندگار
+    - جلوگیری از timezone mismatch
 """
 
 import os
@@ -19,7 +22,7 @@ logger = logging.getLogger("PositionSaver.ReminderState")
 
 
 class ReminderState:
-    """مدیریت state یادآورهای ارسال‌شده"""
+    """مدیریت state یادآورهای ارسال‌شده."""
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     STATE_FILE = os.path.join(BASE_DIR, "reminder_state.json")
@@ -31,8 +34,12 @@ class ReminderState:
         self.filepath = filepath if filepath else self.STATE_FILE
         self._state = self._load()
 
+    # ═══════════════════════════════════════════════
+    # Persistence
+    # ═══════════════════════════════════════════════
+
     def _load(self) -> dict:
-        """بارگذاری state از فایل JSON"""
+        """بارگذاری state از فایل JSON."""
         if not os.path.exists(self.filepath):
             return self._empty_state()
         try:
@@ -48,10 +55,18 @@ class ReminderState:
             return self._empty_state()
 
     def _save(self):
-        """ذخیره state در فایل JSON"""
+        """ذخیره state در فایل JSON به‌صورت اتمیک."""
         try:
-            with open(self.filepath, "w", encoding="utf-8") as f:
-                json.dump(self._state, f, ensure_ascii=False, indent=2)
+            temp_path = self.filepath + ".tmp"
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(self._state, f,
+                          ensure_ascii=False, indent=2)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except (OSError, AttributeError):
+                    pass
+            os.replace(temp_path, self.filepath)
         except Exception as e:
             logger.warning(f"Failed to save reminder state: {e}")
 
@@ -63,14 +78,16 @@ class ReminderState:
             "last_time_iso": "",
         }
 
-    # =====================================================
+    # ═══════════════════════════════════════════════
     # منطق اصلی
-    # =====================================================
+    # ═══════════════════════════════════════════════
 
     def _today_key(self) -> str:
+        """کلید امروز به تاریخ شمسی."""
         return jdatetime.date.today().strftime("%Y/%m/%d")
 
     def _reset_if_new_day(self):
+        """بازنشانی state اگر روز تغییر کرده."""
         today = self._today_key()
         if self._state["last_date"] != today:
             self._state["last_date"] = today
@@ -81,48 +98,52 @@ class ReminderState:
     def can_send(self) -> tuple:
         """
         آیا اجازه ارسال داریم؟
-        Returns: (allowed: bool, reason: str)
+
+        Returns:
+            (allowed: bool, reason: str)
         """
         self._reset_if_new_day()
 
+        # ─── چک تعداد روزانه ───
         if self._state["count_today"] >= self.MAX_PER_DAY:
             return (
                 False,
                 f"حداکثر {self.MAX_PER_DAY} یادآور در روز ارسال شده"
             )
 
+        # ─── چک فاصله زمانی ───
         last_iso = self._state.get("last_time_iso", "")
         if last_iso:
             try:
                 last_dt = datetime.fromisoformat(last_iso)
+                # ✅ FIX: حذف timezone برای امنیت مقایسه
+                if last_dt.tzinfo is not None:
+                    last_dt = last_dt.replace(tzinfo=None)
                 elapsed = datetime.now() - last_dt
-                min_interval = timedelta(minutes=self.MIN_INTERVAL_MINUTES)
+                min_interval = timedelta(
+                    minutes=self.MIN_INTERVAL_MINUTES)
                 if elapsed < min_interval:
                     remaining = min_interval - elapsed
                     mins = int(remaining.total_seconds() / 60)
                     return (
                         False,
-                        f"حداقل {self.MIN_INTERVAL_MINUTES} دقیقه فاصله "
-                        f"لازم است ({mins} دقیقه مانده)"
+                        f"حداقل {self.MIN_INTERVAL_MINUTES} دقیقه "
+                        f"فاصله لازم است ({mins} دقیقه مانده)"
                     )
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to parse last_time: {e}")
+                # اگر خطا داد، اجازه می‌دهیم
                 pass
 
         return (True, "OK")
 
     def mark_sent(self):
-        """ثبت ارسال موفق"""
+        """ثبت ارسال موفق."""
         self._reset_if_new_day()
         self._state["count_today"] += 1
+        # ✅ ذخیره بدون timezone
         self._state["last_time_iso"] = datetime.now().isoformat()
         self._save()
 
-    def get_status(self) -> dict:
-        """وضعیت فعلی"""
-        self._reset_if_new_day()
-        return {
-            "date": self._state["last_date"],
-            "count_today": self._state["count_today"],
-            "max_per_day": self.MAX_PER_DAY,
-            "last_time": self._state["last_time_iso"],
-        }
+
+__all__ = ["ReminderState"]

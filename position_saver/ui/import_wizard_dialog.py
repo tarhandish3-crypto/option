@@ -5,23 +5,28 @@
 جادوگر ایمپورت اکسل کارگزاری — سه تب.
 
 ساختار:
-    📋 معاملات خام:          خلوت‌سازی + تکمیل اطلاعات پایه
-    ✅ تأیید موقعیت‌ها:      تعیین نوع بستن هر trade
-    📁 گروه‌بندی استراتژی‌ها: تعریف استراتژی + ایمپورت نهایی
+    📋 معاملات خام:           تکمیل اطلاعات پایه (نماد، strike، expiry)
+    ✅ تأیید موقعیت‌ها:       تعیین نوع بستن هر trade
+    📁 گروه‌بندی استراتژی‌ها: گروه‌بندی به StrategyPosition چند-لگ
 
 قواعد کلیدی:
     ✅ trades منتقل‌شده از تب مبدأ حذف می‌شوند
-    ✅ چک‌باکس «انتخاب هم‌نام» در تب ۱ و ۲
+    ✅ چک‌باکس «انتخاب هم‌نام» در هر سه تب
     ✅ انتخاب هوشمند: با انتخاب یک نماد، نمادهای دیگر لغو می‌شوند
-    ✅ دکمه‌های «انتخاب همه» و «لغو همه» در هر دو تب
+    ✅ دکمه‌های «انتخاب همه» و «لغو همه» در هر سه تب
     ✅ نوع بستن الزامی برای انتقال از تب ۲ به تب ۳
-    ✅ گروه‌بندی الزامی برای ذخیره‌ی نهایی
+    ✅ SELLهای جفت‌شده به position خنثی تبدیل می‌شوند
     ✅ Sort-safe: استفاده از trade_id برای همه‌ی عملیات
+    ✅ بدون StrategyGroup — گروه‌بندی مستقیم به StrategyPosition
+
+استانداردها:
+    - OCC: Payoff و Max Profit
+    - سمات: کارمزد و مالیات
+    - برنامه‌ی اصلی OptionScanner: همخوانی محاسبات
 """
 
 import logging
-import os
-import re
+import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
@@ -37,7 +42,7 @@ from PySide6.QtCore import Qt, QTimer, QRegularExpression
 from PySide6.QtGui import QColor, QRegularExpressionValidator
 
 from position_saver.models import (
-    StrategyPosition, StrategyGroup, OptionLeg,
+    StrategyPosition, OptionLeg,
     LegType, PositionStatus,
 )
 from core.enums import OptionType
@@ -109,13 +114,14 @@ SYNC_BULK_THRESHOLD = 500
 # ═══════════════════════════════════════════════════
 
 class SortableItem(QTableWidgetItem):
-    """آیتم جدول با مقدار سورت سفارشی"""
+    """آیتم جدول با مقدار سورت سفارشی."""
 
     def __init__(self, display_text: str, sort_value: Any = None):
         super().__init__(str(display_text))
         self._sort_value = (
             sort_value if sort_value is not None else display_text
         )
+        self.setTextAlignment(Qt.AlignCenter)
 
     def __lt__(self, other):
         if isinstance(other, SortableItem):
@@ -142,7 +148,6 @@ class ImportWizardDialog(QDialog):
         self.setWindowTitle("📥 ایمپورت اکسل کارگزاری")
         self.setLayoutDirection(Qt.RightToLeft)
 
-        # ✅ اندازه‌ی متناسب با صفحه
         self.setMinimumSize(900, 600)
         self._fit_to_screen()
 
@@ -162,7 +167,6 @@ class ImportWizardDialog(QDialog):
         self._raw_trades: List[TradeRecord] = []
         self._confirm_trades: List[TradeRecord] = []
         self._group_positions: List[StrategyPosition] = []
-        self._groups: List[StrategyGroup] = []
 
         # ─── flag ها ───
         self._refreshing = False
@@ -175,7 +179,7 @@ class ImportWizardDialog(QDialog):
     # ═══════════════════════════════════════════════
 
     def _fit_to_screen(self):
-        """تنظیم اندازه‌ی پنجره متناسب با صفحه"""
+        """تنظیم اندازه‌ی پنجره متناسب با صفحه."""
         try:
             screen = QApplication.primaryScreen()
             if screen is None:
@@ -186,7 +190,6 @@ class ImportWizardDialog(QDialog):
             screen_w = available.width()
             screen_h = available.height()
 
-            # ۹۰٪ عرض و ۹۰٪ ارتفاع
             w = min(1400, int(screen_w * 0.9))
             h = min(900, int(screen_h * 0.9))
 
@@ -195,7 +198,6 @@ class ImportWizardDialog(QDialog):
 
             self.resize(w, h)
 
-            # Centered
             x = available.x() + (screen_w - w) // 2
             y = available.y() + (screen_h - h) // 2
             self.move(x, y)
@@ -243,7 +245,8 @@ class ImportWizardDialog(QDialog):
         if "مفید" in names:
             self.cmb_broker.setCurrentText("مفید")
         self.cmb_broker.setMinimumWidth(140)
-        self.cmb_broker.currentTextChanged.connect(self._on_broker_changed)
+        self.cmb_broker.currentTextChanged.connect(
+            self._on_broker_changed)
         lay.addWidget(self.cmb_broker)
 
         lay.addSpacing(12)
@@ -300,7 +303,7 @@ class ImportWizardDialog(QDialog):
             "با تایپ در یک ردیف، همه‌ی ردیف‌های همان نماد پر می‌شوند")
         bar.addWidget(self.chk_raw_sync)
 
-        # ✅ دکمه‌های انتخاب همه / لغو همه
+        # دکمه‌های انتخاب همه / لغو همه
         self.btn_raw_select_all = QPushButton("✓ همه")
         self.btn_raw_select_all.setToolTip("انتخاب همه‌ی ردیف‌ها")
         self.btn_raw_select_all.clicked.connect(
@@ -383,7 +386,6 @@ class ImportWizardDialog(QDialog):
         bar.addWidget(self.lbl_confirm_info)
         bar.addStretch()
 
-        # چک‌باکس انتخاب هم‌نام
         self.chk_confirm_select_same = QCheckBox("✓ هم‌نام")
         self.chk_confirm_select_same.setChecked(True)
         self.chk_confirm_select_same.setToolTip(
@@ -391,7 +393,6 @@ class ImportWizardDialog(QDialog):
             "و نمادهای دیگر از تیک خارج می‌شوند")
         bar.addWidget(self.chk_confirm_select_same)
 
-        # ✅ دکمه‌های انتخاب همه / لغو همه
         self.btn_confirm_select_all = QPushButton("✓ همه")
         self.btn_confirm_select_all.setToolTip("انتخاب همه‌ی ردیف‌ها")
         self.btn_confirm_select_all.clicked.connect(
@@ -491,18 +492,15 @@ class ImportWizardDialog(QDialog):
 
         bar.addSpacing(12)
 
-        # ✅ دکمه‌ی شکستن موقعیت
+        # شکستن/ادغام
         self.btn_split = QPushButton("🔨 شکستن موقعیت")
         self.btn_split.clicked.connect(self._split_selected_position)
-        self.btn_split.setToolTip(
-            "شکستن یک موقعیت به چند قطعه")
+        self.btn_split.setToolTip("شکستن یک موقعیت به چند قطعه")
         bar.addWidget(self.btn_split)
 
-        # ✅ دکمه‌ی ادغام
         self.btn_merge = QPushButton("🔗 ادغام موقعیت‌ها")
         self.btn_merge.clicked.connect(self._merge_selected_positions)
-        self.btn_merge.setToolTip(
-            "ادغام چند موقعیت سازگار")
+        self.btn_merge.setToolTip("ادغام چند موقعیت سازگار")
         bar.addWidget(self.btn_merge)
 
         lay.addLayout(bar)
@@ -596,12 +594,24 @@ class ImportWizardDialog(QDialog):
         self._broker = self.cmb_broker.currentText() or "مفید"
         self._settings = ImportSettings()
 
+        # هشدار در صورت نبود Snapshot
         snapshot = None
         try:
             snapshot = get_market_snapshot(
                 use_cache=True, force_refresh=False)
         except Exception as e:
             logger.warning(f"Snapshot failed: {e}")
+
+        if snapshot is None:
+            reply = QMessageBox.question(
+                self, "⚠️ هشدار Snapshot",
+                "Snapshot بازار در دسترس نیست.\n\n"
+                "اکثر معاملات ناقص علامت‌گذاری می‌شوند و "
+                "باید دستی اطلاعات آن‌ها را وارد کنید.\n\n"
+                "ادامه؟",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
 
         try:
             self._result = self.engine.run(
@@ -646,7 +656,6 @@ class ImportWizardDialog(QDialog):
 
         # ─── پاکسازی گروه‌ها ───
         self._group_positions = []
-        self._groups = []
 
         self._refresh_raw()
         self._refresh_confirm()
@@ -686,7 +695,6 @@ class ImportWizardDialog(QDialog):
 
             self.tbl_raw.setSortingEnabled(True)
 
-            # ─── آمار ───
             n_raw = len(self._raw_trades)
             n_confirm = len(self._confirm_trades)
             n_group = len(self._group_positions)
@@ -704,7 +712,8 @@ class ImportWizardDialog(QDialog):
         # ✓ با trade_id
         chk = QTableWidgetItem()
         chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-        chk.setCheckState(Qt.Checked if t.is_selected else Qt.Unchecked)
+        chk.setCheckState(
+            Qt.Checked if t.is_selected else Qt.Unchecked)
         chk.setData(Qt.UserRole, t.trade_id)
         self.tbl_raw.setItem(row, 0, chk)
 
@@ -768,9 +777,8 @@ class ImportWizardDialog(QDialog):
         except Exception as e:
             logger.debug(f"set_raw_status failed: {e}")
 
-    def _install_raw_widgets(self, row: int, t: TradeRecord,
-                             force: bool = True):
-        """افزودن ویجت‌های inline (strike + expiry)"""
+    def _install_raw_widgets(self, row: int, t: TradeRecord):
+        """افزودن ویجت‌های inline (strike + expiry)."""
         # ─── strike ───
         spin_strike = QSpinBox()
         spin_strike.setRange(0, 1_000_000_000)
@@ -779,8 +787,7 @@ class ImportWizardDialog(QDialog):
         spin_strike.setButtonSymbols(QAbstractSpinBox.NoButtons)
         spin_strike.setValue(int(t.strike_price or 0))
         spin_strike.valueChanged.connect(
-            lambda _, tr=t, r=row:
-                self._on_raw_edit(tr, r, "strike"))
+            lambda _, tr=t: self._on_raw_edit(tr, "strike"))
         self.tbl_raw.setCellWidget(row, RAW_COL_STRIKE, spin_strike)
 
         # ─── expiry ───
@@ -790,8 +797,7 @@ class ImportWizardDialog(QDialog):
             QRegularExpression(r'^\d{0,4}(/\d{0,2}(/\d{0,2})?)?$'))
         line_expiry.setValidator(validator)
         line_expiry.textChanged.connect(
-            lambda _, tr=t, r=row:
-                self._on_raw_edit(tr, r, "expiry"))
+            lambda _, tr=t: self._on_raw_edit(tr, "expiry"))
         self.tbl_raw.setCellWidget(row, RAW_COL_EXPIRY, line_expiry)
 
         t._inline_widgets = {
@@ -803,7 +809,7 @@ class ImportWizardDialog(QDialog):
     # تب ۱: ویرایش
     # ═══════════════════════════════════════════════
 
-    def _on_raw_edit(self, t: TradeRecord, row: int, field: str):
+    def _on_raw_edit(self, t: TradeRecord, field: str):
         if self._refreshing or self._syncing:
             return
 
@@ -811,6 +817,7 @@ class ImportWizardDialog(QDialog):
         if not widgets:
             return
 
+        value = None
         if field == "strike":
             value = float(widgets["strike"].value())
             t.strike_price = value if value > 0 else None
@@ -839,7 +846,7 @@ class ImportWizardDialog(QDialog):
 
     def _sync_raw_field(self, source_t: TradeRecord,
                          field: str, value):
-        """همگام‌سازی یک فیلد با ردیف‌های هم‌نام"""
+        """همگام‌سازی یک فیلد با ردیف‌های هم‌نام."""
         self._syncing = True
         try:
             for row in range(self.tbl_raw.rowCount()):
@@ -874,7 +881,7 @@ class ImportWizardDialog(QDialog):
             self._syncing = False
 
     def _refresh_raw_statuses(self):
-        """به‌روزرسانی ستون وضعیت همه‌ی ردیف‌های تب ۱"""
+        """به‌روزرسانی ستون وضعیت همه‌ی ردیف‌های تب ۱."""
         try:
             if self._refreshing:
                 return
@@ -885,8 +892,9 @@ class ImportWizardDialog(QDialog):
                 t = self._find_raw_trade_for_row(row)
                 if t is not None:
                     self._set_raw_status(row, t)
-                    # ─── تیک خودکار ───
-                    if t.is_complete and not t.auto_selected:
+                    # تیک خودکار فقط اگر کاربر قبلاً لغو نکرده
+                    if (t.is_complete
+                            and not t.auto_selected):
                         chk = self.tbl_raw.item(row, 0)
                         if chk and chk.checkState() != Qt.Checked:
                             self._refreshing = True
@@ -906,7 +914,9 @@ class ImportWizardDialog(QDialog):
     # تب ۱: پیدا کردن trade
     # ═══════════════════════════════════════════════
 
-    def _find_raw_trade_for_row(self, row: int) -> Optional[TradeRecord]:
+    def _find_raw_trade_for_row(
+        self, row: int
+    ) -> Optional[TradeRecord]:
         if row < 0 or row >= self.tbl_raw.rowCount():
             return None
 
@@ -932,16 +942,7 @@ class ImportWizardDialog(QDialog):
     # ═══════════════════════════════════════════════
 
     def _on_raw_item_changed(self, item: QTableWidgetItem):
-        """
-        وقتی چک‌باکس تغییر کرد.
-
-        ✅ رفتار هوشمند:
-            - اگر چک‌باکس «هم‌نام» فعال و کاربر یک ردیف را تیک بزند:
-              → فقط همان ردیف + هم‌نام‌هایش تیک می‌خورند
-              → ردیف‌های هم‌نامِ نماد قبلی (اگر متفاوت باشد) از تیک خارج می‌شوند
-            - اگر کاربر تیک را بردارد:
-              → فقط همان ردیف از تیک خارج می‌شود
-        """
+        """واکنش به تغییر چک‌باکس تب ۱."""
         if self._refreshing:
             return
         if item.column() != 0:
@@ -961,19 +962,19 @@ class ImportWizardDialog(QDialog):
 
         is_now = (item.checkState() == Qt.Checked)
         trade.is_selected = is_now
-        if trade.auto_selected and not is_now:
-            trade.auto_selected = False
+
+        if not is_now:
+            # کاربر دستی لغو کرد → دیگر auto-tick نشود
+            trade.auto_selected = True
 
         if is_now and self.chk_raw_select_same.isChecked():
-            # ۱. همه‌ی هم‌نام‌های این نماد را تیک بزن
             self._select_raw_same_symbol(trade.symbol, trade_id)
-            # ۲. ردیف‌های هم‌نامِ نمادهای دیگر را از تیک خارج کن
             self._deselect_raw_other_symbols(trade.symbol)
 
         self._update_raw_buttons()
 
     def _select_raw_same_symbol(self, symbol: str, exclude_id: str):
-        """انتخاب همه‌ی ردیف‌های هم‌نام"""
+        """انتخاب همه‌ی ردیف‌های هم‌نام."""
         self._refreshing = True
         try:
             for row in range(self.tbl_raw.rowCount()):
@@ -999,12 +1000,7 @@ class ImportWizardDialog(QDialog):
             self._refreshing = False
 
     def _deselect_raw_other_symbols(self, keep_symbol: str):
-        """
-        لغو انتخاب ردیف‌های نمادهای دیگر.
-
-        وقتی کاربر یک نماد را انتخاب می‌کند، نمادهای قبلی
-        از تیک خارج می‌شوند تا کاربر بدون سردرگمی کار کند.
-        """
+        """لغو انتخاب ردیف‌های نمادهای دیگر."""
         self._refreshing = True
         try:
             for row in range(self.tbl_raw.rowCount()):
@@ -1036,7 +1032,7 @@ class ImportWizardDialog(QDialog):
     # ═══════════════════════════════════════════════
 
     def _toggle_all_raw(self, state: bool):
-        """انتخاب یا لغو انتخاب همه‌ی ردیف‌های تب ۱"""
+        """انتخاب یا لغو انتخاب همه‌ی ردیف‌های تب ۱."""
         if not self._raw_trades:
             return
 
@@ -1063,7 +1059,7 @@ class ImportWizardDialog(QDialog):
             for t in self._raw_trades:
                 t.is_selected = state
                 if not state:
-                    t.auto_selected = False
+                    t.auto_selected = True
         finally:
             self._refreshing = False
 
@@ -1227,7 +1223,8 @@ class ImportWizardDialog(QDialog):
         # ✓
         chk = QTableWidgetItem()
         chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-        chk.setCheckState(Qt.Checked if t.is_selected else Qt.Unchecked)
+        chk.setCheckState(
+            Qt.Checked if t.is_selected else Qt.Unchecked)
         chk.setData(Qt.UserRole, t.trade_id)
         self.tbl_confirm.setItem(row, 0, chk)
 
@@ -1288,7 +1285,7 @@ class ImportWizardDialog(QDialog):
         self._install_confirm_close_combo(row, t)
 
     def _install_confirm_close_combo(self, row: int, t: TradeRecord):
-        """ComboBox نوع بستن"""
+        """ComboBox نوع بستن."""
         combo = QComboBox()
         combo.addItem("— انتخاب کنید —", "")
         for code, label in CLOSE_OPTIONS:
@@ -1304,17 +1301,18 @@ class ImportWizardDialog(QDialog):
                 self._on_confirm_close_changed(c, tr))
         self.tbl_confirm.setCellWidget(row, CONFIRM_COL_CLOSE, combo)
 
-    def _on_confirm_close_changed(self, combo: QComboBox,
-                                    t: TradeRecord):
+    def _on_confirm_close_changed(
+        self, combo: QComboBox, t: TradeRecord
+    ):
         code = combo.currentData()
         if not code:
             return
 
-        # ─── نادیده بگیر ───
         if code == "skip":
             reply = QMessageBox.question(
                 self, "تأیید نادیده گرفتن",
-                f"⚠️ آیا از نادیده گرفتن این معامله مطمئن هستید؟\n\n"
+                f"⚠️ آیا از نادیده گرفتن این معامله مطمئن "
+                f"هستید؟\n\n"
                 f"{t.side.label_fa} {t.symbol} ({t.raw_date})",
                 QMessageBox.Yes | QMessageBox.No)
             if reply != QMessageBox.Yes:
@@ -1334,20 +1332,10 @@ class ImportWizardDialog(QDialog):
 
         t.close_reason = code
         t.user_chosen_reason = True
-
         self._update_confirm_buttons()
 
     def _on_confirm_item_changed(self, item: QTableWidgetItem):
-        """
-        وقتی چک‌باکس تغییر کرد.
-
-        ✅ رفتار هوشمند:
-            - اگر چک‌باکس «هم‌نام» فعال و کاربر یک ردیف را تیک بزند:
-              → فقط همان ردیف + هم‌نام‌هایش تیک می‌خورند
-              → ردیف‌های هم‌نامِ نماد قبلی (اگر متفاوت باشد) از تیک خارج می‌شوند
-            - اگر کاربر تیک را بردارد:
-              → فقط همان ردیف از تیک خارج می‌شود
-        """
+        """واکنش به تغییر چک‌باکس تب ۲."""
         if self._refreshing:
             return
         if item.column() != 0:
@@ -1367,19 +1355,19 @@ class ImportWizardDialog(QDialog):
 
         is_now = (item.checkState() == Qt.Checked)
         trade.is_selected = is_now
-        if trade.auto_selected and not is_now:
-            trade.auto_selected = False
+        if not is_now:
+            trade.auto_selected = True
 
         if is_now and self.chk_confirm_select_same.isChecked():
-            # ۱. همه‌ی هم‌نام‌های این نماد را تیک بزن
             self._select_confirm_same_symbol(trade.symbol, tid)
-            # ۲. ردیف‌های هم‌نامِ نمادهای دیگر را از تیک خارج کن
             self._deselect_confirm_other_symbols(trade.symbol)
 
         self._update_confirm_buttons()
 
-    def _select_confirm_same_symbol(self, symbol: str, exclude_id: str):
-        """انتخاب همه‌ی ردیف‌های هم‌نام"""
+    def _select_confirm_same_symbol(
+        self, symbol: str, exclude_id: str
+    ):
+        """انتخاب همه‌ی ردیف‌های هم‌نام تب ۲."""
         self._refreshing = True
         try:
             for row in range(self.tbl_confirm.rowCount()):
@@ -1405,12 +1393,7 @@ class ImportWizardDialog(QDialog):
             self._refreshing = False
 
     def _deselect_confirm_other_symbols(self, keep_symbol: str):
-        """
-        لغو انتخاب ردیف‌های نمادهای دیگر.
-
-        وقتی کاربر یک نماد را انتخاب می‌کند، نمادهای قبلی
-        از تیک خارج می‌شوند تا کاربر بدون سردرگمی کار کند.
-        """
+        """لغو انتخاب ردیف‌های نمادهای دیگر تب ۲."""
         self._refreshing = True
         try:
             for row in range(self.tbl_confirm.rowCount()):
@@ -1468,12 +1451,8 @@ class ImportWizardDialog(QDialog):
             self.btn_confirm_move.setText("➡️ انتقال به گروه‌بندی")
             self.btn_confirm_back.setText("↩️ بازگشت به معاملات خام")
 
-    # ═══════════════════════════════════════════════
-    # تب ۲: انتخاب همه / لغو همه
-    # ═══════════════════════════════════════════════
-
     def _toggle_all_confirm(self, state: bool):
-        """انتخاب یا لغو انتخاب همه‌ی ردیف‌های تب ۲"""
+        """انتخاب یا لغو انتخاب همه‌ی ردیف‌های تب ۲."""
         if not self._confirm_trades:
             return
 
@@ -1500,7 +1479,7 @@ class ImportWizardDialog(QDialog):
             for t in self._confirm_trades:
                 t.is_selected = state
                 if not state:
-                    t.auto_selected = False
+                    t.auto_selected = True
         finally:
             self._refreshing = False
 
@@ -1558,7 +1537,7 @@ class ImportWizardDialog(QDialog):
                 "لطفاً ابتدا یک یا چند ردیف را تیک بزنید.")
             return
 
-        # ─── چک نوع بستن ───
+        # چک نوع بستن
         no_reason = [
             t for t in ticked
             if not t.close_reason or t.close_reason == ""
@@ -1572,7 +1551,8 @@ class ImportWizardDialog(QDialog):
 
             QMessageBox.warning(
                 self, "خطا",
-                f"❌ {len(no_reason)} معامله نوع بستن مشخص ندارند.\n\n"
+                f"❌ {len(no_reason)} معامله نوع بستن مشخص "
+                f"ندارند.\n\n"
                 f"لطفاً قبل از انتقال، نوع بستن همه‌ی ردیف‌های "
                 f"تیک‌خورده را تعیین کنید:\n\n{names}")
             return
@@ -1597,7 +1577,6 @@ class ImportWizardDialog(QDialog):
 
             pos = self._trade_to_position(t)
             if pos:
-                pos.group_id = ""
                 self._group_positions.append(pos)
 
         self._refresh_confirm()
@@ -1614,6 +1593,63 @@ class ImportWizardDialog(QDialog):
     def _trade_to_position(
         self, t: TradeRecord
     ) -> Optional[StrategyPosition]:
+        """
+        تبدیل TradeRecord به StrategyPosition.
+
+        SELL جفت‌شده (is_offset_closer) به position خنثی تبدیل می‌شود.
+        """
+        is_offset_closer = getattr(t, "is_offset_closer", False)
+
+        if is_offset_closer:
+            # ─── SELL جفت‌شده — position خنثی ───
+            leg = OptionLeg(
+                symbol=t.symbol,
+                is_option=t.is_option,
+                option_kind=t.option_kind or OptionType.STOCK,
+                leg_type=t.side,
+                strike_price=t.strike_price or 0.0,
+                contract_size=t.effective_contract_size,
+                quantity=t.quantity,
+                entry_price=t.price,
+                current_price=t.price,
+                expiry_date=t.expiry_date or "",
+                ins_code=t.ins_code or "",
+                ins_code_ua=t.ins_code_ua or "",
+                open_date=t.raw_date,
+                open_time=t.raw_time,
+                trade_time=t.raw_time,
+                source="excel_import",
+                trade_ref=t.trade_id,
+                needs_review=False,
+                close_reason=CLOSE_REASON_OFFSET,
+            )
+            leg.close_price = t.price  # خنثی
+            leg.close_fee = 0.0
+            leg.close_date = t.raw_date
+            leg.entry_fee = 0.0
+
+            pos = StrategyPosition(
+                strategy_name="[Auto] SELL جفت‌شده",
+                strategy_type="",
+                broker_name=self._broker,
+                underlying_symbol=(
+                    t.underlying_symbol
+                    or infer_underlying_symbol(t.symbol)),
+                execution_date=t.raw_date,
+                expiry_date=t.expiry_date or "",
+                status=PositionStatus.CLOSED,
+                legs=[leg],
+                target_roi_maturity=0.0,
+                alert_enabled=False,
+                source="excel_import",
+                needs_review=False,
+                close_reason=CLOSE_REASON_OFFSET,
+                close_date=t.raw_date,
+                notes="SELL جفت‌شده با BUY — بخشی از یک آفست",
+            )
+            return pos
+
+        # ─── حالت عادی ───
         leg = OptionLeg(
             symbol=t.symbol,
             is_option=t.is_option,
@@ -1635,7 +1671,8 @@ class ImportWizardDialog(QDialog):
             needs_review=t.needs_review,
             close_reason=t.close_reason,
         )
-        leg.entry_fee = PositionPnLCalculator.calculate_leg_entry_fee(leg)
+        leg.entry_fee = PositionPnLCalculator.calculate_leg_entry_fee(
+            leg)
 
         status = PositionStatus.OPEN
         if t.close_reason == CLOSE_REASON_OFFSET:
@@ -1679,7 +1716,8 @@ class ImportWizardDialog(QDialog):
             expiry_date=t.expiry_date or "",
             status=status,
             legs=[leg],
-            alert_target_roi=self._settings.default_alert_roi,
+            target_roi_maturity=self._settings.default_alert_roi,
+            alert_enabled=True,
             source="excel_import",
             needs_review=t.needs_review,
             close_reason=t.close_reason,
@@ -1704,9 +1742,20 @@ class ImportWizardDialog(QDialog):
                 if widget:
                     widget.deleteLater()
 
-            # ─── گروه‌های تشکیل‌شده ───
-            for group in self._groups:
-                card = self._build_group_card(group)
+            # ─── گروه‌های تشکیل‌شده (positions با group_id) ───
+            grouped_ids = set()
+            for pos in self._group_positions:
+                if pos.group_id:
+                    grouped_ids.add(pos.group_id)
+
+            for gid in grouped_ids:
+                group_positions = [
+                    p for p in self._group_positions
+                    if p.group_id == gid
+                ]
+                if not group_positions:
+                    continue
+                card = self._build_group_card(gid, group_positions)
                 self.groups_layout.insertWidget(
                     self.groups_layout.count() - 1, card)
 
@@ -1722,7 +1771,7 @@ class ImportWizardDialog(QDialog):
 
             # ─── آمار ───
             n_pos = len(self._group_positions)
-            n_groups = len(self._groups)
+            n_groups = len(grouped_ids)
             n_ungrouped = len(ungrouped)
 
             self.lbl_group_info.setText(
@@ -1736,7 +1785,7 @@ class ImportWizardDialog(QDialog):
     def _build_ungrouped_card(
         self, positions: List[StrategyPosition]
     ) -> QWidget:
-        """کارت «بدون استراتژی»"""
+        """کارت «بدون استراتژی»."""
         card = QFrame()
         card.setObjectName("card")
         card.setStyleSheet(
@@ -1753,64 +1802,15 @@ class ImportWizardDialog(QDialog):
         set_tone(title, "warn", big=True)
         lay.addWidget(title)
 
-        table = QTableWidget(0, 6)
-        table.setHorizontalHeaderLabels([
-            "✓", "نماد", "لگ", "تعداد", "ورود", "وضعیت"])
-        h = table.horizontalHeader()
-        h.setSectionResizeMode(QHeaderView.Interactive)
-        h.setStretchLastSection(True)
-        table.setColumnWidth(0, 36)
-        table.setColumnWidth(1, 100)
-        table.setColumnWidth(2, 160)
-        table.setColumnWidth(3, 60)
-        table.setColumnWidth(4, 90)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        table.setAlternatingRowColors(True)
-        table.verticalHeader().setDefaultSectionSize(26)
-        table.verticalHeader().setVisible(False)
-
-        for pos in positions:
-            row = table.rowCount()
-            table.insertRow(row)
-
-            chk = QTableWidgetItem()
-            chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            chk.setCheckState(Qt.Unchecked)
-            chk.setData(Qt.UserRole, pos.position_id)
-            table.setItem(row, 0, chk)
-
-            table.setItem(row, 1, QTableWidgetItem(
-                pos.underlying_symbol or "—"))
-
-            leg_text = "—"
-            if pos.legs:
-                leg = pos.legs[0]
-                leg_text = f"{leg.leg_type.label_fa} {leg.symbol}"
-            table.setItem(row, 2, QTableWidgetItem(leg_text))
-
-            qty = pos.legs[0].quantity if pos.legs else 0
-            table.setItem(row, 3, QTableWidgetItem(fmt_int(qty)))
-
-            entry = pos.legs[0].entry_price if pos.legs else 0
-            table.setItem(row, 4, QTableWidgetItem(fmt_money(entry)))
-
-            status_item = QTableWidgetItem(pos.status.label_fa)
-            status_item.setTextAlignment(Qt.AlignCenter)
-            table.setItem(row, 5, status_item)
-
-        h_table = min(180, 26 * len(positions) + 30)
-        table.setFixedHeight(h_table)
+        table = self._build_positions_table(positions)
         lay.addWidget(table)
 
         return card
 
-    def _build_group_card(self, group: StrategyGroup) -> QWidget:
-        """کارت یک گروه"""
-        positions = [
-            p for p in self._group_positions
-            if p.position_id in group.position_ids
-        ]
-
+    def _build_group_card(
+        self, group_id: str, positions: List[StrategyPosition]
+    ) -> QWidget:
+        """کارت یک گروه."""
         card = QFrame()
         card.setObjectName("card")
         card.setStyleSheet(
@@ -1825,29 +1825,31 @@ class ImportWizardDialog(QDialog):
         header = QHBoxLayout()
         header.setSpacing(6)
 
+        # نام گروه از position اول
+        display_name = positions[0].strategy_name or "بدون نام"
+        strategy_type = positions[0].strategy_type or "سفارشی"
+
         title = QLabel(
-            f"📁 {group.label_fa} ({len(positions)} موقعیت)")
+            f"📁 {display_name} ({len(positions)} موقعیت)")
         set_tone(title, "profit", big=True)
         header.addWidget(title)
 
-        type_label = QLabel(f"نوع: {group.strategy_type or 'سفارشی'}")
+        type_label = QLabel(f"نوع: {strategy_type}")
         set_tone(type_label, "muted")
         header.addWidget(type_label)
         header.addStretch()
 
-        total_pnl = group.total_live_pnl(self._group_positions)
-        pnl_label = QLabel(
-            f"💰 PnL: {fmt_money(total_pnl)} {CURRENCY}")
-        if total_pnl > 0:
-            set_tone(pnl_label, "profit", big=True)
-        elif total_pnl < 0:
-            set_tone(pnl_label, "loss", big=True)
-        else:
-            set_tone(pnl_label, "muted", big=True)
-        header.addWidget(pnl_label)
-
         lay.addLayout(header)
 
+        table = self._build_positions_table(positions)
+        lay.addWidget(table)
+
+        return card
+
+    def _build_positions_table(
+        self, positions: List[StrategyPosition]
+    ) -> QTableWidget:
+        """ساخت جدول موقعیت‌ها برای کارت‌ها."""
         table = QTableWidget(0, 6)
         table.setHorizontalHeaderLabels([
             "✓", "نماد", "لگ", "تعداد", "ورود", "وضعیت"])
@@ -1893,11 +1895,64 @@ class ImportWizardDialog(QDialog):
             status_item.setTextAlignment(Qt.AlignCenter)
             table.setItem(row, 5, status_item)
 
+        # handler چک‌باکس
+        table.itemChanged.connect(
+            lambda item, t=table:
+                self._on_group_card_item_changed(t, item))
+
         h_table = min(180, 26 * len(positions) + 30)
         table.setFixedHeight(h_table)
-        lay.addWidget(table)
 
-        return card
+        return table
+
+    def _on_group_card_item_changed(
+        self, table: QTableWidget, item: QTableWidgetItem
+    ):
+        """handler مرکزی چک‌باکس‌های کارت‌ها."""
+        if self._refreshing:
+            return
+        if item.column() != 0:
+            return
+
+        clicked_pid = item.data(Qt.UserRole)
+        if not clicked_pid:
+            return
+
+        clicked_pos = None
+        for p in self._group_positions:
+            if p.position_id == clicked_pid:
+                clicked_pos = p
+                break
+        if clicked_pos is None:
+            return
+
+        is_now = (item.checkState() == Qt.Checked)
+
+        # انتخاب هم‌نام
+        self._refreshing = True
+        try:
+            if is_now:
+                for row in range(table.rowCount()):
+                    chk = table.item(row, 0)
+                    if chk is None:
+                        continue
+                    pid = chk.data(Qt.UserRole)
+                    if pid == clicked_pid:
+                        continue
+                    other_pos = None
+                    for p in self._group_positions:
+                        if p.position_id == pid:
+                            other_pos = p
+                            break
+                    if other_pos is None:
+                        continue
+                    if (other_pos.underlying_symbol
+                            == clicked_pos.underlying_symbol):
+                        chk.setCheckState(Qt.Checked)
+        finally:
+            self._refreshing = False
+
+        self._update_group_buttons()
 
     def _update_group_buttons(self):
         n_pos = len(self._group_positions)
@@ -1922,12 +1977,13 @@ class ImportWizardDialog(QDialog):
     # ═══════════════════════════════════════════════
 
     def _create_new_strategy(self):
-        """تعریف استراتژی جدید"""
+        """تعریف استراتژی جدید."""
         selected = self._get_ticked_group_positions()
         if not selected:
             QMessageBox.information(
                 self, "اطلاع",
-                "لطفاً ابتدا یک یا چند موقعیت بدون گروه را تیک بزنید.")
+                "لطفاً ابتدا یک یا چند موقعیت بدون گروه را تیک "
+                "بزنید.")
             return
 
         pseudo_trades = [self._position_to_pseudo_trade(p)
@@ -1951,21 +2007,16 @@ class ImportWizardDialog(QDialog):
             strategy_type = result.get("strategy_type", "")
             display_name = result.get("display_name", "")
 
-            group = StrategyGroup(
-                strategy_type=strategy_type,
-                display_name=display_name,
-                position_ids=[p.position_id for p in selected],
-                created_at=today_jalali(),
-                alert_target_roi=self._settings.default_alert_roi,
-            )
-            self._groups.append(group)
+            # ─── گروه‌بندی از طریق group_id ───
+            group_id = f"GRP-{str(uuid.uuid4())[:6].upper()}"
 
             for p in selected:
-                p.group_id = group.group_id
+                p.group_id = group_id
                 p.strategy_type = strategy_type
                 p.strategy_name = display_name
                 if self._settings.default_alert_roi > 0:
-                    p.alert_target_roi = self._settings.default_alert_roi
+                    p.target_roi_maturity = (
+                        self._settings.default_alert_roi)
 
             self._refresh_group()
 
@@ -1976,8 +2027,10 @@ class ImportWizardDialog(QDialog):
         finally:
             dlg.deleteLater()
 
-    def _position_to_pseudo_trade(self, pos: StrategyPosition):
-        """تبدیل StrategyPosition به یک شیء شبیه TradeRecord"""
+    def _position_to_pseudo_trade(
+        self, pos: StrategyPosition
+    ):
+        """تبدیل StrategyPosition به یک شیء شبیه TradeRecord."""
         class PseudoTrade:
             pass
 
@@ -2021,7 +2074,7 @@ class ImportWizardDialog(QDialog):
         return p
 
     def _get_ticked_group_positions(self) -> List[StrategyPosition]:
-        """پیدا کردن موقعیت‌های تیک‌خورده در تب ۳"""
+        """موقعیت‌های تیک‌خورده بدون گروه."""
         ticked_ids = set()
         for table in self.groups_container.findChildren(QTableWidget):
             for row in range(table.rowCount()):
@@ -2039,7 +2092,7 @@ class ImportWizardDialog(QDialog):
     # ═══════════════════════════════════════════════
 
     def _get_ticked_group_ids(self) -> List[str]:
-        """پیدا کردن group_id های تیک‌خورده در تب ۳"""
+        """پیدا کردن group_id های تیک‌خورده."""
         ticked_group_ids = set()
         for table in self.groups_container.findChildren(QTableWidget):
             for row in range(table.rowCount()):
@@ -2047,14 +2100,17 @@ class ImportWizardDialog(QDialog):
                 if chk and chk.checkState() == Qt.Checked:
                     pid = chk.data(Qt.UserRole)
                     if pid:
-                        for g in self._groups:
-                            if pid in g.position_ids:
-                                ticked_group_ids.add(g.group_id)
+                        # پیدا کردن group از position
+                        for p in self._group_positions:
+                            if p.position_id == pid and p.group_id:
+                                ticked_group_ids.add(p.group_id)
                                 break
         return list(ticked_group_ids)
 
-    def _get_ticked_group_positions_all(self) -> List[StrategyPosition]:
-        """پیدا کردن همه‌ی position های تیک‌خورده (گروه‌بندی‌شده یا بدون گروه)"""
+    def _get_ticked_group_positions_all(
+        self,
+    ) -> List[StrategyPosition]:
+        """همه‌ی position های تیک‌خورده."""
         ticked_ids = set()
         for table in self.groups_container.findChildren(QTableWidget):
             for row in range(table.rowCount()):
@@ -2068,53 +2124,27 @@ class ImportWizardDialog(QDialog):
                 if p.position_id in ticked_ids]
 
     def _ungroup_selected(self):
-        """جدا کردن position های تیک‌خورده از گروه‌ها"""
-        ticked_ids = set()
-        for table in self.groups_container.findChildren(QTableWidget):
-            for row in range(table.rowCount()):
-                chk = table.item(row, 0)
-                if chk and chk.checkState() == Qt.Checked:
-                    pid = chk.data(Qt.UserRole)
-                    if pid:
-                        ticked_ids.add(pid)
-
-        if not ticked_ids:
+        """جدا کردن position های تیک‌خورده از گروه‌ها."""
+        selected = self._get_ticked_group_positions_all()
+        if not selected:
             QMessageBox.information(
                 self, "اطلاع",
                 "لطفاً ابتدا یک یا چند موقعیت را تیک بزنید.")
             return
 
-        # جدا کردن
-        affected_groups = set()
-        for pos in self._group_positions:
-            if pos.position_id in ticked_ids and pos.group_id:
-                affected_groups.add(pos.group_id)
+        for pos in selected:
+            if pos.group_id:
                 pos.group_id = ""
                 pos.strategy_type = ""
-
-        # حذف گروه‌های خالی
-        self._groups = [
-            g for g in self._groups if g.position_ids
-        ]
-        # به‌روزرسانی position_ids در گروه‌ها
-        for g in self._groups:
-            g.position_ids = [
-                pid for pid in g.position_ids
-                if pid not in ticked_ids
-            ]
-
-        # حذف گروه‌های خالی بعد از به‌روزرسانی
-        self._groups = [
-            g for g in self._groups if g.position_ids
-        ]
+                pos.strategy_name = ""
 
         self._refresh_group()
         QMessageBox.information(
             self, "✅ موفق",
-            f"{len(ticked_ids)} موقعیت از گروه جدا شد.")
+            f"{len(selected)} موقعیت از گروه جدا شد.")
 
     def _delete_group(self):
-        """حذف گروه‌های انتخاب‌شده (position ها حفظ می‌شوند)"""
+        """حذف گروه‌های انتخاب‌شده (position ها حفظ می‌شوند)."""
         ticked_group_ids = self._get_ticked_group_ids()
 
         if not ticked_group_ids:
@@ -2127,25 +2157,17 @@ class ImportWizardDialog(QDialog):
             self, "تأیید حذف گروه",
             f"آیا از حذف {len(ticked_group_ids)} گروه مطمئن "
             f"هستید؟\n\n"
-            f"⚠️ موقعیت‌ها حذف نمی‌شوند، فقط به «بدون استراتژی» "
-            f"برمی‌گردند.",
+            f"⚠️ موقعیت‌ها حذف نمی‌شوند، فقط به «بدون "
+            f"استراتژی» برمی‌گردند.",
             QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
 
-        # حذف گروه‌ها
-        for gid in ticked_group_ids:
-            # پاک کردن group_id از position ها
-            for pos in self._group_positions:
-                if pos.group_id == gid:
-                    pos.group_id = ""
-                    pos.strategy_type = ""
-
-        # حذف گروه‌ها از لیست
-        self._groups = [
-            g for g in self._groups
-            if g.group_id not in ticked_group_ids
-        ]
+        for pos in self._group_positions:
+            if pos.group_id in ticked_group_ids:
+                pos.group_id = ""
+                pos.strategy_type = ""
+                pos.strategy_name = ""
 
         self._refresh_group()
         QMessageBox.information(
@@ -2153,7 +2175,7 @@ class ImportWizardDialog(QDialog):
             f"{len(ticked_group_ids)} گروه حذف شد.")
 
     def _split_selected_position(self):
-        """شکستن موقعیت انتخاب‌شده به قطعات"""
+        """شکستن موقعیت انتخاب‌شده به قطعات."""
         selected = self._get_ticked_group_positions_all()
 
         if len(selected) != 1:
@@ -2164,21 +2186,18 @@ class ImportWizardDialog(QDialog):
 
         pos = selected[0]
 
-        # بررسی: تک‌لگی
         if len(pos.legs) != 1:
             QMessageBox.warning(
                 self, "خطا",
                 "فقط موقعیت‌های تک‌لگی قابل شکستن هستند.")
             return
 
-        # بررسی: qty > 1
         if pos.legs[0].quantity <= 1:
             QMessageBox.warning(
                 self, "خطا",
                 "موقعیت باید حداقل 2 عدد داشته باشد.")
             return
 
-        # باز کردن دیالوگ
         from position_saver.ui.split_position_dialog import (
             SplitPositionDialog)
         dlg = SplitPositionDialog(self, position=pos)
@@ -2189,14 +2208,12 @@ class ImportWizardDialog(QDialog):
             quantities = dlg.get_quantities()
             reasons = dlg.get_reasons()
 
-            # انجام split
             try:
                 pieces = pos.split_position(quantities)
             except ValueError as e:
                 QMessageBox.critical(self, "خطا", str(e))
                 return
 
-            # اضافه کردن strategy_type به هر قطعه
             for piece, reason in zip(pieces, reasons):
                 if reason:
                     piece.strategy_type = reason
@@ -2204,17 +2221,6 @@ class ImportWizardDialog(QDialog):
             # حذف position اصلی
             if pos in self._group_positions:
                 self._group_positions.remove(pos)
-
-            # اگر در گروه بود، از گروه حذف کن
-            for g in self._groups:
-                if pos.position_id in g.position_ids:
-                    g.position_ids.remove(pos.position_id)
-                    break
-
-            # حذف گروه‌های خالی
-            self._groups = [
-                g for g in self._groups if g.position_ids
-            ]
 
             # اضافه کردن قطعات
             for p in pieces:
@@ -2228,7 +2234,7 @@ class ImportWizardDialog(QDialog):
             dlg.deleteLater()
 
     def _merge_selected_positions(self):
-        """ادغام موقعیت‌های انتخاب‌شده"""
+        """ادغام موقعیت‌های انتخاب‌شده."""
         selected = self._get_ticked_group_positions_all()
 
         if len(selected) < 2:
@@ -2246,28 +2252,16 @@ class ImportWizardDialog(QDialog):
         if reply != QMessageBox.Yes:
             return
 
-        # انجام merge
         try:
             merged = StrategyPosition.merge_positions(selected)
         except ValueError as e:
             QMessageBox.critical(self, "خطا", str(e))
             return
 
-        # حذف position های قدیمی
         for p in selected:
             if p in self._group_positions:
                 self._group_positions.remove(p)
-            # از گروه‌ها هم حذف کن
-            for g in self._groups:
-                if p.position_id in g.position_ids:
-                    g.position_ids.remove(p.position_id)
 
-        # حذف گروه‌های خالی
-        self._groups = [
-            g for g in self._groups if g.position_ids
-        ]
-
-        # اضافه کردن merged
         self._group_positions.append(merged)
 
         self._refresh_group()
@@ -2275,39 +2269,86 @@ class ImportWizardDialog(QDialog):
             self, "✅ موفق",
             f"{len(selected)} موقعیت ادغام شد.")
 
-
-    def _get_ticked_group_cards(self) -> List[StrategyGroup]:
-        """پیدا کردن گروه‌های تیک‌خورده از میان کارت‌ها"""
-        ticked_group_ids = set()
-        for table in self.groups_container.findChildren(QTableWidget):
-            for row in range(table.rowCount()):
-                chk = table.item(row, 0)
-                if chk and chk.checkState() == Qt.Checked:
-                    # پیدا کردن group از روی position_id
-                    pid = chk.data(Qt.UserRole)
-                    if pid:
-                        for g in self._groups:
-                            if pid in g.position_ids:
-                                ticked_group_ids.add(g.group_id)
-                                break
-        return [g for g in self._groups
-                if g.group_id in ticked_group_ids]
-
     # ═══════════════════════════════════════════════
     # تب ۳: بازگشت
     # ═══════════════════════════════════════════════
 
     def _move_group_back_to_confirm(self):
+        """بازگشت واقعی از تب ۳ به تب ۲."""
+        if not self._group_positions:
+            QMessageBox.information(
+                self, "اطلاع",
+                "هیچ موقعیتی در تب گروه‌بندی وجود ندارد.")
+            return
+
+        reply = QMessageBox.question(
+            self, "تأیید بازگشت",
+            f"⚠️ همه‌ی {len(self._group_positions)} موقعیت به "
+            f"تب «تأیید موقعیت‌ها» برمی‌گردند.\n\n"
+            f"همه‌ی گروه‌ها حذف می‌شوند.\n\n"
+            f"ادامه؟",
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        # تبدیل position به TradeRecord
+        for pos in self._group_positions:
+            trade = self._position_to_trade(pos)
+            if trade is not None:
+                trade.is_selected = False
+                trade.auto_selected = False
+                self._confirm_trades.append(trade)
+
+        # پاکسازی
+        self._group_positions = []
+
+        self._refresh_confirm()
+        self._refresh_group()
+
+        self.tabs.setCurrentIndex(TAB_CONFIRM)
+
         QMessageBox.information(
-            self, "اطلاع",
-            "برای بازگشت، باید همه‌ی گروه‌ها را حذف کنید.")
+            self, "✅ موفق",
+            "همه‌ی موقعیت‌ها به تب «تأیید موقعیت‌ها» بازگشتند.")
+
+    def _position_to_trade(
+        self, pos: StrategyPosition
+    ) -> Optional[TradeRecord]:
+        """تبدیل معکوس: StrategyPosition به TradeRecord."""
+        if not pos.legs:
+            return None
+
+        leg = pos.legs[0]
+
+        return TradeRecord(
+            trade_id=leg.trade_ref or pos.position_id,
+            raw_date=leg.open_date or pos.execution_date,
+            raw_time=leg.open_time or "",
+            symbol=leg.symbol,
+            side=leg.leg_type,
+            quantity=leg.quantity,
+            price=leg.entry_price,
+            strike_price=leg.strike_price if leg.strike_price > 0
+                else None,
+            expiry_date=leg.expiry_date,
+            contract_size=leg.contract_size,
+            option_kind=leg.option_kind,
+            underlying_symbol=pos.underlying_symbol,
+            ins_code=leg.ins_code,
+            ins_code_ua=leg.ins_code_ua,
+            broker=pos.broker_name,
+            close_reason=leg.close_reason or pos.close_reason,
+            close_price=leg.close_price,
+            close_date=leg.close_date,
+            needs_review=pos.needs_review,
+        )
 
     # ═══════════════════════════════════════════════
     # Net Position Dialog
     # ═══════════════════════════════════════════════
 
     def _open_net_position_dialog(self, from_tab: str = "raw"):
-        """باز کردن دیالوگ تحلیل ترتیب زمانی"""
+        """باز کردن دیالوگ تحلیل ترتیب زمانی."""
         if not self._all_trades:
             QMessageBox.information(
                 self, "اطلاع",
@@ -2328,7 +2369,8 @@ class ImportWizardDialog(QDialog):
             if len(symbols) > 1:
                 QMessageBox.warning(
                     self, "خطا",
-                    f"شما {len(symbols)} نماد مختلف انتخاب کرده‌اید.\n"
+                    f"شما {len(symbols)} نماد مختلف انتخاب "
+                    f"کرده‌اید.\n"
                     f"لطفاً فقط یک نماد انتخاب کنید.")
                 return
             symbol = symbols[0]
@@ -2383,7 +2425,8 @@ class ImportWizardDialog(QDialog):
                      for s in symbols]
             choice, ok = QInputDialog.getItem(
                 self, "انتخاب نماد",
-                f"کدام نماد را می‌خواهید پر کنید؟ ({len(symbols)} نماد)",
+                f"کدام نماد را می‌خواهید پر کنید؟ "
+                f"({len(symbols)} نماد)",
                 items, 0, False)
             if not ok:
                 return
@@ -2424,7 +2467,8 @@ class ImportWizardDialog(QDialog):
                     if t.contract_size <= 0:
                         t.contract_size = result["contract_size"]
                     if not t.underlying_symbol:
-                        t.underlying_symbol = result["underlying_symbol"]
+                        t.underlying_symbol = result[
+                            "underlying_symbol"]
 
                     t.user_edited = True
                     t.needs_review = not t.is_complete
@@ -2458,7 +2502,8 @@ class ImportWizardDialog(QDialog):
             if isinstance(strike, (int, float)):
                 strike = f"{int(strike):,}"
             lines.append(
-                f"  • {symbol}  →  strike={strike}  expiry={expiry}")
+                f"  • {symbol}  →  strike={strike}  "
+                f"expiry={expiry}")
 
         text = "\n".join(lines[:50])
         if len(memory) > 50:
@@ -2477,7 +2522,8 @@ class ImportWizardDialog(QDialog):
             if reply2 == QMessageBox.Yes:
                 clear_all()
                 self._refresh_raw()
-                QMessageBox.information(self, "موفق", "حافظه پاک شد.")
+                QMessageBox.information(
+                    self, "موفق", "حافظه پاک شد.")
 
     # ═══════════════════════════════════════════════
     # Commit نهایی
@@ -2503,8 +2549,7 @@ class ImportWizardDialog(QDialog):
 
         reply = QMessageBox.question(
             self, "تأیید ذخیره",
-            f"{len(self._group_positions)} موقعیت در "
-            f"{len(self._groups)} گروه ذخیره می‌شود.\n\n"
+            f"{len(self._group_positions)} موقعیت ذخیره می‌شود.\n\n"
             f"آیا مطمئن هستید؟",
             QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
@@ -2517,6 +2562,16 @@ class ImportWizardDialog(QDialog):
             QMessageBox.critical(self, "خطا",
                 f"بارگذاری ناموفق:\n{e}")
             return
+
+        # چک یکتایی position_id
+        existing_ids = {p.position_id for p in existing_positions}
+        for pos in self._group_positions:
+            if pos.position_id in existing_ids:
+                pos.position_id = (
+                    f"POS-{str(uuid.uuid4())[:6].upper()}")
+                logger.warning(
+                    f"Position ID conflict — regenerated: "
+                    f"{pos.position_id}")
 
         all_pos = existing_positions + self._group_positions
 
@@ -2531,14 +2586,7 @@ class ImportWizardDialog(QDialog):
                 f"خطا در ذخیره‌سازی:\n{e}")
             return
 
-        try:
-            existing_groups = self.storage.load_groups()
-            all_groups = existing_groups + self._groups
-            if not self.storage.save_groups(all_groups):
-                logger.warning("Save groups failed")
-        except Exception as e:
-            logger.warning(f"Save groups failed: {e}")
-
+        # ذخیره‌ی batch
         try:
             batch = ImportBatch(
                 broker=self._broker,
@@ -2559,6 +2607,7 @@ class ImportWizardDialog(QDialog):
         except Exception as e:
             logger.warning(f"Save batch failed: {e}")
 
+        # ذخیره‌ی symbol memory
         for p in self._group_positions:
             for leg in p.legs:
                 if leg.strike_price and leg.expiry_date:
@@ -2578,8 +2627,8 @@ class ImportWizardDialog(QDialog):
         QMessageBox.information(
             self, "✅ موفق",
             f"ایمپورت با موفقیت انجام شد.\n\n"
-            f"موقعیت‌های ذخیره‌شده: {len(self._group_positions)}\n"
-            f"گروه‌ها: {len(self._groups)}\n"
+            f"موقعیت‌های ذخیره‌شده: "
+            f"{len(self._group_positions)}\n"
             f"نمادها در حافظه: {get_symbol_memory_count()}")
 
         self.accept()

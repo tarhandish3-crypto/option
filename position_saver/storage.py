@@ -2,14 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-ذخیره‌سازی و بارگذاری موقعیت‌ها، گروه‌ها و batch های ایمپورت.
+ذخیره‌سازی و بارگذاری موقعیت‌ها و batch های ایمپورت.
 
 ساختار فایل‌ها:
     positions_data.json   → موقعیت‌ها (StrategyPosition)
-    groups_data.json      → گروه‌های استراتژی (StrategyGroup)
     import_batches.json   → batch های ایمپورت
 
-نسخه‌ی داده: 3
+نسخه‌ی داده: 4 (بدون groups)
 """
 
 import json
@@ -18,14 +17,14 @@ import re
 import shutil
 import threading
 import logging
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
-from datetime import datetime
 from pathlib import Path
 
 import jdatetime
 
 from position_saver.models import (
-    StrategyPosition, StrategyGroup, OptionLeg,
+    StrategyPosition, OptionLeg,
     LegType, PositionStatus,
 )
 from core.enums import OptionType
@@ -38,21 +37,15 @@ logger = logging.getLogger("PositionSaver.Storage")
 # ثابت‌ها
 # ═══════════════════════════════════════════════════
 
-# نسخه‌ی فرمت داده — برای مهاجرت خودکار
-DATA_VERSION = 3
-
-# نسخه‌های قدیمی
-DATA_VERSION_V1 = 1     # آرایه‌ی ساده
-DATA_VERSION_V2 = 2     # {version, positions}
-DATA_VERSION_V3 = 3     # {version, positions, groups}
+DATA_VERSION = 4  # بدون groups
 
 
 # ═══════════════════════════════════════════════════
-# توابع کمکی (عمومی)
+# توابع کمکی
 # ═══════════════════════════════════════════════════
 
 def normalize_symbol(s: str) -> str:
-    """نرمال‌سازی نام نماد (تبدیل ی/ک عربی به فارسی)"""
+    """نرمال‌سازی نام نماد (تبدیل ی/ک عربی به فارسی)."""
     if not s:
         return ""
     s = str(s).strip()
@@ -63,7 +56,7 @@ def normalize_symbol(s: str) -> str:
 
 
 def clean_int(value, default: int = 0) -> int:
-    """تبدیل ایمن به int"""
+    """تبدیل ایمن به int."""
     try:
         if value is None:
             return default
@@ -75,7 +68,7 @@ def clean_int(value, default: int = 0) -> int:
 
 
 def clean_float(value, default: float = 0.0) -> float:
-    """تبدیل ایمن به float"""
+    """تبدیل ایمن به float."""
     try:
         if value is None:
             return default
@@ -87,7 +80,7 @@ def clean_float(value, default: float = 0.0) -> float:
 
 
 def today_jalali() -> str:
-    """تاریخ امروز شمسی به فرمت YYYY/MM/DD"""
+    """تاریخ امروز شمسی."""
     try:
         return jdatetime.date.today().strftime("%Y/%m/%d")
     except Exception:
@@ -95,7 +88,7 @@ def today_jalali() -> str:
 
 
 def infer_option_kind(symbol: str) -> OptionType:
-    """تشخیص نوع نماد از حرف اول"""
+    """تشخیص نوع نماد از حرف اول."""
     if not symbol:
         return OptionType.STOCK
     s = str(symbol).strip()
@@ -107,7 +100,7 @@ def infer_option_kind(symbol: str) -> OptionType:
 
 
 def infer_underlying_symbol(symbol: str) -> str:
-    """حدس نماد پایه از نام نماد"""
+    """حدس نماد پایه از نام نماد."""
     if not symbol:
         return ""
     s = str(symbol).strip()
@@ -119,55 +112,63 @@ def infer_underlying_symbol(symbol: str) -> str:
     return s[:4] if len(s) >= 4 else s
 
 
-# نگه‌داشتن نام‌های قدیمی برای سازگاری
-_normalize_symbol = normalize_symbol
-_clean_int = clean_int
-_clean_float = clean_float
-_today_jalali = today_jalali
-_infer_option_kind = infer_option_kind
-_infer_underlying_symbol = infer_underlying_symbol
-
-
 # ═══════════════════════════════════════════════════
 # کلاس اصلی
 # ═══════════════════════════════════════════════════
 
 class PositionStorage:
     """
-    ذخیره‌سازی و بارگذاری موقعیت‌ها، گروه‌ها و batch ها.
-
-    ویژگی‌ها:
-        - مسیر پیش‌فرض: پوشه‌ی position_saver/
-        - ذخیره اتمیک با os.replace
-        - قفل threading
-        - پشتیبان‌گیری خودکار (.bak)
-        - مهاجرت خودکار نسخه‌ها (v1 → v2 → v3)
+    ذخیره‌سازی و بارگذاری موقعیت‌ها و batch ها.
     """
 
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
     DEFAULT_FILE = os.path.join(BASE_DIR, "positions_data.json")
-    DEFAULT_GROUPS_FILE = os.path.join(BASE_DIR, "groups_data.json")
     DEFAULT_BATCHES_FILE = os.path.join(BASE_DIR, "import_batches.json")
 
     BACKUP_SUFFIX = ".bak"
+
+    # ✅ محدودیت زمانی بین پشتیبان‌گیری‌ها
+    BACKUP_MIN_INTERVAL_SECONDS = 60
 
     def __init__(
         self,
         filepath: Optional[str] = None,
         batches_filepath: Optional[str] = None,
-        groups_filepath: Optional[str] = None,
     ):
         self.filepath = filepath if filepath else self.DEFAULT_FILE
-        self.groups_filepath = (
-            groups_filepath if groups_filepath
-            else self.DEFAULT_GROUPS_FILE
-        )
         self.batches_filepath = (
             batches_filepath if batches_filepath
             else self.DEFAULT_BATCHES_FILE
         )
         self._lock = threading.Lock()
+        self._last_backup_time: Optional[datetime] = None
+
+    # ═══════════════════════════════════════════════
+    # پشتیبان‌گیری
+    # ═══════════════════════════════════════════════
+
+    def _should_backup(self) -> bool:
+        """آیا الان باید پشتیبان‌گیری کنیم؟"""
+        if self._last_backup_time is None:
+            return True
+        elapsed = datetime.now() - self._last_backup_time
+        return elapsed >= timedelta(
+            seconds=self.BACKUP_MIN_INTERVAL_SECONDS)
+
+    def _do_backup(self):
+        """پشتیبان‌گیری با محدودیت زمانی."""
+        if not os.path.exists(self.filepath):
+            return
+        if not self._should_backup():
+            return
+        try:
+            shutil.copy2(
+                self.filepath,
+                self.filepath + self.BACKUP_SUFFIX)
+            self._last_backup_time = datetime.now()
+        except Exception as e:
+            logger.warning(f"Backup failed: {e}")
 
     # ═══════════════════════════════════════════════
     # ذخیره و بارگذاری موقعیت‌ها
@@ -176,15 +177,7 @@ class PositionStorage:
     def save_positions(
         self, positions: List[StrategyPosition]
     ) -> bool:
-        """
-        ذخیره اتمیک لیست موقعیت‌ها.
-
-        ساختار جدید (v3):
-            {
-                "version": 3,
-                "positions": [...]
-            }
-        """
+        """ذخیره اتمیک لیست موقعیت‌ها."""
         with self._lock:
             try:
                 payload = {
@@ -204,15 +197,7 @@ class PositionStorage:
                     except (OSError, AttributeError):
                         pass
 
-                # پشتیبان‌گیری
-                if os.path.exists(self.filepath):
-                    try:
-                        shutil.copy2(
-                            self.filepath,
-                            self.filepath + self.BACKUP_SUFFIX)
-                    except Exception as e:
-                        logger.warning(f"Backup failed: {e}")
-
+                self._do_backup()
                 os.replace(temp_path, self.filepath)
                 logger.info(
                     f"Saved {len(positions)} positions")
@@ -229,14 +214,7 @@ class PositionStorage:
                 return False
 
     def load_positions(self) -> List[StrategyPosition]:
-        """
-        بارگذاری موقعیت‌ها با مهاجرت خودکار.
-
-        پشتیبانی از:
-            - v1: آرایه‌ی ساده
-            - v2: {version, positions}
-            - v3: {version, positions}
-        """
+        """بارگذاری موقعیت‌ها با مهاجرت خودکار."""
         with self._lock:
             if not os.path.exists(self.filepath):
                 return []
@@ -269,26 +247,28 @@ class PositionStorage:
 
     @staticmethod
     def _extract_positions(raw) -> list:
-        """استخراج لیست موقعیت‌ها از هر فرمت"""
+        """استخراج لیست موقعیت‌ها از هر فرمت."""
         if isinstance(raw, list):
-            # v1 — آرایه ساده
             return raw
         if isinstance(raw, dict):
-            # v2/v3 — {version, positions}
-            return raw.get("positions", [])
+            positions = raw.get("positions", [])
+            if not isinstance(positions, list):
+                logger.error(
+                    f"Invalid positions type: "
+                    f"{type(positions).__name__}")
+                return []
+            return positions
         return []
 
     def _try_recover_from_backup(self) -> List[StrategyPosition]:
-        """تلاش برای بازیابی از پشتیبان"""
+        """تلاش برای بازیابی از پشتیبان."""
         backup_path = self.filepath + self.BACKUP_SUFFIX
         if not os.path.exists(backup_path):
             return []
-
         try:
             logger.info("Attempting recovery from backup...")
             with open(backup_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-
             items = self._extract_positions(raw)
             return [StrategyPosition.from_dict(item)
                     for item in items]
@@ -297,105 +277,11 @@ class PositionStorage:
             return []
 
     # ═══════════════════════════════════════════════
-    # ✅ ذخیره و بارگذاری گروه‌ها
-    # ═══════════════════════════════════════════════
-
-    def save_groups(self, groups: List[StrategyGroup]) -> bool:
-        """ذخیره‌ی لیست گروه‌های استراتژی"""
-        with self._lock:
-            try:
-                payload = {
-                    "version": DATA_VERSION,
-                    "groups": [g.to_dict() for g in groups],
-                }
-
-                temp_path = self.groups_filepath + ".tmp"
-
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
-                    f.flush()
-                    try:
-                        os.fsync(f.fileno())
-                    except (OSError, AttributeError):
-                        pass
-
-                if os.path.exists(self.groups_filepath):
-                    try:
-                        shutil.copy2(
-                            self.groups_filepath,
-                            self.groups_filepath + self.BACKUP_SUFFIX)
-                    except Exception as e:
-                        logger.warning(f"Backup failed: {e}")
-
-                os.replace(temp_path, self.groups_filepath)
-                logger.info(f"Saved {len(groups)} groups")
-                return True
-
-            except Exception as e:
-                logger.exception(f"Save groups failed: {e}")
-                temp_path = self.groups_filepath + ".tmp"
-                if os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except Exception:
-                        pass
-                return False
-
-    def load_groups(self) -> List[StrategyGroup]:
-        """بارگذاری لیست گروه‌ها"""
-        with self._lock:
-            if not os.path.exists(self.groups_filepath):
-                return []
-
-            try:
-                with open(self.groups_filepath, "r",
-                          encoding="utf-8") as f:
-                    raw = json.load(f)
-
-                if isinstance(raw, dict):
-                    items = raw.get("groups", [])
-                elif isinstance(raw, list):
-                    items = raw
-                else:
-                    return []
-
-                result = []
-                for item in items:
-                    try:
-                        result.append(
-                            StrategyGroup.from_dict(item))
-                    except Exception as e:
-                        logger.warning(
-                            f"Skipping invalid group: {e}")
-                        continue
-
-                logger.info(f"Loaded {len(result)} groups")
-                return result
-
-            except Exception as e:
-                logger.exception(f"Load groups failed: {e}")
-                return []
-
-    def delete_group(self, group_id: str) -> bool:
-        """حذف یک گروه"""
-        with self._lock:
-            try:
-                groups = self.load_groups()
-                new_groups = [
-                    g for g in groups if g.group_id != group_id]
-                if len(new_groups) == len(groups):
-                    return False
-                return self.save_groups(new_groups)
-            except Exception as e:
-                logger.exception(f"Delete group failed: {e}")
-                return False
-
-    # ═══════════════════════════════════════════════
-    # پشتیبان‌گیری و بازیابی
+    # پشتیبان‌گیری دستی
     # ═══════════════════════════════════════════════
 
     def create_backup(self) -> bool:
-        """ساخت پشتیبان دستی با timestamp"""
+        """ساخت پشتیبان دستی با timestamp."""
         if not os.path.exists(self.filepath):
             return False
         try:
@@ -409,7 +295,7 @@ class PositionStorage:
             return False
 
     def restore_from_backup(self) -> bool:
-        """بازیابی از آخرین پشتیبان"""
+        """بازیابی از آخرین پشتیبان."""
         backup_path = self.filepath + self.BACKUP_SUFFIX
         if not os.path.exists(backup_path):
             return False
@@ -422,7 +308,7 @@ class PositionStorage:
             return False
 
     def clear_all(self) -> bool:
-        """پاکسازی کامل همه‌ی داده‌ها"""
+        """پاکسازی کامل همه‌ی داده‌ها."""
         try:
             self.create_backup()
             payload = {
@@ -431,25 +317,17 @@ class PositionStorage:
             }
             with open(self.filepath, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
-
-            # پاکسازی گروه‌ها
-            with open(self.groups_filepath, "w",
-                      encoding="utf-8") as f:
-                json.dump(
-                    {"version": DATA_VERSION, "groups": []},
-                    f, ensure_ascii=False)
-
             return True
         except Exception as e:
             logger.exception(f"Clear failed: {e}")
             return False
 
     # ═══════════════════════════════════════════════
-    # Import Batch Management
+    # Import Batch
     # ═══════════════════════════════════════════════
 
     def save_import_batch(self, batch_dict: dict) -> bool:
-        """ذخیره‌ی یک Import Batch"""
+        """ذخیره‌ی یک Import Batch."""
         with self._lock:
             try:
                 batches = self._load_batches_raw()
@@ -476,15 +354,6 @@ class PositionStorage:
                     except (OSError, AttributeError):
                         pass
 
-                if os.path.exists(self.batches_filepath):
-                    try:
-                        shutil.copy2(
-                            self.batches_filepath,
-                            self.batches_filepath
-                            + self.BACKUP_SUFFIX)
-                    except Exception:
-                        pass
-
                 os.replace(temp_path, self.batches_filepath)
                 logger.info(f"Batch saved: {batch_id}")
                 return True
@@ -494,12 +363,12 @@ class PositionStorage:
                 return False
 
     def load_import_batches(self) -> List[dict]:
-        """بارگذاری همه‌ی Import Batch ها"""
+        """بارگذاری همه‌ی Import Batch ها."""
         with self._lock:
             return self._load_batches_raw()
 
     def _load_batches_raw(self) -> List[dict]:
-        """بارگذاری خام batch ها (بدون قفل مجدد)"""
+        """بارگذاری خام batch ها (بدون قفل مجدد)."""
         if not os.path.exists(self.batches_filepath):
             return []
         try:
@@ -514,7 +383,7 @@ class PositionStorage:
             return []
 
     def delete_import_batch(self, batch_id: str) -> bool:
-        """حذف یک Import Batch"""
+        """حذف یک Import Batch."""
         with self._lock:
             try:
                 batches = self._load_batches_raw()
@@ -545,16 +414,16 @@ class PositionStorage:
 
     @staticmethod
     def positions_to_dataframe(positions: List[StrategyPosition]):
-        """تبدیل لیست موقعیت‌ها به DataFrame"""
+        """تبدیل لیست موقعیت‌ها به DataFrame."""
         try:
             import pandas as pd
         except ImportError:
             logger.error("pandas is required")
             return None
 
-        # import داخل تابع برای جلوگیری از circular
         from position_saver.pnl_calculator import (
             PositionPnLCalculator)
+        from position_saver.shared_analytics import SharedAnalytics
 
         rows = []
         for pos in positions:
@@ -567,6 +436,12 @@ class PositionStorage:
             realized_pnl, realized_roi = (
                 PositionPnLCalculator.calculate_realized_pnl(pos)
             )
+
+            # اطلاعات آلرت پویا
+            days_elapsed = pos.days_elapsed()
+            days_total = pos.total_days()
+            threshold = SharedAnalytics.calculate_dynamic_threshold(
+                pos.target_roi_maturity, days_elapsed)
 
             legs_str = " | ".join([
                 f"{l.leg_type.label_fa}: {l.symbol} "
@@ -586,55 +461,27 @@ class PositionStorage:
                 "Position_ID": pos.position_id,
                 "Strategy_Name": pos.strategy_name,
                 "Strategy_Type": pos.strategy_type,
-                "Group_ID": pos.group_id,
                 "Broker": pos.broker_name or "—",
                 "Underlying": pos.underlying_symbol,
                 "Execution_Date": pos.execution_date,
                 "Expiry_Date": pos.expiry_date,
+                "Days_Elapsed": days_elapsed,
+                "Days_Total": days_total,
                 "Days_To_Expiry": pos.days_to_expiry(),
                 "Legs": legs_str,
                 "Legs_Count": len(pos.legs),
                 "Net_Entry_Cost": int(net_cost),
-                "Target_ROI_Pct": pos.target_roi_maturity,
+                "Target_ROI_Monthly": pos.target_roi_maturity,
+                "Dynamic_Threshold": round(threshold, 3),
                 "PnL": int(pnl_value),
                 "PnL_ROI_Pct": round(pnl_roi, 2),
-                "Alert_Target_ROI_Pct": pos.alert_target_roi,
+                "Alert_Enabled": pos.alert_enabled,
+                "Alert_Sent": pos.alert_sent,
+                "Price_Target": pos.price_target,
                 "Status": pos.status.value,
                 "Source": pos.source,
                 "Close_Date": pos.close_date or "",
                 "Notes": pos.notes or "",
-            })
-
-        return pd.DataFrame(rows)
-
-    @staticmethod
-    def groups_to_dataframe(groups: List[StrategyGroup],
-                             positions: List[StrategyPosition]):
-        """تبدیل لیست گروه‌ها به DataFrame"""
-        try:
-            import pandas as pd
-        except ImportError:
-            logger.error("pandas is required")
-            return None
-
-        rows = []
-        for g in groups:
-            live_pnl = g.total_live_pnl(positions)
-            realized = g.total_realized_pnl(positions)
-            open_cost = g.total_open_cost(positions)
-            is_closed = g.is_fully_closed(positions)
-
-            rows.append({
-                "Group_ID": g.group_id,
-                "Strategy_Type": g.strategy_type,
-                "Display_Name": g.display_name,
-                "Num_Positions": g.num_positions,
-                "Live_PnL": int(live_pnl),
-                "Realized_PnL": int(realized),
-                "Open_Cost": int(open_cost),
-                "Is_Fully_Closed": is_closed,
-                "Created_At": g.created_at,
-                "Notes": g.notes or "",
             })
 
         return pd.DataFrame(rows)

@@ -14,15 +14,12 @@ from typing import List, Optional
 from core.enums import OptionType
 
 
-# ═════════════════════════════════════════════════════
-# توابع کمکی: کار با تاریخ و زمان
-# ═════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
+# توابع کمکی
+# ═══════════════════════════════════════════════════
 
 def _parse_jalali_date(date_str: str) -> Optional[jdatetime.date]:
-    """
-    تبدیل رشته تاریخ شمسی به jdatetime.date.
-    پشتیبانی از فرمت‌های: 1403/01/15، 1403-01-15، 1403/1/15
-    """
+    """تبدیل رشته تاریخ شمسی به jdatetime.date."""
     if not date_str:
         return None
     try:
@@ -36,38 +33,9 @@ def _parse_jalali_date(date_str: str) -> Optional[jdatetime.date]:
         return None
 
 
-def _normalize_jalali_date(date_str: str) -> str:
-    """نرمال‌سازی تاریخ شمسی به فرمت YYYY/MM/DD."""
-    if not date_str:
-        return ""
-    parsed = _parse_jalali_date(date_str)
-    if parsed is None:
-        return str(date_str).strip()
-    return parsed.strftime("%Y/%m/%d")
-
-
-def _normalize_time_str(time_str: str) -> str:
-    """نرمال‌سازی زمان به فرمت HH:MM:SS."""
-    if not time_str:
-        return ""
-    try:
-        s = str(time_str).strip()
-        if '.' in s:
-            s = s.split('.')[0]
-        parts = s.split(':')
-        if len(parts) < 2:
-            return s
-        h = int(parts[0])
-        m = int(parts[1])
-        sec = int(parts[2]) if len(parts) >= 3 else 0
-        return f"{h:02d}:{m:02d}:{sec:02d}"
-    except Exception:
-        return str(time_str).strip()
-
-
-# ═════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
 # Enumها
-# ═════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
 
 class LegType(Enum):
     BUY = "buy"
@@ -79,7 +47,6 @@ class LegType(Enum):
 
     @property
     def side_sign(self) -> int:
-        """علامت جهت: 1 برای خرید، -1 برای فروش"""
         return 1 if self == LegType.BUY else -1
 
     @classmethod
@@ -95,19 +62,7 @@ class LegType(Enum):
 
 
 class PositionStatus(Enum):
-    """
-    وضعیت یک StrategyPosition.
-
-    - OPEN: باز (هنوز هیچ لگ بسته نشده)
-    - PARTIAL: بخشی بسته شده
-    - CLOSED: کاملاً بسته (با آفست/معامله معکوس)
-    - EXERCISED: اعمال فیزیکی
-    - CASH_SETTLED: تسویه نقدی
-    - DEFAULTED: نکول طرف مقابل
-    - YOU_DEFAULTED: نکول خودم
-    """
     OPEN = "open"
-    PARTIAL = "partial"
     CLOSED = "closed"
     EXERCISED = "exercised"
     CASH_SETTLED = "cash_settled"
@@ -118,7 +73,6 @@ class PositionStatus(Enum):
     def label_fa(self) -> str:
         return {
             PositionStatus.OPEN: "باز",
-            PositionStatus.PARTIAL: "بخشی بسته‌شده",
             PositionStatus.CLOSED: "بسته‌شده",
             PositionStatus.EXERCISED: "اعمال‌شده",
             PositionStatus.CASH_SETTLED: "تسویه نقدی",
@@ -128,12 +82,10 @@ class PositionStatus(Enum):
 
     @property
     def is_final(self) -> bool:
-        """آیا وضعیت نهایی است؟"""
-        return self not in (PositionStatus.OPEN, PositionStatus.PARTIAL)
+        return self != PositionStatus.OPEN
 
     @property
     def is_default(self) -> bool:
-        """آیا مربوط به نکول است؟"""
         return self in (
             PositionStatus.DEFAULTED,
             PositionStatus.YOU_DEFAULTED,
@@ -162,17 +114,13 @@ class PositionStatus(Enum):
         raise ValueError(f"Unknown position status: {value}")
 
 
-# ═════════════════════════════════════════════════════
-# سطح ۱: OptionLeg
-# ═════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
+# OptionLeg
+# ═══════════════════════════════════════════════════
 
 @dataclass
 class OptionLeg:
-    """
-    یک لنگه معاملاتی (خرید/فروش آپشن یا سهم پایه).
-
-    سطح ۱ معماری: کوچک‌ترین واحد معاملاتی.
-    """
+    """یک لنگه معاملاتی."""
 
     # ─── اصلی ───
     leg_id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
@@ -192,7 +140,7 @@ class OptionLeg:
     ins_code: str = ""
     ins_code_ua: str = ""
 
-    # ─── تاریخ و زمان ───
+    # ─── تاریخ/زمان ───
     open_date: str = ""
     open_time: str = ""
     close_date: str = ""
@@ -213,9 +161,7 @@ class OptionLeg:
     realized_pnl: Optional[float] = None
     close_reason: str = ""
 
-    # ═══════════════════════════════════════════════
-    # Propertyها
-    # ═══════════════════════════════════════════════
+    # ─── Propertyها ───
 
     @property
     def is_call(self) -> bool:
@@ -228,10 +174,6 @@ class OptionLeg:
     @property
     def is_stock(self) -> bool:
         return self.option_kind == OptionType.STOCK
-
-    @property
-    def leg_type_label_fa(self) -> str:
-        return self.leg_type.label_fa
 
     @property
     def effective_contract_size(self) -> int:
@@ -255,13 +197,7 @@ class OptionLeg:
     def direction_sign(self) -> int:
         return self.leg_type.side_sign
 
-    @property
-    def is_imported(self) -> bool:
-        return self.source == "excel_import"
-
-    # ═══════════════════════════════════════════════
-    # محاسبات
-    # ═══════════════════════════════════════════════
+    # ─── محاسبات ───
 
     def entry_value(self) -> float:
         return (self.quantity * self.entry_price
@@ -270,8 +206,11 @@ class OptionLeg:
     def close_value(self) -> float:
         if self.close_price is None:
             return 0.0
-        return (self.quantity * self.close_price
-                * self.effective_contract_size)
+        try:
+            cp = float(self.close_price)
+        except (TypeError, ValueError):
+            return 0.0
+        return (self.quantity * cp * self.effective_contract_size)
 
     def current_value(self) -> float:
         price = self.current_price if self.current_price > 0 \
@@ -286,7 +225,6 @@ class OptionLeg:
         return val - fee
 
     def is_complete(self) -> bool:
-        """آیا همه‌ی فیلدهای لازم پر است؟"""
         if self.is_stock:
             return bool(self.symbol)
         return (
@@ -295,42 +233,19 @@ class OptionLeg:
             and bool(self.expiry_date)
         )
 
+    # ─── PnL (Delegate) ───
+
     def live_pnl(self) -> float:
-        """
-        PnL لحظه‌ای این لگ.
-        """
-        if self.is_closed:
-            return self.realized_pnl_value()
-        cs = self.effective_contract_size
-        current = (self.current_price if self.current_price > 0
-                   else self.entry_price)
-        price_diff = (current - self.entry_price) * self.quantity * cs
-
-        entry_fee = self.entry_fee if self.entry_fee > 0 else 0.0
-        est_close_fee = 0.0
-
-        if self.leg_type == LegType.BUY:
-            return price_diff - entry_fee - est_close_fee
-        return -price_diff - entry_fee - est_close_fee
+        """PnL لحظه‌ای — Delegate به SharedAnalytics."""
+        from position_saver.pnl_calculator import PositionPnLCalculator
+        return PositionPnLCalculator.calculate_leg_live_pnl(self)
 
     def realized_pnl_value(self) -> float:
-        """PnL محقق‌شده‌ی این لگ (اگر بسته شده)."""
-        if self.realized_pnl is not None:
-            return self.realized_pnl
-        if not self.is_closed:
-            return 0.0
-        cs = self.effective_contract_size
-        price_diff = (self.close_price - self.entry_price) \
-            * self.quantity * cs
-        fees = (self.entry_fee or 0.0) + (self.close_fee or 0.0)
+        """PnL محقق‌شده — Delegate به SharedAnalytics."""
+        from position_saver.pnl_calculator import PositionPnLCalculator
+        return PositionPnLCalculator.calculate_leg_realized_pnl(self)
 
-        if self.leg_type == LegType.BUY:
-            return price_diff - fees
-        return -price_diff - fees
-
-    # ═══════════════════════════════════════════════
-    # Serialization
-    # ═══════════════════════════════════════════════
+    # ─── Serialization ───
 
     def to_dict(self) -> dict:
         return {
@@ -388,8 +303,16 @@ class OptionLeg:
         except ValueError:
             leg_type = LegType.BUY
 
+        close_price_raw = data.get("close_price")
+        close_price: Optional[float] = None
+        if close_price_raw is not None and close_price_raw != "":
+            try:
+                close_price = float(close_price_raw)
+            except (TypeError, ValueError):
+                close_price = None
+
         realized_pnl_raw = data.get("realized_pnl")
-        realized_pnl = None
+        realized_pnl: Optional[float] = None
         if realized_pnl_raw is not None:
             try:
                 realized_pnl = float(realized_pnl_raw)
@@ -409,7 +332,7 @@ class OptionLeg:
             entry_price=float(data.get("entry_price", 0.0)),
             entry_fee=float(data.get("entry_fee", 0.0)),
             current_price=float(data.get("current_price", 0.0)),
-            close_price=data.get("close_price"),
+            close_price=close_price,
             close_fee=float(data.get("close_fee", 0.0)),
             expiry_date=str(data.get("expiry_date", "")),
             ins_code=str(data.get("ins_code", "")),
@@ -446,17 +369,13 @@ class OptionLeg:
         return OptionLeg.from_dict(self.to_dict())
 
 
-# ═════════════════════════════════════════════════════
-# سطح ۲: StrategyPosition
-# ═════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
+# StrategyPosition — با فیلدهای جدید ✅
+# ═══════════════════════════════════════════════════
 
 @dataclass
 class StrategyPosition:
-    """
-    یک موقعیت استراتژی — واحد معاملاتی (Lot).
-
-    سطح ۲ معماری: یک واحد که می‌تواند شامل یک یا چند لگ باشد.
-    """
+    """موقعیت استراتژی — واحد معاملاتی (Lot)."""
 
     # ─── اصلی ───
     position_id: str = field(
@@ -472,13 +391,13 @@ class StrategyPosition:
     status: PositionStatus = PositionStatus.OPEN
     legs: List[OptionLeg] = field(default_factory=list)
 
-    # ─── گروه‌بندی ───
-    group_id: str = ""
-
-    # ─── آلرت ───
-    target_roi_maturity: float = 0.0
-    alert_target_roi: float = 0.0
+    # ─── آلرت پویا ✅ ───
+    target_roi_maturity: float = 0.0     # ROI ماهانه‌ی هدف (%)
+    alert_enabled: bool = True            # ✅ جدید
     alert_sent: bool = False
+
+    # ─── قیمت هدف سهم پایه (برای سود نامحدود) ✅ ───
+    price_target: float = 0.0             # ✅ جدید
 
     # ─── بستن ───
     close_date: Optional[str] = None
@@ -491,9 +410,7 @@ class StrategyPosition:
     cash_settlement_amount: float = 0.0
     close_reason: str = ""
 
-    # ═══════════════════════════════════════════════
-    # Propertyها
-    # ═══════════════════════════════════════════════
+    # ─── Propertyها ───
 
     @property
     def is_open(self) -> bool:
@@ -502,10 +419,6 @@ class StrategyPosition:
     @property
     def is_closed(self) -> bool:
         return self.status.is_final
-
-    @property
-    def has_group(self) -> bool:
-        return bool(self.group_id)
 
     @property
     def option_legs(self) -> List[OptionLeg]:
@@ -536,11 +449,6 @@ class StrategyPosition:
         return self.status.label_fa
 
     @property
-    def has_default(self) -> bool:
-        return self.status.is_default or any(
-            l.is_defaulted for l in self.legs)
-
-    @property
     def total_legs(self) -> int:
         return len(self.legs)
 
@@ -552,9 +460,7 @@ class StrategyPosition:
     def has_incomplete_legs(self) -> bool:
         return any(leg.needs_review for leg in self.legs)
 
-    # ═══════════════════════════════════════════════
-    # محاسبات
-    # ═══════════════════════════════════════════════
+    # ─── محاسبات ───
 
     def days_to_expiry(self) -> Optional[int]:
         expiry = _parse_jalali_date(self.expiry_date)
@@ -563,9 +469,21 @@ class StrategyPosition:
         today = jdatetime.date.today()
         return (expiry - today).days
 
-    def is_expired(self) -> bool:
-        days = self.days_to_expiry()
-        return days is not None and days < 0
+    def days_elapsed(self) -> int:
+        """روز سپری‌شده از اجرا."""
+        start = _parse_jalali_date(self.execution_date)
+        if start is None:
+            return 0
+        today = jdatetime.date.today()
+        return max(0, (today - start).days)
+
+    def total_days(self) -> int:
+        """کل روز از اجرا تا سررسید."""
+        start = _parse_jalali_date(self.execution_date)
+        end = _parse_jalali_date(self.expiry_date)
+        if start is None or end is None:
+            return 30
+        return max(1, (end - start).days)
 
     def has_any_close_price(self) -> bool:
         return any(l.close_price is not None for l in self.legs)
@@ -574,21 +492,16 @@ class StrategyPosition:
         return all(l.close_price is not None for l in self.legs)
 
     def total_live_pnl(self) -> float:
-        """مجموع PnL لحظه‌ای همه‌ی لگ‌های این position."""
-        total = 0.0
-        for leg in self.legs:
-            if leg.is_closed:
-                total += leg.realized_pnl_value()
-            else:
-                total += leg.live_pnl()
-        return total
+        """مجموع PnL لحظه‌ای — Delegate به PnLCalculator."""
+        from position_saver.pnl_calculator import PositionPnLCalculator
+        pnl, _ = PositionPnLCalculator.calculate_live_pnl(self)
+        return pnl
 
     def total_realized_pnl(self) -> float:
-        """مجموع PnL محقق‌شده‌ی لگ‌های بسته."""
-        return sum(
-            leg.realized_pnl_value()
-            for leg in self.legs if leg.is_closed
-        )
+        """مجموع PnL محقق‌شده — Delegate."""
+        from position_saver.pnl_calculator import PositionPnLCalculator
+        pnl, _ = PositionPnLCalculator.calculate_realized_pnl(self)
+        return pnl
 
     def total_open_cost(self) -> float:
         """مجموع هزینه‌ی ورود لگ‌های باز."""
@@ -597,9 +510,7 @@ class StrategyPosition:
             for leg in self.legs if leg.is_open
         )
 
-    # ═══════════════════════════════════════════════
-    # Serialization
-    # ═══════════════════════════════════════════════
+    # ─── Serialization ───
 
     def to_dict(self) -> dict:
         return {
@@ -613,10 +524,10 @@ class StrategyPosition:
             "execution_date": self.execution_date,
             "expiry_date": self.expiry_date,
             "status": self.status.value,
-            "group_id": self.group_id,
             "target_roi_maturity": self.target_roi_maturity,
-            "alert_target_roi": self.alert_target_roi,
+            "alert_enabled": self.alert_enabled,       # ✅
             "alert_sent": self.alert_sent,
+            "price_target": self.price_target,          # ✅
             "close_date": self.close_date,
             "notes": self.notes,
             "source": self.source,
@@ -647,12 +558,11 @@ class StrategyPosition:
             execution_date=str(data.get("execution_date", "")),
             expiry_date=str(data.get("expiry_date", "")),
             status=status,
-            group_id=str(data.get("group_id", "")),
             target_roi_maturity=float(
                 data.get("target_roi_maturity", 0.0)),
-            alert_target_roi=float(
-                data.get("alert_target_roi", 0.0)),
+            alert_enabled=bool(data.get("alert_enabled", True)),  # ✅
             alert_sent=bool(data.get("alert_sent", False)),
+            price_target=float(data.get("price_target", 0.0)),    # ✅
             close_date=data.get("close_date"),
             notes=data.get("notes", ""),
             source=str(data.get("source", "manual")),
@@ -673,28 +583,11 @@ class StrategyPosition:
     # ═══════════════════════════════════════════════
 
     def split_position(
-        self,
-        quantities: List[int],
+        self, quantities: List[int],
     ) -> List["StrategyPosition"]:
-        """
-        شکستن یک موقعیت به چند قطعه.
-
-        Args:
-            quantities: لیست تعداد هر قطعه
-                        (مجموع باید برابر quantity کل باشد)
-
-        Returns:
-            لیست Position های جدید
-
-        قواعد:
-            - فقط موقعیت‌های تک‌لگی قابل شکستن هستند
-            - هر Position جدید با position_id جدید
-            - گروه پاک می‌شود
-            - status و close_* از Position اصلی کپی می‌شوند
-        """
+        """شکستن یک موقعیت به چند قطعه."""
         if not self.legs:
             raise ValueError("موقعیت هیچ لگی ندارد")
-
         if len(self.legs) != 1:
             raise ValueError(
                 "فقط موقعیت‌های تک‌لگی قابل شکستن هستند")
@@ -705,33 +598,26 @@ class StrategyPosition:
             raise ValueError(
                 f"مجموع قطعات ({sum(quantities)}) باید "
                 f"برابر تعداد کل ({leg.quantity}) باشد")
-
         if len(quantities) < 2:
             raise ValueError("حداقل 2 قطعه برای Split لازم است")
-
         if any(q <= 0 for q in quantities):
             raise ValueError("تعداد هر قطعه باید حداقل 1 باشد")
 
         result: List[StrategyPosition] = []
-
         for i, qty in enumerate(quantities, 1):
-            # کپی leg با qty جدید
             new_leg = leg.copy()
             new_leg.leg_id = f"{leg.leg_id}-s{i}"
             new_leg.quantity = qty
 
-            # کپی position
             new_pos = StrategyPosition.from_dict(self.to_dict())
             new_pos.position_id = f"{self.position_id}-S{i}"
             new_pos.legs = [new_leg]
-            new_pos.group_id = ""
             new_pos.strategy_type = ""
             new_pos.strategy_name = ""
             new_pos.alert_sent = False
             new_pos.notes = (
                 f"{self.notes}\n[Split from {self.position_id}]"
             ).strip()
-
             result.append(new_pos)
 
         return result
@@ -740,26 +626,11 @@ class StrategyPosition:
     def merge_positions(
         positions: List["StrategyPosition"],
     ) -> "StrategyPosition":
-        """
-        ادغام چند موقعیت در یک موقعیت.
-
-        Args:
-            positions: لیست Position هایی که باید merge شوند
-
-        Returns:
-            Position ادغام‌شده
-
-        قواعد:
-            - همه باید همان نماد، strike، expiry، entry_price
-            - همه باید همان جهت (BUY یا SELL)
-            - همه باید تک‌لگی
-            - همه باید وضعیت یکسان داشته باشند
-        """
+        """ادغام چند موقعیت در یک موقعیت."""
         if len(positions) < 2:
             raise ValueError("حداقل دو موقعیت برای ادغام لازم است")
 
         first = positions[0]
-
         if len(first.legs) != 1:
             raise ValueError(
                 f"موقعیت {first.position_id} تک‌لگ نیست")
@@ -770,29 +641,22 @@ class StrategyPosition:
             if len(p.legs) != 1:
                 raise ValueError(
                     f"موقعیت {p.position_id} تک‌لگ نیست")
-
             leg = p.legs[0]
-
             if leg.symbol != first_leg.symbol:
                 raise ValueError(
                     f"نماد {p.position_id} متفاوت است")
-
-            if leg.strike_price != first_leg.strike_price:
+            if abs(leg.strike_price - first_leg.strike_price) > 0.5:
                 raise ValueError(
                     f"قیمت اعمال {p.position_id} متفاوت است")
-
             if leg.expiry_date != first_leg.expiry_date:
                 raise ValueError(
                     f"تاریخ سررسید {p.position_id} متفاوت است")
-
-            if leg.entry_price != first_leg.entry_price:
+            if abs(leg.entry_price - first_leg.entry_price) > 0.5:
                 raise ValueError(
                     f"قیمت ورود {p.position_id} متفاوت است")
-
             if leg.leg_type != first_leg.leg_type:
                 raise ValueError(
                     f"جهت {p.position_id} متفاوت است")
-
             if p.status != first.status:
                 raise ValueError(
                     f"وضعیت {p.position_id} متفاوت است")
@@ -805,7 +669,6 @@ class StrategyPosition:
 
         new_pos = StrategyPosition.from_dict(first.to_dict())
         new_pos.legs = [new_leg]
-        new_pos.group_id = ""
         new_pos.strategy_type = ""
         new_pos.strategy_name = ""
         new_pos.alert_sent = False
@@ -818,137 +681,13 @@ class StrategyPosition:
         return new_pos
 
 
-# ═════════════════════════════════════════════════════
-# سطح ۳: StrategyGroup
-# ═════════════════════════════════════════════════════
-
-@dataclass
-class StrategyGroup:
-    """
-    ماسک گروه‌بندی استراتژی.
-
-    سطح ۳ معماری: فقط یک لایه‌ی نمایش/گزارش روی چند StrategyPosition.
-    """
-
-    group_id: str = field(
-        default_factory=lambda: f"GRP-{str(uuid.uuid4())[:6].upper()}")
-    strategy_type: str = ""
-    display_name: str = ""
-
-    # ─── ارجاعات ───
-    position_ids: List[str] = field(default_factory=list)
-
-    # ─── متادیتا ───
-    created_at: str = ""
-    notes: str = ""
-
-    # ─── آلرت ───
-    alert_target_roi: float = 0.0
-    alert_sent: bool = False
-
-    # ═══════════════════════════════════════════════
-    # Propertyها
-    # ═══════════════════════════════════════════════
-
-    @property
-    def num_positions(self) -> int:
-        return len(self.position_ids)
-
-    @property
-    def has_positions(self) -> bool:
-        return len(self.position_ids) > 0
-
-    @property
-    def label_fa(self) -> str:
-        """برچسب نمایشی گروه"""
-        if self.display_name:
-            return self.display_name
-        return self.strategy_type or "بدون نام"
-
-    # ═══════════════════════════════════════════════
-    # محاسبات تجمیعی
-    # ═══════════════════════════════════════════════
-
-    def _get_positions(
-        self, all_positions: List[StrategyPosition]
-    ) -> List[StrategyPosition]:
-        ids = set(self.position_ids)
-        return [p for p in all_positions if p.position_id in ids]
-
-    def total_live_pnl(
-        self, all_positions: List[StrategyPosition]
-    ) -> float:
-        positions = self._get_positions(all_positions)
-        return sum(p.total_live_pnl() for p in positions)
-
-    def total_realized_pnl(
-        self, all_positions: List[StrategyPosition]
-    ) -> float:
-        positions = self._get_positions(all_positions)
-        return sum(p.total_realized_pnl() for p in positions)
-
-    def total_open_cost(
-        self, all_positions: List[StrategyPosition]
-    ) -> float:
-        positions = self._get_positions(all_positions)
-        return sum(p.total_open_cost() for p in positions)
-
-    def is_fully_closed(
-        self, all_positions: List[StrategyPosition]
-    ) -> bool:
-        positions = self._get_positions(all_positions)
-        if not positions:
-            return True
-        return all(p.is_closed for p in positions)
-
-    def has_any_open(
-        self, all_positions: List[StrategyPosition]
-    ) -> bool:
-        positions = self._get_positions(all_positions)
-        return any(p.is_open for p in positions)
-
-    # ═══════════════════════════════════════════════
-    # Serialization
-    # ═══════════════════════════════════════════════
-
-    def to_dict(self) -> dict:
-        return {
-            "group_id": self.group_id,
-            "strategy_type": self.strategy_type,
-            "display_name": self.display_name,
-            "position_ids": list(self.position_ids),
-            "created_at": self.created_at,
-            "notes": self.notes,
-            "alert_target_roi": self.alert_target_roi,
-            "alert_sent": self.alert_sent,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "StrategyGroup":
-        return cls(
-            group_id=data.get("group_id", ""),
-            strategy_type=str(data.get("strategy_type", "")),
-            display_name=str(data.get("display_name", "")),
-            position_ids=list(data.get("position_ids", [])),
-            created_at=str(data.get("created_at", "")),
-            notes=str(data.get("notes", "")),
-            alert_target_roi=float(
-                data.get("alert_target_roi", 0.0)),
-            alert_sent=bool(data.get("alert_sent", False)),
-        )
-
-    def copy(self) -> "StrategyGroup":
-        return StrategyGroup.from_dict(self.to_dict())
-
-
-# ═════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
 # صادرات
-# ═════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════
 
 __all__ = [
     "LegType",
     "PositionStatus",
     "OptionLeg",
     "StrategyPosition",
-    "StrategyGroup",
 ]

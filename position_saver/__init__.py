@@ -20,10 +20,9 @@
     widget = create_position_saver_widget(parent=self)
     main_tabs.addTab(widget, "مدیریت موقعیت‌ها")
 
-معماری سه‌سطحی:
+معماری دوسطحی:
     - OptionLeg: معامله‌ی خام
-    - StrategyPosition: واحد معاملاتی (Lot)
-    - StrategyGroup: ماسک گروه‌بندی استراتژی
+    - StrategyPosition: واحد معاملاتی (Lot) — چند-لگ
 """
 
 
@@ -45,11 +44,11 @@ if _ROOT not in sys.path:
 # ۲. متادیتا
 # ═══════════════════════════════════════════════════
 
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 __author__ = "Position Saver"
 __description__ = (
     "مدیریت، ثبت و ایمپورت موقعیت‌های استراتژی آپشن — "
-    "با معماری سه‌سطحی"
+    "با معماری دوسطحی + آلرت پویا"
 )
 
 
@@ -69,7 +68,7 @@ from position_saver.providers import (
 
 
 # ═══════════════════════════════════════════════════
-# ۴. مدل‌های داده (سه‌سطحی)
+# ۴. مدل‌های داده (دوسطحی — بدون StrategyGroup)
 # ═══════════════════════════════════════════════════
 
 from position_saver.models import (
@@ -80,8 +79,6 @@ from position_saver.models import (
     OptionLeg,
     # سطح ۲
     StrategyPosition,
-    # سطح ۳
-    StrategyGroup,
 )
 
 
@@ -107,7 +104,12 @@ from position_saver.storage import (
 # ۶. محاسبات
 # ═══════════════════════════════════════════════════
 
-from position_saver.pnl_calculator import PositionPnLCalculator
+from position_saver.pnl_calculator import (
+    PositionPnLCalculator,
+    STRATEGY_REQUIREMENTS,
+)
+
+from position_saver.shared_analytics import SharedAnalytics
 
 
 # ═══════════════════════════════════════════════════
@@ -142,10 +144,7 @@ from position_saver.theme import (
     fmt_pnl,
     fmt_int,
     fmt_date,
-    fmt_datetime,
     pnl_tone,
-    days_tone,
-    tone_color,
     set_kind,
     set_tone,
     set_invalid,
@@ -178,35 +177,10 @@ def create_position_saver_widget(
 
 
 # ═══════════════════════════════════════════════════
-# ۱۱. دسترسی‌های lazy به UI
+# ۱۱. ثابت‌های مشترک
 # ═══════════════════════════════════════════════════
 
-def _get_widget_class():
-    """دریافت PositionSaverWidget به‌صورت lazy"""
-    from position_saver.ui.main_widget import PositionSaverWidget
-    return PositionSaverWidget
-
-
-def _get_dialogs():
-    """دریافت دیالوگ‌ها به‌صورت lazy"""
-    from position_saver.ui.dialogs import (
-        PositionEditDialog,
-        CashSettlementDialog,
-        OffsetDialog,
-        ImportHistoryDialog,
-        ExerciseTypeDialog,
-        BROKER_NAMES,
-        DEFAULT_BROKER,
-    )
-    return {
-        "PositionEditDialog": PositionEditDialog,
-        "CashSettlementDialog": CashSettlementDialog,
-        "OffsetDialog": OffsetDialog,
-        "ImportHistoryDialog": ImportHistoryDialog,
-        "ExerciseTypeDialog": ExerciseTypeDialog,
-        "BROKER_NAMES": BROKER_NAMES,
-        "DEFAULT_BROKER": DEFAULT_BROKER,
-    }
+STANDARD_STRATEGIES = PositionPnLCalculator.STANDARD_STRATEGIES
 
 
 # ─── ثابت‌های UI (با محافظت) ───
@@ -222,14 +196,7 @@ except ImportError:
 
 
 # ═══════════════════════════════════════════════════
-# ۱۲. ثابت‌های مشترک
-# ═══════════════════════════════════════════════════
-
-STANDARD_STRATEGIES = PositionPnLCalculator.STANDARD_STRATEGIES
-
-
-# ═══════════════════════════════════════════════════
-# ۱۳. Importer (با محافظت)
+# ۱۲. Importer (با محافظت)
 # ═══════════════════════════════════════════════════
 
 try:
@@ -241,6 +208,7 @@ try:
         ImportBatch,
         ImportResult,
         BrokerTemplate,
+
         # close_reason constants
         CLOSE_REASON_OPEN,
         CLOSE_REASON_OFFSET,
@@ -252,14 +220,15 @@ try:
         CLOSE_REASON_STOCK,
         CLOSE_REASON_INCOMPLETE,
         CLOSE_REASON_LABELS,
+
         # Symbol Map
         SYMBOL_MAP,
         CODE_TO_SYMBOL,
         is_known_underlying,
         get_underlying_ins_code,
-        get_symbol_by_ins_code,
         is_option_symbol,
         infer_underlying_from_option,
+
         # Symbol Memory
         get_symbol_info,
         has_symbol,
@@ -272,23 +241,24 @@ try:
         clear_all_symbol_memory,
         export_symbol_memory,
         import_symbol_memory,
+
         # Net Position
         compute_net_position,
-        group_by_symbol,
         MatchInfo,
         NetPositionResult,
+
         # Core
         ImportEngine,
         ExcelParser,
         FifoMatcher,
         SnapshotEnricher,
         suggest_strategy_name,
+
         # Templates
         get_default_template,
         get_all_templates,
         get_template_for_broker,
         list_broker_names,
-        save_user_template,
     )
     _IMPORTER_AVAILABLE = True
 except ImportError as _e:
@@ -317,7 +287,6 @@ except ImportError as _e:
     CODE_TO_SYMBOL = {}
     is_known_underlying = None
     get_underlying_ins_code = None
-    get_symbol_by_ins_code = None
     is_option_symbol = None
     infer_underlying_from_option = None
 
@@ -334,7 +303,6 @@ except ImportError as _e:
     import_symbol_memory = None
 
     compute_net_position = None
-    group_by_symbol = None
     MatchInfo = None
     NetPositionResult = None
 
@@ -348,13 +316,22 @@ except ImportError as _e:
     get_all_templates = None
     get_template_for_broker = None
     list_broker_names = None
-    save_user_template = None
 
 
 # ═══════════════════════════════════════════════════
-# ۱۴. Wizard ایمپورت (با محافظت)
+# ۱۳. UI — Widget و دیالوگ‌ها (با محافظت)
 # ═══════════════════════════════════════════════════
 
+# ─── Widget اصلی ───
+try:
+    from position_saver.ui.main_widget import PositionSaverWidget
+    _WIDGET_AVAILABLE = True
+except ImportError:
+    PositionSaverWidget = None
+    _WIDGET_AVAILABLE = False
+
+
+# ─── Wizard ایمپورت ───
 try:
     from position_saver.ui.import_wizard_dialog import (
         ImportWizardDialog,
@@ -365,10 +342,7 @@ except ImportError:
     ImportWizardDialog = None
 
 
-# ═══════════════════════════════════════════════════
-# ۱۵. دیالوگ‌های تخصصی (با محافظت)
-# ═══════════════════════════════════════════════════
-
+# ─── دیالوگ Net Position ───
 try:
     from position_saver.ui.net_position_dialog import (
         NetPositionDialog,
@@ -379,6 +353,7 @@ except ImportError:
     NetPositionDialog = None
 
 
+# ─── دیالوگ Strategy ───
 try:
     from position_saver.ui.strategy_dialog import (
         StrategyDialog,
@@ -389,8 +364,62 @@ except ImportError:
     StrategyDialog = None
 
 
+# ─── دیالوگ چک استراتژی ───
+try:
+    from position_saver.ui.strategy_check_dialog import (
+        StrategyCheckDialog,
+    )
+    _STRATEGY_CHECK_AVAILABLE = True
+except ImportError:
+    _STRATEGY_CHECK_AVAILABLE = False
+    StrategyCheckDialog = None
+
+
+# ─── دیالوگ گزارش ───
+try:
+    from position_saver.ui.report_dialog import (
+        ReportDialog,
+        ReportFilter,
+        ReportRow,
+        ReportResult,
+        BaseReportExporter,
+        ExcelReportExporter,
+    )
+    _REPORT_AVAILABLE = True
+except ImportError:
+    _REPORT_AVAILABLE = False
+    ReportDialog = None
+    ReportFilter = None
+    ReportRow = None
+    ReportResult = None
+    BaseReportExporter = None
+    ExcelReportExporter = None
+
+
+# ─── دیالوگ Split ───
+try:
+    from position_saver.ui.split_position_dialog import (
+        SplitPositionDialog,
+    )
+    _SPLIT_AVAILABLE = True
+except ImportError:
+    _SPLIT_AVAILABLE = False
+    SplitPositionDialog = None
+
+
+# ─── دیالوگ Symbol Fill ───
+try:
+    from position_saver.ui.symbol_fill_dialog import (
+        SymbolFillDialog,
+    )
+    _SYMBOL_FILL_AVAILABLE = True
+except ImportError:
+    _SYMBOL_FILL_AVAILABLE = False
+    SymbolFillDialog = None
+
+
 # ═══════════════════════════════════════════════════
-# ۱۶. __all__
+# ۱۴. __all__
 # ═══════════════════════════════════════════════════
 
 __all__ = [
@@ -413,10 +442,9 @@ __all__ = [
     "LegType",
     "PositionStatus",
 
-    # ─── مدل‌ها (سه‌سطحی) ───
+    # ─── مدل‌ها ───
     "OptionLeg",
     "StrategyPosition",
-    "StrategyGroup",
 
     # ─── ذخیره‌سازی ───
     "PositionStorage",
@@ -430,6 +458,8 @@ __all__ = [
 
     # ─── محاسبات ───
     "PositionPnLCalculator",
+    "STRATEGY_REQUIREMENTS",
+    "SharedAnalytics",
     "STANDARD_STRATEGIES",
 
     # ─── State ───
@@ -447,6 +477,17 @@ __all__ = [
     "ImportWizardDialog",
     "NetPositionDialog",
     "StrategyDialog",
+    "StrategyCheckDialog",
+    "ReportDialog",
+    "SplitPositionDialog",
+    "SymbolFillDialog",
+
+    # ─── UI — Report Classes ───
+    "ReportFilter",
+    "ReportRow",
+    "ReportResult",
+    "BaseReportExporter",
+    "ExcelReportExporter",
 
     # ─── ثابت‌های UI ───
     "BROKER_NAMES",
@@ -464,12 +505,9 @@ __all__ = [
     "fmt_pnl",
     "fmt_int",
     "fmt_date",
-    "fmt_datetime",
 
     # ─── tone ───
     "pnl_tone",
-    "days_tone",
-    "tone_color",
 
     # ─── استایل ───
     "set_kind",
@@ -501,7 +539,6 @@ __all__ = [
     "CODE_TO_SYMBOL",
     "is_known_underlying",
     "get_underlying_ins_code",
-    "get_symbol_by_ins_code",
     "is_option_symbol",
     "infer_underlying_from_option",
 
@@ -520,7 +557,6 @@ __all__ = [
 
     # ─── Net Position ───
     "compute_net_position",
-    "group_by_symbol",
     "MatchInfo",
     "NetPositionResult",
 
@@ -536,11 +572,15 @@ __all__ = [
     "get_all_templates",
     "get_template_for_broker",
     "list_broker_names",
-    "save_user_template",
 
     # ─── پرچم‌ها ───
     "_IMPORTER_AVAILABLE",
+    "_WIDGET_AVAILABLE",
     "_IMPORT_WIZARD_AVAILABLE",
     "_NET_POSITION_AVAILABLE",
     "_STRATEGY_DIALOG_AVAILABLE",
+    "_STRATEGY_CHECK_AVAILABLE",
+    "_REPORT_AVAILABLE",
+    "_SPLIT_AVAILABLE",
+    "_SYMBOL_FILL_AVAILABLE",
 ]

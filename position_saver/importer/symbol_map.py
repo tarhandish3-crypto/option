@@ -10,6 +10,7 @@
 """
 
 import logging
+import re
 from typing import Optional
 
 logger = logging.getLogger("PositionSaver.Importer.SymbolMap")
@@ -67,13 +68,6 @@ def get_underlying_ins_code(symbol: str) -> str:
     return SYMBOL_MAP.get(str(symbol).strip(), "")
 
 
-def get_symbol_by_ins_code(ins_code: str) -> Optional[str]:
-    """دریافت نام نماد از روی کد InstrumentCode-UA"""
-    if not ins_code:
-        return None
-    return CODE_TO_SYMBOL.get(str(ins_code).strip())
-
-
 def is_option_symbol(symbol: str) -> bool:
     """آیا این نماد یک قرارداد آپشن است؟ (فقط بر اساس پیشوند)"""
     if not symbol:
@@ -96,7 +90,6 @@ def infer_underlying_from_option(option_symbol: str) -> str:
     if s.startswith(("ض", "ط")):
         s = s[1:]
     # حذف اعداد انتهایی
-    import re
     m = re.match(r'([^\d]+)', s)
     if m:
         return m.group(1).strip()
@@ -108,7 +101,6 @@ __all__ = [
     "CODE_TO_SYMBOL",
     "is_known_underlying",
     "get_underlying_ins_code",
-    "get_symbol_by_ins_code",
     "is_option_symbol",
     "infer_underlying_from_option",
 ]

@@ -27,8 +27,7 @@ from position_saver.importer.schemas import TradeRecord
 class MatchInfo:
     """نتیجه‌ی جفت‌یابی یک trade"""
     trade: TradeRecord
-    status: str = "open"        # "open" | "matched_buy" | "matched_sell"
-                                # | "open_buy" | "orphan_sell"
+    status: str = "open"
     matched_with: List[str] = field(default_factory=list)
     matched_quantity: int = 0
     remaining_quantity: int = 0
@@ -58,13 +57,6 @@ def compute_net_position(
 ) -> NetPositionResult:
     """
     محاسبه‌ی موقعیت خالص برای یک نماد با ترتیب زمانی.
-
-    Args:
-        trades: لیست trades یک نماد
-        method: "fifo" یا "lifo"
-
-    Returns:
-        NetPositionResult
     """
     result = NetPositionResult(
         method=method.lower(),
@@ -75,7 +67,6 @@ def compute_net_position(
         result.summary_text = "هیچ معامله‌ای یافت نشد"
         return result
 
-    # مرتب‌سازی زمانی
     sorted_trades = sorted(
         trades,
         key=lambda t: t.timestamp if t.timestamp else datetime.min
@@ -83,10 +74,8 @@ def compute_net_position(
 
     result.symbol = sorted_trades[0].symbol
 
-    # صف BUY های باز
     buy_queue: deque = deque()
 
-    # ساخت match info برای هر trade
     match_map: Dict[str, MatchInfo] = {}
     for t in sorted_trades:
         match_map[t.trade_id] = MatchInfo(
@@ -205,21 +194,8 @@ def _build_summary(r: NetPositionResult) -> str:
     return " | ".join(parts)
 
 
-# ═══════════════════════════════════════════════════
-# گروه‌بندی trades بر اساس نماد
-# ═══════════════════════════════════════════════════
-
-def group_by_symbol(trades: List[TradeRecord]) -> Dict[str, List[TradeRecord]]:
-    """گروه‌بندی trades بر اساس نماد"""
-    result: Dict[str, List[TradeRecord]] = {}
-    for t in trades:
-        result.setdefault(t.symbol, []).append(t)
-    return result
-
-
 __all__ = [
     "MatchInfo",
     "NetPositionResult",
     "compute_net_position",
-    "group_by_symbol",
 ]

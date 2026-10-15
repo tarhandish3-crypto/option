@@ -64,5 +64,21 @@
       "POS-670C3F",
       "POS-FC7C95"
     ]
+  },
+  {
+    "batch_id": "20261015-120209-836a",
+    "broker": "مفید",
+    "source_file": "C:/Users/Panahi/Downloads/تاریخچه سفارشات(1).xlsx",
+    "created_at": "",
+    "import_date_jalali": "",
+    "n_trades": 218,
+    "n_positions_open": 1,
+    "n_positions_closed": 1,
+    "n_needs_review": 0,
+    "n_duplicates": 0,
+    "position_ids": [
+      "POS-BED2BB",
+      "POS-973C39"
+    ]
   }
 ]

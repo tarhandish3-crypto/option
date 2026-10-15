@@ -147,21 +147,6 @@ def fmt_date(date_str) -> str:
     return str(date_str).strip()
 
 
-def fmt_datetime(dt) -> str:
-    """
-    فرمت‌دهی تاریخ و زمان.
-
-    Returns:
-        '1403/01/15 10:30:45' یا '—'
-    """
-    if dt is None:
-        return "—"
-    try:
-        return dt.strftime("%Y/%m/%d %H:%M:%S")
-    except AttributeError:
-        return str(dt).strip()
-
-
 # =====================================================
 # توابع معنایی (tone)
 # =====================================================
@@ -182,35 +167,6 @@ def pnl_tone(value: float) -> str:
     if v < 0:
         return "loss"
     return "neutral"
-
-
-def days_tone(days: int) -> str:
-    """
-    تشخیص tone بر اساس تعداد روزهای باقی‌مانده.
-
-    Returns:
-        'loss' (زیر ۳ روز) | 'warn' (زیر ۷ روز) | 'muted'
-    """
-    if days is None:
-        return "muted"
-    if days <= 3:
-        return "loss"
-    if days <= 7:
-        return "warn"
-    return "muted"
-
-
-def tone_color(tone: str) -> str:
-    """تبدیل tone به رنگ hex"""
-    return {
-        "profit": Theme.PROFIT,
-        "loss": Theme.LOSS,
-        "warn": Theme.WARN,
-        "primary": Theme.PRIMARY,
-        "info": Theme.INFO,
-        "muted": Theme.MUTED,
-        "neutral": Theme.TEXT,
-    }.get(tone, Theme.TEXT)
 
 
 # =====================================================
@@ -452,6 +408,12 @@ QTabBar::tab:selected {{
 
 QTabBar::tab:hover:!selected {{
     background: #DDE5EF;
+}}
+
+/* ✅ FIX: hover برای تب انتخاب‌شده */
+QTabBar::tab:selected:hover {{
+    background: {Theme.CARD};
+    color: {Theme.TEXT};
 }}
 
 /* ============================================ */
@@ -714,3 +676,20 @@ def apply_theme(app) -> None:
         app.setStyleSheet(QSS)
     except Exception as e:
         print(f"[Theme] Failed to apply theme: {e}")
+
+
+__all__ = [
+    "Theme",
+    "CURRENCY",
+    "QSS",
+    "apply_theme",
+    "fmt_money",
+    "fmt_pct",
+    "fmt_pnl",
+    "fmt_int",
+    "fmt_date",
+    "pnl_tone",
+    "set_kind",
+    "set_tone",
+    "set_invalid",
+]

@@ -83,9 +83,13 @@ class TradeRecord:
     close_date: str = ""
     close_trade_ref: str = ""
     user_chosen_reason: bool = False
-    details: str = ""
 
-    # ─── Propertyها ───
+    # ✅ flag برای SELL جفت‌شده که BUY دیگری را می‌بندد
+    is_offset_closer: bool = False
+
+    # ─────────────────────────────────────────────
+    # Propertyهای پایه
+    # ─────────────────────────────────────────────
 
     @property
     def is_option(self) -> bool:
@@ -106,6 +110,13 @@ class TradeRecord:
         return self.option_kind == OptionType.STOCK
 
     @property
+    def is_unknown(self) -> bool:
+        """نماد ناشناخته — نه آپشن، نه سهم پایه."""
+        return (not self.is_option
+                and not self.is_stock
+                and self.option_kind is None)
+
+    @property
     def is_buy(self) -> bool:
         return self.side == LegType.BUY
 
@@ -113,24 +124,20 @@ class TradeRecord:
     def is_sell(self) -> bool:
         return self.side == LegType.SELL
 
-    @property
-    def is_stock_underlying(self) -> bool:
-        return self.is_stock and bool(self.underlying_symbol)
-
-    @property
-    def is_unknown(self) -> bool:
-        return (not self.is_option
-                and not self.is_stock
-                and self.option_kind is None)
+    # ─────────────────────────────────────────────
+    # Propertyهای محاسباتی
+    # ─────────────────────────────────────────────
 
     @property
     def effective_contract_size(self) -> int:
+        """اندازه قرارداد مؤثر — ۱۰۰۰ برای آپشن، ۱ برای سهم."""
         if not self.is_option:
             return 1
         return self.contract_size if self.contract_size > 0 else 1000
 
     @property
     def is_complete(self) -> bool:
+        """آیا اطلاعات پایه کامل است؟"""
         if not self.symbol:
             return False
         if self.option_kind is None:
@@ -145,10 +152,12 @@ class TradeRecord:
 
     @property
     def is_incomplete(self) -> bool:
+        """آیا اطلاعات پایه ناقص است؟"""
         return not self.is_complete
 
     @property
     def is_expired(self) -> bool:
+        """آیا آپشن منقضی شده است؟"""
         if not self.is_option or not self.expiry_date:
             return False
         from position_saver.live_monitor import is_expired_date
@@ -156,6 +165,7 @@ class TradeRecord:
 
     @property
     def needs_close_decision(self) -> bool:
+        """آیا نیازمند تصمیم کاربر درباره‌ی نوع بستن است؟"""
         return (
             self.is_option
             and self.is_expired
@@ -173,13 +183,19 @@ class TradeRecord:
         """
         return self.is_complete
 
+    # ─────────────────────────────────────────────
+    # Propertyهای نمایشی
+    # ─────────────────────────────────────────────
+
     @property
     def close_reason_label(self) -> str:
+        """برچسب فارسی close_reason."""
         return CLOSE_REASON_LABELS.get(
             self.close_reason, self.close_reason or "—")
 
     @property
     def datetime_str(self) -> str:
+        """رشته‌ی تاریخ و زمان."""
         if self.timestamp is None:
             return f"{self.raw_date} {self.raw_time}".strip()
         try:
@@ -189,27 +205,40 @@ class TradeRecord:
 
     @property
     def side_label_fa(self) -> str:
+        """برچسب فارسی سمت."""
         return self.side.label_fa
 
     @property
     def duplicate_key(self) -> tuple:
+        """
+        کلید یکتایی برای تشخیص تکراری.
+
+        ترکیب: (نماد، تاریخ، ساعت، سمت)
+        """
         return (self.symbol, self.raw_date, self.raw_time,
                 self.side.value)
 
-    # ─── محاسبات ───
+    # ─────────────────────────────────────────────
+    # محاسبات
+    # ─────────────────────────────────────────────
 
     def value(self) -> float:
+        """ارزش کل معامله."""
         return self.quantity * self.price * self.effective_contract_size
 
     def signed_quantity(self) -> int:
+        """تعداد با علامت (+ خرید، - فروش)."""
         return self.quantity * self.side.side_sign
 
     def signed_value(self) -> float:
+        """ارزش با علامت (خرید منفی، فروش مثبت)."""
         if self.side == LegType.BUY:
             return -self.value()
         return self.value()
 
-    # ─── Serialization ───
+    # ─────────────────────────────────────────────
+    # Serialization
+    # ─────────────────────────────────────────────
 
     def to_dict(self) -> dict:
         return {
@@ -242,11 +271,12 @@ class TradeRecord:
             "close_date": self.close_date,
             "close_trade_ref": self.close_trade_ref,
             "user_chosen_reason": self.user_chosen_reason,
-            "details": self.details,
+            "is_offset_closer": self.is_offset_closer,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "TradeRecord":
+        # ─── timestamp ───
         ts_raw = data.get("timestamp")
         ts = None
         if ts_raw:
@@ -255,6 +285,7 @@ class TradeRecord:
             except Exception:
                 ts = None
 
+        # ─── option_kind ───
         ok_raw = data.get("option_kind")
         option_kind = None
         if ok_raw:
@@ -263,11 +294,13 @@ class TradeRecord:
             except KeyError:
                 option_kind = None
 
+        # ─── side ───
         try:
             side = LegType.from_value(data.get("side", "buy"))
         except ValueError:
             side = LegType.BUY
 
+        # ─── close_price ───
         cp_raw = data.get("close_price")
         close_price = None
         if cp_raw is not None:
@@ -307,16 +340,26 @@ class TradeRecord:
             close_trade_ref=data.get("close_trade_ref", ""),
             user_chosen_reason=bool(
                 data.get("user_chosen_reason", False)),
-            details=data.get("details", ""),
+            is_offset_closer=bool(
+                data.get("is_offset_closer", False)),
         )
 
     def copy(self) -> "TradeRecord":
+        """کپی کامل از TradeRecord."""
         return TradeRecord.from_dict(self.to_dict())
 
     def copy_with_quantity(self, new_qty: int) -> "TradeRecord":
+        """
+        ✅ FIX BUG: استفاده از uuid برای یکتایی trade_id.
+
+        در partial matching، ممکن است یک SELL به چند BUY جفت شود.
+        با این کار، trade_id تکراری نمی‌شود.
+        """
         new_t = self.copy()
         new_t.quantity = new_qty
-        new_t.trade_id = f"{self.trade_id}_q{new_qty}"
+        unique_suffix = str(uuid.uuid4())[:4]
+        new_t.trade_id = (
+            f"{self.trade_id}_q{new_qty}_{unique_suffix}")
         return new_t
 
 
@@ -326,12 +369,17 @@ class TradeRecord:
 
 @dataclass
 class MatchedLot:
+    """یک lot جفت‌شده (BUY + SELL یا فقط BUY باز)."""
+
     lot_id: str = field(
         default_factory=lambda: f"lot_{str(uuid.uuid4())[:6]}")
     symbol: str = ""
     open_trade: Optional[TradeRecord] = None
     close_trade: Optional[TradeRecord] = None
-    realized_pnl: Optional[float] = None
+
+    # ─────────────────────────────────────────────
+    # Propertyها
+    # ─────────────────────────────────────────────
 
     @property
     def is_closed(self) -> bool:
@@ -386,15 +434,25 @@ class MatchedLot:
         return (self.open_trade.underlying_symbol
                 if self.open_trade else "")
 
+    # ─────────────────────────────────────────────
+    # محاسبات
+    # ─────────────────────────────────────────────
+
     def holding_days(self) -> Optional[int]:
+        """تعداد روز نگه‌داری."""
         if not self.open_timestamp or not self.close_timestamp:
             return None
         return (self.close_timestamp - self.open_timestamp).days
 
     def gross_pnl(self) -> Optional[float]:
+        """سود/زیان ناخالص (بدون کارمزد)."""
         if not self.is_closed:
             return None
         return self.close_value - self.entry_value
+
+    # ─────────────────────────────────────────────
+    # Serialization
+    # ─────────────────────────────────────────────
 
     def to_dict(self) -> dict:
         return {
@@ -404,19 +462,12 @@ class MatchedLot:
                            if self.open_trade else None),
             "close_trade": (self.close_trade.to_dict()
                             if self.close_trade else None),
-            "realized_pnl": self.realized_pnl,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "MatchedLot":
         open_raw = data.get("open_trade")
         close_raw = data.get("close_trade")
-        realized = data.get("realized_pnl")
-        if realized is not None:
-            try:
-                realized = float(realized)
-            except (TypeError, ValueError):
-                realized = None
         return cls(
             lot_id=data.get("lot_id", ""),
             symbol=data.get("symbol", ""),
@@ -424,7 +475,6 @@ class MatchedLot:
                         if open_raw else None),
             close_trade=(TradeRecord.from_dict(close_raw)
                          if close_raw else None),
-            realized_pnl=realized,
         )
 
     def copy(self) -> "MatchedLot":
@@ -432,25 +482,19 @@ class MatchedLot:
 
 
 # ═══════════════════════════════════════════════════
-# ImportSettings / ImportBatch / ImportResult / BrokerTemplate
+# ImportSettings
 # ═══════════════════════════════════════════════════
 
 @dataclass
 class ImportSettings:
+    """تنظیمات ایمپورت."""
+
     match_method: str = "fifo"
-    time_window_seconds: int = 60
-    group_by_underlying: bool = True
-    skip_duplicates: bool = True
-    valid_statuses: List[str] = field(default_factory=list)
     default_alert_roi: float = 10.0
 
     def to_dict(self) -> dict:
         return {
             "match_method": self.match_method,
-            "time_window_seconds": self.time_window_seconds,
-            "group_by_underlying": self.group_by_underlying,
-            "skip_duplicates": self.skip_duplicates,
-            "valid_statuses": list(self.valid_statuses),
             "default_alert_roi": self.default_alert_roi,
         }
 
@@ -458,19 +502,19 @@ class ImportSettings:
     def from_dict(cls, data: dict) -> "ImportSettings":
         return cls(
             match_method=data.get("match_method", "fifo"),
-            time_window_seconds=int(
-                data.get("time_window_seconds", 60)),
-            group_by_underlying=bool(
-                data.get("group_by_underlying", True)),
-            skip_duplicates=bool(data.get("skip_duplicates", True)),
-            valid_statuses=list(data.get("valid_statuses", [])),
             default_alert_roi=float(
                 data.get("default_alert_roi", 10.0)),
         )
 
 
+# ═══════════════════════════════════════════════════
+# ImportBatch
+# ═══════════════════════════════════════════════════
+
 @dataclass
 class ImportBatch:
+    """شناسنامه‌ی یک عملیات ایمپورت."""
+
     batch_id: str = field(
         default_factory=lambda: (
             datetime.now().strftime("%Y%m%d-%H%M%S-")
@@ -522,8 +566,14 @@ class ImportBatch:
         )
 
 
+# ═══════════════════════════════════════════════════
+# ImportResult
+# ═══════════════════════════════════════════════════
+
 @dataclass
 class ImportResult:
+    """نتیجه‌ی یک عملیات ایمپورت."""
+
     trades: List[TradeRecord] = field(default_factory=list)
     complete_trades: List[TradeRecord] = field(default_factory=list)
     incomplete_trades: List[TradeRecord] = field(default_factory=list)
@@ -566,6 +616,7 @@ class ImportResult:
         return len(self.closed_lots)
 
     def summary_text(self) -> str:
+        """متن خلاصه برای نمایش."""
         parts = [
             f"کل: {self.n_trades}",
             f"کامل: {self.n_complete}",
@@ -577,8 +628,14 @@ class ImportResult:
         return " | ".join(parts)
 
 
+# ═══════════════════════════════════════════════════
+# BrokerTemplate
+# ═══════════════════════════════════════════════════
+
 @dataclass
 class BrokerTemplate:
+    """قالب ستون‌های اکسل کارگزاری."""
+
     broker_name: str = ""
     date_col: str = "تاریخ"
     time_col: str = "ساعت"
@@ -587,7 +644,6 @@ class BrokerTemplate:
     qty_col: str = "حجم انجام شده"
     price_col: str = "قیمت"
     status_col: str = "وضعیت"
-    valid_statuses: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -599,7 +655,6 @@ class BrokerTemplate:
             "qty_col": self.qty_col,
             "price_col": self.price_col,
             "status_col": self.status_col,
-            "valid_statuses": list(self.valid_statuses),
         }
 
     @classmethod
@@ -613,12 +668,15 @@ class BrokerTemplate:
             qty_col=data.get("qty_col", "حجم انجام شده"),
             price_col=data.get("price_col", "قیمت"),
             status_col=data.get("status_col", "وضعیت"),
-            valid_statuses=list(data.get("valid_statuses", [])),
         )
 
     def copy(self) -> "BrokerTemplate":
         return BrokerTemplate.from_dict(self.to_dict())
 
+
+# ═══════════════════════════════════════════════════
+# صادرات
+# ═══════════════════════════════════════════════════
 
 __all__ = [
     "TradeRecord",

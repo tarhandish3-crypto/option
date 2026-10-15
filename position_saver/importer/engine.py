@@ -81,6 +81,8 @@ class ImportEngine:
             result.warnings.append(f"خطا در Enrichment: {e}")
 
         # ─── ۳. Matcher ───
+        # ✅ FIX BUG: مقدار اولیه امن برای lots
+        lots: List[MatchedLot] = []
         try:
             matcher = FifoMatcher(method=settings.match_method)
             lots = matcher.match(trades)
@@ -90,9 +92,17 @@ class ImportEngine:
         except Exception as e:
             logger.exception(f"Match failed: {e}")
             result.errors.append(f"خطا در تطبیق: {e}")
+            # lots همان [] می‌ماند
 
         # ─── ۴. انتقال close_reason از FIFO ───
-        self._apply_lots_to_trades(lots)
+        # ✅ FIX BUG: چک خالی نبودن lots
+        if lots:
+            try:
+                self._apply_lots_to_trades(lots)
+            except Exception as e:
+                logger.exception(f"Apply lots failed: {e}")
+                result.warnings.append(
+                    f"خطا در انتقال close_reason: {e}")
 
         # ─── ۵. تفکیک کامل/ناقص ───
         for t in trades:
@@ -110,36 +120,81 @@ class ImportEngine:
     def _apply_lots_to_trades(self, lots: List[MatchedLot]):
         """
         اگر lot بسته است، trade باز را به‌عنوان OFFSET علامت بزن.
-        اگر lot باز است ولی expiry گذشته، trade را UNKNOWN نگه دار
-        تا کاربر تصمیم بگیرد.
+
+        ✅ FIX BUG:
+            - close_price و close_date روی SELL جفت‌شده هم ست می‌شود
+            - flag is_offset_closer برای SELL جفت‌شده
+            - BUY با چند SELL جزئی: close_price از میانگین وزنی
         """
+        # گروه‌بندی lots بر اساس open_trade.trade_id
+        # تا برای BUY که چند SELL دارد، میانگین وزنی محاسبه شود
+        buy_lots: dict = {}
         for lot in lots:
             open_t = lot.open_trade
             if open_t is None:
                 continue
+            tid = open_t.trade_id
+            if tid not in buy_lots:
+                buy_lots[tid] = []
+            buy_lots[tid].append(lot)
 
-            if lot.is_closed:
-                # BUY + SELL در batch → آفست
+        for tid, group_lots in buy_lots.items():
+            if not group_lots:
+                continue
+
+            open_t = group_lots[0].open_trade
+
+            # جمع‌آوری SELLهای جفت‌شده
+            closed_lots = [l for l in group_lots if l.is_closed]
+            open_remaining = [l for l in group_lots if l.is_open]
+
+            if closed_lots:
+                # ─── BUY جفت‌شده ───
                 open_t.close_reason = CLOSE_REASON_OFFSET
-                open_t.close_price = lot.close_trade.price
-                open_t.close_date = lot.close_trade.raw_date
-                open_t.close_trade_ref = lot.close_trade.trade_id
-                open_t.user_chosen_reason = False
                 open_t.needs_review = False
+                open_t.user_chosen_reason = False
 
-                # SELL را هم علامت‌گذاری کن
-                close_t = lot.close_trade
-                if close_t is not None:
+                # میانگین وزنی close_price
+                total_qty = 0
+                total_value = 0.0
+                for lot in closed_lots:
+                    q = lot.close_trade.quantity
+                    total_qty += q
+                    total_value += lot.close_trade.price * q
+
+                if total_qty > 0:
+                    avg_price = total_value / total_qty
+                    open_t.close_price = avg_price
+
+                    # آخرین close_date از آخرین SELL
+                    last_close = closed_lots[-1].close_trade
+                    open_t.close_date = last_close.raw_date
+                    open_t.close_trade_ref = last_close.trade_id
+
+                # ─── علامت‌گذاری SELLهای جفت‌شده ───
+                for lot in closed_lots:
+                    close_t = lot.close_trade
+                    if close_t is None:
+                        continue
+
+                    # ✅ FIX: close_price و close_date روی SELL هم
                     close_t.close_reason = CLOSE_REASON_OFFSET
+                    close_t.close_price = close_t.price
+                    close_t.close_date = close_t.raw_date
                     close_t.user_chosen_reason = False
                     close_t.needs_review = False
-            else:
-                # BUY باز (بدون SELL)
-                if open_t.is_option and open_t.is_expired:
-                    # منقضی بدون SELL → نیازمند تصمیم
-                    open_t.close_reason = CLOSE_REASON_UNKNOWN
-                else:
-                    open_t.close_reason = CLOSE_REASON_OPEN
+                    # ✅ FIX: flag جدید
+                    close_t.is_offset_closer = True
+
+            # ─── BUY باقی‌مانده (باز) ───
+            if open_remaining:
+                # اگر BUY قبلاً به OFFSET علامت خورده، فقط
+                # close_reason را دوباره ست نمی‌کنیم
+                if open_t.close_reason != CLOSE_REASON_OFFSET:
+                    if open_t.is_option and open_t.is_expired:
+                        open_t.close_reason = CLOSE_REASON_UNKNOWN
+                    else:
+                        open_t.close_reason = CLOSE_REASON_OPEN
 
     # ═══════════════════════════════════════════════
     # تشخیص تکراری
@@ -177,13 +232,13 @@ class ImportEngine:
                     leg.leg_type.value,
                 )
                 existing_keys.add(key)
+
                 # اگر لگ بسته شده، SELL هم ثبت شده
                 if leg.close_price is not None:
                     close_key = (
                         leg.symbol,
                         leg.close_date,
                         leg.close_time,
-                        # سمت مخالف
                         "sell" if leg.leg_type.value == "buy" else "buy",
                     )
                     existing_keys.add(close_key)
@@ -202,39 +257,6 @@ class ImportEngine:
             f"{len(duplicates)} duplicates")
 
         return unique, duplicates
-
-    # ═══════════════════════════════════════════════
-    # ساخت شناسنامه‌ی ایمپورت
-    # ═══════════════════════════════════════════════
-
-    def create_batch(
-        self,
-        broker: str,
-        source_file: str,
-        n_trades: int,
-        n_open: int,
-        n_closed: int,
-        n_needs_review: int,
-        n_duplicates: int = 0,
-    ) -> ImportBatch:
-        """ساخت ImportBatch"""
-        now = datetime.now()
-        try:
-            jalali = jdatetime.date.today().strftime("%Y/%m/%d")
-        except Exception:
-            jalali = ""
-
-        return ImportBatch(
-            broker=broker,
-            source_file=source_file,
-            created_at=now.isoformat(),
-            import_date_jalali=jalali,
-            n_trades=n_trades,
-            n_positions_open=n_open,
-            n_positions_closed=n_closed,
-            n_needs_review=n_needs_review,
-            n_duplicates=n_duplicates,
-        )
 
 
 __all__ = ["ImportEngine"]

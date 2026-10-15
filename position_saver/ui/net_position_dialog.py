@@ -3,15 +3,6 @@
 
 """
 دیالوگ نمایش ترتیب زمانی معاملات یک نماد + موقعیت خالص.
-
-کاربر می‌بیند:
-    - ترتیب زمانی trades
-    - جفت‌یابی FIFO/LIFO
-    - موقعیت فعلی (باز / بسته / ...)
-
-امکان تغییر:
-    - FIFO ↔ LIFO
-    - بازمحاسبه
 """
 
 import logging
@@ -68,7 +59,6 @@ class NetPositionDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        # ─── هدر ───
         header = QLabel(
             f"📊 تحلیل معاملات نماد «{self.symbol}» "
             f"({len(self.trades)} معامله)")
@@ -157,37 +147,30 @@ class NetPositionDialog(QDialog):
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-            # #
             item = QTableWidgetItem(str(i))
             item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 0, item)
 
-            # تاریخ
             self.table.setItem(row, 1,
                 QTableWidgetItem(t.raw_date or "—"))
-
-            # ساعت
             self.table.setItem(row, 2,
                 QTableWidgetItem(t.raw_time or "—"))
 
-            # سمت
+            # ✅ FIX: برچسب واضح‌تر
             side_item = QTableWidgetItem(t.side.label_fa)
             side_item.setTextAlignment(Qt.AlignCenter)
             side_item.setForeground(
                 QColor(Theme.PROFIT if t.is_buy else Theme.LOSS))
             self.table.setItem(row, 3, side_item)
 
-            # تعداد
             qty_item = QTableWidgetItem(fmt_int(t.quantity))
             qty_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 4, qty_item)
 
-            # قیمت
             pr_item = QTableWidgetItem(fmt_money(t.price))
             pr_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 5, pr_item)
 
-            # جفت‌شده با
             if match.matched_with:
                 match_text = ", ".join(match.matched_with[:3])
                 if len(match.matched_with) > 3:
@@ -198,7 +181,6 @@ class NetPositionDialog(QDialog):
             match_item.setTextAlignment(Qt.AlignCenter)
             self.table.setItem(row, 6, match_item)
 
-            # وضعیت
             status_text, status_color = self._get_status_label(match)
             status_item = QTableWidgetItem(status_text)
             status_item.setTextAlignment(Qt.AlignCenter)
@@ -211,11 +193,9 @@ class NetPositionDialog(QDialog):
         """برچسب و رنگ وضعیت"""
         status = match.status
 
-        if status == "matched_buy":
-            return (f"🟢 آفست‌شده ({match.matched_quantity})",
-                    Theme.PROFIT)
-        elif status == "matched_sell":
-            return (f"🟢 آفست‌شده ({match.matched_quantity})",
+        # ✅ FIX: برچسب‌های واضح‌تر
+        if status in ("matched_buy", "matched_sell"):
+            return (f"🟢 جفت‌شده ({match.matched_quantity})",
                     Theme.PROFIT)
         elif status == "open_buy":
             return (f"🟡 BUY باز ({match.remaining_quantity})",
@@ -263,13 +243,6 @@ class NetPositionDialog(QDialog):
             text_parts.append("⚠️ <b>موقعیت فعلی: ناهمگون</b>")
 
         self.lbl_summary.setText("<br>".join(text_parts))
-
-    # ═══════════════════════════════════════════════
-    # API
-    # ═══════════════════════════════════════════════
-
-    def get_result(self) -> Optional[NetPositionResult]:
-        return self._result
 
 
 __all__ = ["NetPositionDialog"]

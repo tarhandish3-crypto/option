@@ -4,11 +4,6 @@
 """
 حافظه‌ی نمادها — ذخیره‌ی قیمت اعمال و سررسید هر نماد.
 
-کاربرد:
-    کاربر یک بار اطلاعات ضفزر614 را وارد می‌کند → ذخیره می‌شود
-    در ایمپورت‌های بعدی، خودکار برای همه‌ی معاملات همان نماد پر می‌شود
-    (به‌ویژه مفید است وقتی Snapshot اطلاعات را ندارد).
-
 ساختار فایل symbol_memory.json:
     {
         "ضفزر614": {
@@ -27,6 +22,7 @@
 
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -88,7 +84,6 @@ def save_symbol_info(
 
     info = memory.get(symbol, {})
 
-    # فقط فیلدهایی که مقدار دارند
     if strike_price is not None and strike_price > 0:
         info["strike_price"] = float(strike_price)
 
@@ -119,9 +114,6 @@ def save_symbol_info(
 def save_from_trade(trade) -> bool:
     """
     ذخیره‌ی اطلاعات یک TradeRecord در حافظه.
-
-    Args:
-        trade: TradeRecord با فیلدهای strike_price, expiry_date, ...
     """
     if trade is None:
         return False
@@ -229,20 +221,49 @@ def _load() -> Dict[str, dict]:
 
 
 def _save(data: Dict[str, dict]) -> bool:
-    """ذخیره‌ی اتمیک در فایل"""
+    """
+    ذخیره‌ی اتمیک در فایل.
+
+    ✅ FIX: handle os.replace failure در ویندوز
+    """
     global _cache
+    temp_path = str(_MEMORY_FILE) + ".tmp"
+
     try:
-        temp_path = str(_MEMORY_FILE) + ".tmp"
         with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        import os
-        os.replace(temp_path, str(_MEMORY_FILE))
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except (OSError, AttributeError):
+                pass
+
+        try:
+            os.replace(temp_path, str(_MEMORY_FILE))
+        except PermissionError:
+            # ویندوز: اگر فایل مقصد قفل باشد، تلاش دوباره
+            logger.warning(
+                "PermissionError on os.replace — "
+                "removing target and retrying")
+            try:
+                if _MEMORY_FILE.exists():
+                    os.remove(str(_MEMORY_FILE))
+                os.rename(temp_path, str(_MEMORY_FILE))
+            except Exception as e2:
+                logger.exception(f"Retry failed: {e2}")
+                raise
+
         _cache = data
-        logger.info(
-            f"Saved {len(data)} symbols to memory")
+        logger.info(f"Saved {len(data)} symbols to memory")
         return True
     except Exception as e:
         logger.exception(f"Save symbol memory failed: {e}")
+        # پاکسازی temp
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
         return False
 
 

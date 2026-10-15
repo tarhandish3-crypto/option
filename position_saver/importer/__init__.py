@@ -7,8 +7,7 @@
 from position_saver.importer.symbol_map import (
     SYMBOL_MAP, CODE_TO_SYMBOL,
     is_known_underlying, get_underlying_ins_code,
-    get_symbol_by_ins_code, is_option_symbol,
-    infer_underlying_from_option,
+    is_option_symbol, infer_underlying_from_option,
 )
 
 # ─── Symbol Memory ───
@@ -36,7 +35,7 @@ from position_saver.importer.schemas import (
 
 # ─── Net Position ───
 from position_saver.importer.net_position import (
-    compute_net_position, group_by_symbol,
+    compute_net_position,
     MatchInfo, NetPositionResult,
 )
 
@@ -44,17 +43,13 @@ from position_saver.importer.net_position import (
 from position_saver.importer.broker_templates import (
     get_default_template, get_all_templates,
     get_template_for_broker, list_broker_names,
-    save_user_template, DEFAULT_TEMPLATES,
+    DEFAULT_TEMPLATES,
 )
 
 # ─── Parser / Matcher / Enricher ───
 from position_saver.importer.excel_parser import ExcelParser
 from position_saver.importer.matcher import FifoMatcher
-from position_saver.importer.snapshot_enricher import (
-    SnapshotEnricher,
-    infer_option_kind_from_symbol,
-    infer_underlying_from_symbol,
-)
+from position_saver.importer.snapshot_enricher import SnapshotEnricher
 
 # ─── Suggest / Engine ───
 from position_saver.importer.suggest import suggest_strategy_name
@@ -65,8 +60,7 @@ __all__ = [
     # Symbol Map
     "SYMBOL_MAP", "CODE_TO_SYMBOL",
     "is_known_underlying", "get_underlying_ins_code",
-    "get_symbol_by_ins_code", "is_option_symbol",
-    "infer_underlying_from_option",
+    "is_option_symbol", "infer_underlying_from_option",
     # Symbol Memory
     "get_symbol_info", "has_symbol",
     "save_symbol_info", "save_from_trade", "save_bulk",
@@ -83,14 +77,13 @@ __all__ = [
     "CLOSE_REASON_UNKNOWN", "CLOSE_REASON_STOCK",
     "CLOSE_REASON_INCOMPLETE", "CLOSE_REASON_LABELS",
     # Net Position
-    "compute_net_position", "group_by_symbol",
+    "compute_net_position",
     "MatchInfo", "NetPositionResult",
     # Templates
     "get_default_template", "get_all_templates",
     "get_template_for_broker", "list_broker_names",
-    "save_user_template", "DEFAULT_TEMPLATES",
+    "DEFAULT_TEMPLATES",
     # Core
     "ExcelParser", "FifoMatcher", "SnapshotEnricher",
-    "infer_option_kind_from_symbol", "infer_underlying_from_symbol",
     "suggest_strategy_name", "ImportEngine",
 ]
